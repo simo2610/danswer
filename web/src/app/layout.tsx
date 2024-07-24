@@ -22,7 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
       : buildClientUrl("/danswer.ico");
 
   return {
-    title: dynamicSettings.enterpriseSettings?.application_name ?? "Danswer",
+    title: dynamicSettings.enterpriseSettings?.application_name ?? "Scientifica Answer",
     description: "Question answering for your documents",
     icons: {
       icon: logoLocation,

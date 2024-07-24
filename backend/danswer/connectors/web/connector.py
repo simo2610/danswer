@@ -81,7 +81,7 @@ def protected_url_check(url: str) -> None:
 
 def check_internet_connection(url: str) -> None:
     try:
-        response = requests.get(url, timeout=3)
+        response = requests.get(url, timeout=(3,6))
         response.raise_for_status()
     except (requests.RequestException, ValueError):
         raise Exception(f"Unable to reach {url} - check your internet connection")

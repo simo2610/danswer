@@ -199,8 +199,7 @@ def warm_up_encoders(
     model_server_port: int = MODEL_SERVER_PORT,
 ) -> None:
     warm_up_str = (
-        "Danswer is amazing! Check out our easy deployment guide at "
-        "https://docs.danswer.dev/quickstart"
+        "Scientifica Answer is loading magic"
     )
 
     # May not be the exact same tokenizer used for the indexing flow
