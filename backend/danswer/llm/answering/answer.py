@@ -35,7 +35,7 @@ from danswer.llm.answering.stream_processing.utils import DocumentIdOrderMapping
 from danswer.llm.answering.stream_processing.utils import map_document_id_order
 from danswer.llm.interfaces import LLM
 from danswer.llm.utils import message_generator_to_string_generator
-from danswer.natural_language_processing.utils import get_default_llm_tokenizer
+from danswer.natural_language_processing.utils import get_tokenizer
 from danswer.tools.custom.custom_tool_prompt_builder import (
     build_user_message_for_custom_tool_for_non_tool_calling_llm,
 )
@@ -139,7 +139,10 @@ class Answer:
         self.prompt_config = prompt_config
 
         self.llm = llm
-        self.llm_tokenizer = get_default_llm_tokenizer()
+        self.llm_tokenizer = get_tokenizer(
+            provider_type=llm.config.model_provider,
+            model_name=llm.config.model_name,
+        )
 
         self._final_prompt: list[BaseMessage] | None = None
 
@@ -240,9 +243,22 @@ class Answer:
         # if we have a tool call, we need to call the tool
         tool_call_requests = tool_call_chunk.tool_calls
         for tool_call_request in tool_call_requests:
-            tool = [
+            known_tools_by_name = [
                 tool for tool in self.tools if tool.name == tool_call_request["name"]
-            ][0]
+            ]
+
+            if not known_tools_by_name:
+                logger.error(
+                    "Tool call requested with unknown name field. \n"
+                    f"self.tools: {self.tools}"
+                    f"tool_call_request: {tool_call_request}"
+                )
+                if self.tools:
+                    tool = self.tools[0]
+                else:
+                    continue
+            else:
+                tool = known_tools_by_name[0]
             tool_args = (
                 self.force_use_tool.args
                 if self.force_use_tool.tool_name == tool.name
@@ -287,7 +303,7 @@ class Answer:
         prompt_builder = AnswerPromptBuilder(self.message_history, self.llm.config)
         chosen_tool_and_args: tuple[Tool, dict] | None = None
 
-        if self.force_use_tool:
+        if self.force_use_tool.force_use:
             # if we are forcing a tool, we don't need to check which tools to run
             tool = next(
                 iter(

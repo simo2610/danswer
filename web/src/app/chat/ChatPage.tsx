@@ -73,6 +73,7 @@ import FunctionalHeader from "@/components/chat_search/Header";
 import { useSidebarVisibility } from "@/components/chat_search/hooks";
 import { SIDEBAR_TOGGLED_COOKIE_NAME } from "@/components/resizable/constants";
 import FixedLogo from "./shared_chat_search/FixedLogo";
+import { getSecondsUntilExpiration } from "@/lib/time";
 
 const TEMP_USER_MESSAGE_ID = -1;
 const TEMP_ASSISTANT_MESSAGE_ID = -2;
@@ -1112,10 +1113,11 @@ export function ChatPage({
     setDocumentSelection((documentSelection) => !documentSelection);
     setShowDocSidebar(false);
   };
+  const secondsUntilExpiration = getSecondsUntilExpiration(user);
 
   return (
     <>
-      <HealthCheckBanner />
+      <HealthCheckBanner secondsUntilExpiration={secondsUntilExpiration} />
       <InstantSSRAutoRefresh />
 
       {/* ChatPopup is a custom popup that displays a admin-specified message on initial user visit. 
@@ -1139,7 +1141,7 @@ export function ChatPage({
             ease-in-out
             ${
               showDocSidebar || toggledSidebar
-                ? "opacity-100 w-[300px] translate-x-0"
+                ? "opacity-100 w-[250px] translate-x-0"
                 : "opacity-0 w-[200px] pointer-events-none -translate-x-10"
             }`}
         >
@@ -1215,7 +1217,7 @@ export function ChatPage({
                   duration-300 
                   ease-in-out
                   h-full
-                  ${toggledSidebar || showDocSidebar ? "w-[300px]" : "w-[0px]"}
+                  ${toggledSidebar || showDocSidebar ? "w-[250px]" : "w-[0px]"}
                   `}
               />
               <ChatBanner />
@@ -1235,7 +1237,7 @@ export function ChatPage({
                         duration-300 
                         ease-in-out
                         h-full
-                        ${toggledSidebar ? "w-[300px]" : "w-[0px]"}
+                        ${toggledSidebar ? "w-[250px]" : "w-[0px]"}
                       `}
                     ></div>
                     <div
@@ -1617,7 +1619,7 @@ export function ChatPage({
                 <div
                   style={{ transition: "width 0.30s ease-out" }}
                   className={`flex-none bg-transparent transition-all bg-opacity-80 duration-300 ease-in-out h-full
-                        ${toggledSidebar ? "w-[300px] " : "w-[0px]"}`}
+                        ${toggledSidebar ? "w-[250px] " : "w-[0px]"}`}
                 />
                 <div className="my-auto">
                   <DanswerInitializingLoader />
