@@ -36,6 +36,7 @@ import {
   OCIStorageIcon,
   GoogleStorageIcon,
   ColorSlackIcon,
+  MondayIcon,
 } from "@/components/icons/icons";
 import { ValidSources } from "./types";
 import {
@@ -247,6 +248,12 @@ const SOURCE_METADATA_MAP: SourceMap = {
     displayName: "Clickup",
     category: SourceCategory.ProjectManagement,
     docs: "https://docs.danswer.dev/connectors/clickup",
+  },
+  monday_com: {
+    icon: MondayIcon,
+    displayName: "Monday.com",
+    category: SourceCategory.ProjectManagement,
+    docs: "",
   },
   s3: {
     icon: S3Icon,

@@ -527,6 +527,40 @@ For example, specifying .*-support.* as a "channel" will cause the connector to 
       },
     ],
   },
+  monday_com: {
+    description: "Configure Monday.com connector",
+    values: [
+      {
+        type: "select",
+        query: "Select the connector type:",
+        label: "Connector Type",
+        name: "connector_type",
+        optional: false,
+        options: [
+          { name: "board", value: "board" },
+          { name: "folder", value: "folder" },
+          { name: "workspace", value: "workspace" },
+        ],
+      },
+      {
+        type: "list",
+        query: "Enter connector IDs:",
+        label: "Connector IDs",
+        name: "connector_ids",
+        description: "Specify 0 or more id(s) to index from.",
+        optional: true,
+      },
+      // {
+      //   type: "checkbox",
+      //   query: "Retrieve task comments?",
+      //   label: "Retrieve Task Comments",
+      //   name: "retrieve_task_comments",
+      //   description:
+      //     "If checked, then all the comments for each task will also be retrieved and indexed.",
+      //   optional: false,
+      // },
+    ],
+  },
   google_sites: {
     description: "Configure Google Sites connector",
     values: [
@@ -890,6 +924,12 @@ export interface Document360Config {
 
 export interface ClickupConfig {
   connector_type: "list" | "folder" | "space" | "workspace";
+  connector_ids?: string[];
+  retrieve_task_comments: boolean;
+}
+
+export interface MondayConfig {
+  connector_type: "board" | "folder" | "workspace";
   connector_ids?: string[];
   retrieve_task_comments: boolean;
 }

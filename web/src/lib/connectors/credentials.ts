@@ -121,6 +121,11 @@ export interface ClickupCredentialJson {
   clickup_team_id: string;
 }
 
+
+export interface MondayCredentialJson {
+  monday_api_token: string;
+}
+
 export interface ZendeskCredentialJson {
   zendesk_subdomain: string;
   zendesk_email: string;
@@ -181,8 +186,8 @@ export interface AxeroCredentialJson {
   axero_api_token: string;
 }
 
-export interface MediaWikiCredentialJson {}
-export interface WikipediaCredentialJson extends MediaWikiCredentialJson {}
+export interface MediaWikiCredentialJson { }
+export interface WikipediaCredentialJson extends MediaWikiCredentialJson { }
 
 export const credentialTemplates: Record<ValidSources, any> = {
   github: { github_access_token: "" } as GithubCredentialJson,
@@ -262,6 +267,9 @@ export const credentialTemplates: Record<ValidSources, any> = {
     clickup_api_token: "",
     clickup_team_id: "",
   } as ClickupCredentialJson,
+  monday_com: {
+    monday_api_token: "",
+  } as MondayCredentialJson,
   s3: {
     aws_access_key_id: "",
     aws_secret_access_key: "",
@@ -374,6 +382,9 @@ export const credentialDisplayNames: Record<string, string> = {
   // Clickup
   clickup_api_token: "ClickUp API Token",
   clickup_team_id: "ClickUp Team ID",
+
+  monday_api_token: "ClickUp API Token",
+
 
   // Zendesk
   zendesk_subdomain: "Zendesk Subdomain",

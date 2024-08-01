@@ -216,6 +216,7 @@ const validSources = [
   "discourse",
   "axero",
   "clickup",
+  "monday_com",
   "wikipedia",
   "mediawiki",
   "s3",

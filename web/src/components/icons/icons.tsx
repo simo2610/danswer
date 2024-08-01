@@ -78,6 +78,7 @@ import wikipediaIcon from "../../../public/Wikipedia.svg";
 
 import discourseIcon from "../../../public/Discourse.png";
 import clickupIcon from "../../../public/Clickup.svg";
+import mondayIcon from "../../../public/Monday_com.png";
 import cohereIcon from "../../../public/Cohere.svg";
 import voyageIcon from "../../../public/Voyage.png";
 import googleIcon from "../../../public/Google.webp";
@@ -1305,6 +1306,21 @@ export const ClickupIcon = ({
       className={`w-[${size + 4}px] h-[${size + 4}px] -m-0.5 ` + className}
     >
       <Image src={clickupIcon} alt="Logo" width="96" height="96" />
+    </div>
+  );
+};
+
+
+export const MondayIcon = ({
+  size = 16,
+  className = defaultTailwindCSS,
+}: IconProps) => {
+  return (
+    <div
+      style={{ width: `${size + 4}px`, height: `${size + 4}px` }}
+      className={`w-[${size + 4}px] h-[${size + 4}px] -m-0.5 ` + className}
+    >
+      <Image src={mondayIcon} alt="Logo" width="96" height="96" />
     </div>
   );
 };
