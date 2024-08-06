@@ -81,23 +81,27 @@ def _should_create_new_indexing(
                 return False
         return True
 
-    # If the connector is disabled, don't index
+    # If the connector is disabled or is the ingestion API, don't index
     # NOTE: during an embedding model switch over, the following logic
     # is bypassed by the above check for a future model
-    if connector.disabled:
-        return False
-
-    if connector.refresh_freq is None:
+    if connector.disabled or connector.id == 0:
         return False
 
     if not last_index:
         return True
 
-    # Only one scheduled job per connector at a time
-    # Can schedule another one if the current one is already running however
-    # Because the currently running one will not be until the latest time
-    # Note, this last index is for the given embedding model
-    if last_index.status == IndexingStatus.NOT_STARTED:
+    if connector.refresh_freq is None:
+        return False
+
+    # Only one scheduled/ongoing job per connector at a time
+    # this prevents cases where
+    # (1) the "latest" index_attempt is scheduled so we show
+    #     that in the UI despite another index_attempt being in-progress
+    # (2) multiple scheduled index_attempts at a time
+    if (
+        last_index.status == IndexingStatus.NOT_STARTED
+        or last_index.status == IndexingStatus.IN_PROGRESS
+    ):
         return False
 
     current_db_time = get_db_current_time(db_session)

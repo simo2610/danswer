@@ -94,7 +94,7 @@ export default function AddConnector({
   const [refreshFreq, setRefreshFreq] = useState<number>(defaultRefresh || 0);
   const [pruneFreq, setPruneFreq] = useState<number>(defaultPrune);
   const [indexingStart, setIndexingStart] = useState<Date | null>(null);
-  const [isPublic, setIsPublic] = useState(false);
+  const [isPublic, setIsPublic] = useState(true);
   const [createConnectorToggle, setCreateConnectorToggle] = useState(false);
   const formRef = useRef<FormikProps<any>>(null);
   const [advancedFormPageState, setAdvancedFormPageState] = useState(true);
@@ -140,9 +140,9 @@ export default function AddConnector({
 
   const createConnector = async () => {
     const AdvancedConfig: AdvancedConfig = {
-      pruneFreq: (pruneFreq || defaultPrune) * 60,
+      pruneFreq: pruneFreq * 60,
       indexingStart,
-      refreshFreq: (refreshFreq || defaultRefresh) * 60,
+      refreshFreq: refreshFreq * 60,
     };
 
     // google sites-specific handling
@@ -186,8 +186,8 @@ export default function AddConnector({
         input_type: connector == "web" ? "load_state" : "poll", // single case
         name: name,
         source: connector,
-        refresh_freq: (refreshFreq || defaultRefresh) * 60,
-        prune_freq: (pruneFreq || defaultPrune) * 60,
+        refresh_freq: refreshFreq * 60 || null,
+        prune_freq: pruneFreq * 60 || null,
         indexing_start: indexingStart,
         disabled: false,
       },
@@ -211,7 +211,7 @@ export default function AddConnector({
     }
 
     // Without credential
-    if (isSuccess && response && credentialActivated) {
+    if (credentialActivated && isSuccess && response) {
       const credential =
         currentCredential || liveGDriveCredential || liveGmailCredential;
       const linkCredentialResponse = await linkCredential(
@@ -228,7 +228,19 @@ export default function AddConnector({
         setTimeout(() => {
           window.open("/admin/indexing/status", "_self");
         }, 1000);
+      } else {
+        const errorData = await linkCredentialResponse.json();
+        setPopup({
+          message: errorData.message,
+          type: "error",
+        });
       }
+    } else if (isSuccess) {
+      setPopup({
+        message:
+          "Credential created succsfully! Redirecting to connector home page",
+        type: "success",
+      });
     } else {
       setPopup({ message: message, type: "error" });
     }
