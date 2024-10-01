@@ -35,8 +35,10 @@ export const SearchResultsDisplay = ({
   isFetching,
   defaultOverrides,
   performSweep,
+  searchState,
   sweep,
 }: {
+  searchState: searchState;
   disabledAgentic?: boolean;
   contentEnriched?: boolean;
   agenticResults?: boolean | null;
@@ -92,16 +94,11 @@ export const SearchResultsDisplay = ({
   if (isFetching && !answer && !documents) {
     return null;
   }
-  if (
-    answer === null &&
-    documents != null &&
-    documents.length == 0 &&
-    !isFetching
-  ) {
+  if (documents != null && documents.length == 0 && searchState == "input") {
     return (
       <div className="text-base gap-x-1.5 flex flex-col">
-        <div className="flex gap-x-2 items-center text-error">
-          <AlertIcon size={16} className="text-error" />
+        <div className="flex gap-x-2 items-center font-semibold">
+          <AlertIcon size={16} />
           No documents were found!
         </div>
         <p>
@@ -114,7 +111,6 @@ export const SearchResultsDisplay = ({
   if (
     answer === null &&
     (documents === null || documents.length === 0) &&
-    quotes === null &&
     !isFetching
   ) {
     return (
@@ -167,19 +163,16 @@ export const SearchResultsDisplay = ({
     <>
       {popup}
 
-      {documents && documents.length == 0 && (
-        <p className="flex text-lg font-bold">
-          No docs found! Ensure that you have enabled at least one connector
-        </p>
-      )}
-
       {documents && documents.length > 0 && (
         <div className="mt-4">
           <div className="font-bold flex justify-between text-emphasis border-b mb-3 pb-1 border-border text-lg">
             <p>Results</p>
             {!DISABLE_LLM_DOC_RELEVANCE &&
               (contentEnriched || searchResponse.additional_relevance) && (
-                <Tooltip delayDuration={1000} content={`${commandSymbol}O`}>
+                <Tooltip
+                  delayDuration={1000}
+                  content={<div className="flex">{commandSymbol}O</div>}
+                >
                   <button
                     onClick={() => {
                       performSweep();
@@ -189,8 +182,8 @@ export const SearchResultsDisplay = ({
                     }}
                     className={`flex items-center justify-center animate-fade-in-up rounded-lg p-1 text-xs transition-all duration-300 w-20 h-8 ${
                       !sweep
-                        ? "bg-green-500 text-text-800"
-                        : "bg-rose-700 text-text-100"
+                        ? "bg-background-agentic-toggled text-text-agentic-toggled"
+                        : "bg-background-agentic-untoggled text-text-agentic-untoggled"
                     }`}
                     style={{
                       transform: sweep ? "rotateZ(180deg)" : "rotateZ(0deg)",

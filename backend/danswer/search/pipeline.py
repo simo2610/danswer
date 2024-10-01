@@ -7,11 +7,10 @@ from sqlalchemy.orm import Session
 
 from danswer.chat.models import SectionRelevancePiece
 from danswer.configs.chat_configs import DISABLE_LLM_DOC_RELEVANCE
-from danswer.configs.chat_configs import MULTILINGUAL_QUERY_EXPANSION
-from danswer.db.embedding_model import get_current_db_embedding_model
 from danswer.db.models import User
+from danswer.db.search_settings import get_current_search_settings
 from danswer.document_index.factory import get_default_document_index
-from danswer.llm.answering.models import DocumentPruningConfig
+from danswer.document_index.interfaces import VespaChunkRequest
 from danswer.llm.answering.models import PromptConfig
 from danswer.llm.answering.prune_and_merge import _merge_sections
 from danswer.llm.answering.prune_and_merge import ChunkRange
@@ -27,6 +26,7 @@ from danswer.search.models import RerankMetricsContainer
 from danswer.search.models import RetrievalMetricsContainer
 from danswer.search.models import SearchQuery
 from danswer.search.models import SearchRequest
+from danswer.search.postprocessing.postprocessing import cleanup_chunks
 from danswer.search.postprocessing.postprocessing import search_postprocessing
 from danswer.search.preprocessing.preprocessing import retrieval_preprocessing
 from danswer.search.retrieval.search_runner import retrieve_chunks
@@ -36,7 +36,6 @@ from danswer.secondary_llm_flows.agentic_evaluation import evaluate_inference_se
 from danswer.utils.logger import setup_logger
 from danswer.utils.threadpool_concurrency import FunctionCall
 from danswer.utils.threadpool_concurrency import run_functions_in_parallel
-from danswer.utils.threadpool_concurrency import run_functions_tuples_in_parallel
 from danswer.utils.timing import log_function_time
 
 logger = setup_logger()
@@ -56,7 +55,6 @@ class SearchPipeline:
         ) = None,
         rerank_metrics_callback: Callable[[RerankMetricsContainer], None] | None = None,
         prompt_config: PromptConfig | None = None,
-        pruning_config: DocumentPruningConfig | None = None,
     ):
         self.search_request = search_request
         self.user = user
@@ -67,18 +65,16 @@ class SearchPipeline:
         self.retrieval_metrics_callback = retrieval_metrics_callback
         self.rerank_metrics_callback = rerank_metrics_callback
 
-        self.embedding_model = get_current_db_embedding_model(db_session)
+        self.search_settings = get_current_search_settings(db_session)
         self.document_index = get_default_document_index(
-            primary_index_name=self.embedding_model.index_name,
+            primary_index_name=self.search_settings.index_name,
             secondary_index_name=None,
         )
         self.prompt_config: PromptConfig | None = prompt_config
-        self.pruning_config: DocumentPruningConfig | None = pruning_config
 
         # Preprocessing steps generate this
         self._search_query: SearchQuery | None = None
         self._predicted_search_type: SearchType | None = None
-        self._predicted_flow: QueryFlow | None = None
 
         # Initial document index retrieval chunks
         self._retrieved_chunks: list[InferenceChunk] | None = None
@@ -96,14 +92,13 @@ class SearchPipeline:
             Iterator[list[InferenceSection] | list[SectionRelevancePiece]] | None
         ) = None
 
+        # No longer computed but keeping around in case it's reintroduced later
+        self._predicted_flow: QueryFlow | None = QueryFlow.QUESTION_ANSWER
+
     """Pre-processing"""
 
     def _run_preprocessing(self) -> None:
-        (
-            final_search_query,
-            predicted_search_type,
-            predicted_flow,
-        ) = retrieval_preprocessing(
+        final_search_query = retrieval_preprocessing(
             search_request=self.search_request,
             user=self.user,
             llm=self.llm,
@@ -111,8 +106,7 @@ class SearchPipeline:
             bypass_acl=self.bypass_acl,
         )
         self._search_query = final_search_query
-        self._predicted_search_type = predicted_search_type
-        self._predicted_flow = predicted_flow
+        self._predicted_search_type = final_search_query.search_type
 
     @property
     def search_query(self) -> SearchQuery:
@@ -142,19 +136,14 @@ class SearchPipeline:
     """Retrieval and Postprocessing"""
 
     def _get_chunks(self) -> list[InferenceChunk]:
-        """TODO as a future extension:
-        If large chunks (above 512 tokens) are used which cannot be directly fed to the LLM,
-        This step should run the two retrievals to get all of the base size chunks
-        """
         if self._retrieved_chunks is not None:
             return self._retrieved_chunks
 
+        # These chunks do not include large chunks and have been deduped
         self._retrieved_chunks = retrieve_chunks(
             query=self.search_query,
             document_index=self.document_index,
             db_session=self.db_session,
-            hybrid_alpha=self.search_request.hybrid_alpha,
-            multilingual_expansion_str=MULTILINGUAL_QUERY_EXPANSION,
             retrieval_metrics_callback=self.retrieval_metrics_callback,
         )
 
@@ -171,55 +160,58 @@ class SearchPipeline:
         if self._retrieved_sections is not None:
             return self._retrieved_sections
 
+        # These chunks are ordered, deduped, and contain no large chunks
         retrieved_chunks = self._get_chunks()
 
         above = self.search_query.chunks_above
         below = self.search_query.chunks_below
 
-        functions_with_args: list[tuple[Callable, tuple]] = []
         expanded_inference_sections = []
+        inference_chunks: list[InferenceChunk] = []
+        chunk_requests: list[VespaChunkRequest] = []
 
         # Full doc setting takes priority
-
         if self.search_query.full_doc:
             seen_document_ids = set()
-            unique_chunks = []
 
             # This preserves the ordering since the chunks are retrieved in score order
             for chunk in retrieved_chunks:
                 if chunk.document_id not in seen_document_ids:
                     seen_document_ids.add(chunk.document_id)
-                    unique_chunks.append(chunk)
-
-                    functions_with_args.append(
-                        (
-                            self.document_index.id_based_retrieval,
-                            (
-                                chunk.document_id,
-                                None,  # Start chunk ind
-                                None,  # End chunk ind
-                                # There is no chunk level permissioning, this expansion around chunks
-                                # can be assumed to be safe
-                                IndexFilters(access_control_list=None),
-                            ),
+                    chunk_requests.append(
+                        VespaChunkRequest(
+                            document_id=chunk.document_id,
                         )
                     )
-            list_inference_chunks = run_functions_tuples_in_parallel(
-                functions_with_args, allow_failures=False
+
+            inference_chunks.extend(
+                cleanup_chunks(
+                    self.document_index.id_based_retrieval(
+                        chunk_requests=chunk_requests,
+                        filters=IndexFilters(access_control_list=None),
+                    )
+                )
             )
 
-            for ind, chunk in enumerate(unique_chunks):
-                inf_chunks = list_inference_chunks[ind]
+            # Create a dictionary to group chunks by document_id
+            grouped_inference_chunks: dict[str, list[InferenceChunk]] = {}
+            for chunk in inference_chunks:
+                if chunk.document_id not in grouped_inference_chunks:
+                    grouped_inference_chunks[chunk.document_id] = []
+                grouped_inference_chunks[chunk.document_id].append(chunk)
 
+            for chunk_group in grouped_inference_chunks.values():
                 inference_section = inference_section_from_chunks(
-                    center_chunk=chunk,
-                    chunks=inf_chunks,
+                    center_chunk=chunk_group[0],
+                    chunks=chunk_group,
                 )
 
                 if inference_section is not None:
                     expanded_inference_sections.append(inference_section)
                 else:
-                    logger.warning("Skipped creation of section, no chunks found")
+                    logger.warning(
+                        "Skipped creation of section for full docs, no chunks found"
+                    )
 
             self._retrieved_sections = expanded_inference_sections
             return expanded_inference_sections
@@ -250,38 +242,40 @@ class SearchPipeline:
         ]
 
         flat_ranges: list[ChunkRange] = [r for ranges in merged_ranges for r in ranges]
-        flattened_inference_chunks: list[InferenceChunk] = []
-        parallel_functions_with_args = []
 
         for chunk_range in flat_ranges:
             # Don't need to fetch chunks within range for merging if chunk_above / below are 0.
             if above == below == 0:
-                flattened_inference_chunks.extend(chunk_range.chunks)
+                inference_chunks.extend(chunk_range.chunks)
 
             else:
-                parallel_functions_with_args.append(
-                    (
-                        self.document_index.id_based_retrieval,
-                        (
-                            chunk_range.chunks[0].document_id,
-                            chunk_range.start,
-                            chunk_range.end,
-                            IndexFilters(access_control_list=None),
-                        ),
+                chunk_requests.append(
+                    VespaChunkRequest(
+                        document_id=chunk_range.chunks[0].document_id,
+                        min_chunk_ind=chunk_range.start,
+                        max_chunk_ind=chunk_range.end,
                     )
                 )
 
-        if parallel_functions_with_args:
-            list_inference_chunks = run_functions_tuples_in_parallel(
-                parallel_functions_with_args, allow_failures=False
+        if chunk_requests:
+            inference_chunks.extend(
+                cleanup_chunks(
+                    self.document_index.id_based_retrieval(
+                        chunk_requests=chunk_requests,
+                        filters=IndexFilters(access_control_list=None),
+                        batch_retrieval=True,
+                    )
+                )
             )
-            for inference_chunks in list_inference_chunks:
-                flattened_inference_chunks.extend(inference_chunks)
 
         doc_chunk_ind_to_chunk = {
-            (chunk.document_id, chunk.chunk_id): chunk
-            for chunk in flattened_inference_chunks
+            (chunk.document_id, chunk.chunk_id): chunk for chunk in inference_chunks
         }
+
+        # In case of failed parallel calls to Vespa, at least we should have the initial retrieved chunks
+        doc_chunk_ind_to_chunk.update(
+            {(chunk.document_id, chunk.chunk_id): chunk for chunk in retrieved_chunks}
+        )
 
         # Build the surroundings for all of the initial retrieved chunks
         for chunk in retrieved_chunks:
@@ -373,10 +367,10 @@ class SearchPipeline:
             try:
                 results = run_functions_in_parallel(function_calls=functions)
                 self._section_relevance = list(results.values())
-            except Exception:
+            except Exception as e:
                 raise ValueError(
-                    "An issue occured during the agentic evaluation proecss."
-                )
+                    "An issue occured during the agentic evaluation process."
+                ) from e
 
         elif self.search_query.evaluation_type == LLMEvaluationType.BASIC:
             if DISABLE_LLM_DOC_RELEVANCE:
@@ -402,6 +396,6 @@ class SearchPipeline:
     def section_relevance_list(self) -> list[bool]:
         llm_indices = relevant_sections_to_indices(
             relevance_sections=self.section_relevance,
-            inference_sections=self.final_context_sections,
+            items=self.final_context_sections,
         )
         return [ind in llm_indices for ind in range(len(self.final_context_sections))]

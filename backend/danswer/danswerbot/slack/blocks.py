@@ -25,7 +25,6 @@ from danswer.danswerbot.slack.constants import DISLIKE_BLOCK_ACTION_ID
 from danswer.danswerbot.slack.constants import FEEDBACK_DOC_BUTTON_BLOCK_ACTION_ID
 from danswer.danswerbot.slack.constants import FOLLOWUP_BUTTON_ACTION_ID
 from danswer.danswerbot.slack.constants import FOLLOWUP_BUTTON_RESOLVED_ACTION_ID
-from danswer.danswerbot.slack.constants import GENERATE_ANSWER_BUTTON_ACTION_ID
 from danswer.danswerbot.slack.constants import IMMEDIATE_RESOLVED_BUTTON_ACTION_ID
 from danswer.danswerbot.slack.constants import LIKE_BLOCK_ACTION_ID
 from danswer.danswerbot.slack.icons import source_to_github_img_link
@@ -70,6 +69,10 @@ def _process_citations_for_slack(text: str) -> str:
     def slack_link_format(match: Match) -> str:
         link_text = match.group(1)
         link_url = match.group(2)
+
+        # Account for empty link citations
+        if link_url == "":
+            return f"[{link_text}]"
         return f"<{link_url}|[{link_text}]>"
 
     # Substitute all matches in the input text
@@ -299,7 +302,9 @@ def build_sources_blocks(
                     else []
                 )
                 + [
-                    MarkdownTextObject(
+                    MarkdownTextObject(text=f"{document_title}")
+                    if d.link == ""
+                    else MarkdownTextObject(
                         text=f"*<{d.link}|[{citation_num}] {document_title}>*\n{final_metadata_str}"
                     ),
                 ]
@@ -352,22 +357,6 @@ def build_quotes_block(
         return []
 
     return [SectionBlock(text="*Relevant Snippets*\n" + "\n".join(quote_lines))]
-
-
-def build_standard_answer_blocks(
-    answer_message: str,
-) -> list[Block]:
-    generate_button_block = ButtonElement(
-        action_id=GENERATE_ANSWER_BUTTON_ACTION_ID,
-        text="Generate Full Answer",
-    )
-    answer_block = SectionBlock(text=answer_message)
-    return [
-        answer_block,
-        ActionsBlock(
-            elements=[generate_button_block],
-        ),
-    ]
 
 
 def build_qa_response_blocks(

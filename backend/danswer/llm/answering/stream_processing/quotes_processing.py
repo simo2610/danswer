@@ -26,8 +26,7 @@ from danswer.utils.text_processing import shared_precompare_cleanup
 
 
 logger = setup_logger()
-
-answer_pattern = re.compile(r'{\s*"answer"\s*:\s*"')
+answer_pattern = re.compile(r'{\s*"answer"\s*:\s*"', re.IGNORECASE)
 
 
 def _extract_answer_quotes_freeform(
@@ -171,11 +170,11 @@ def process_answer(
         logger.debug("No answer extracted from raw output")
         return DanswerAnswer(answer=None), DanswerQuotes(quotes=[])
 
-    logger.info(f"Answer: {answer}")
+    logger.notice(f"Answer: {answer}")
     if not quote_strings:
         logger.debug("No quotes extracted from raw output")
         return DanswerAnswer(answer=answer), DanswerQuotes(quotes=[])
-    logger.info(f"All quotes (including unmatched): {quote_strings}")
+    logger.debug(f"All quotes (including unmatched): {quote_strings}")
     quotes = match_quotes_to_docs(quote_strings, docs)
     logger.debug(f"Final quotes: {quotes}")
 
@@ -198,7 +197,7 @@ def _extract_quotes_from_completed_token_stream(
 ) -> DanswerQuotes:
     answer, quotes = process_answer(model_output, context_docs, is_json_prompt)
     if answer:
-        logger.info(answer)
+        logger.notice(answer)
     elif model_output:
         logger.warning("Answer extraction from model output failed.")
 
@@ -231,12 +230,13 @@ def process_model_tokens(
         model_output += token
 
         if not found_answer_start:
-            m = answer_pattern.match(model_output)
+            m = answer_pattern.search(model_output)
             if m:
                 found_answer_start = True
 
-                # Prevent heavy cases of hallucinations where model is not even providing a json until later
-                if is_json_prompt and len(model_output) > 40:
+                # Prevent heavy cases of hallucinations where model is never providing a JSON
+                # We want to quickly update the user - not stream forever
+                if is_json_prompt and len(model_output) > 70:
                     logger.warning("LLM did not produce json as prompted")
                     found_answer_end = True
                     continue
@@ -285,7 +285,9 @@ def process_model_tokens(
 def build_quotes_processor(
     context_docs: list[LlmDoc], is_json_prompt: bool
 ) -> Callable[[Iterator[str]], AnswerQuestionStreamReturn]:
-    def stream_processor(tokens: Iterator[str]) -> AnswerQuestionStreamReturn:
+    def stream_processor(
+        tokens: Iterator[str],
+    ) -> AnswerQuestionStreamReturn:
         yield from process_model_tokens(
             tokens=tokens,
             context_docs=context_docs,

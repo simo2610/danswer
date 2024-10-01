@@ -7,7 +7,7 @@ import { Folder } from "../folders/interfaces";
 import { CHAT_SESSION_ID_KEY, FOLDER_ID_KEY } from "@/lib/drag/constants";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { pageType } from "./types";
 
 export function PagesTab({
@@ -17,6 +17,9 @@ export function PagesTab({
   folders,
   openedFolders,
   closeSidebar,
+  newFolderId,
+  showShareModal,
+  showDeleteModal,
 }: {
   page: pageType;
   existingChats?: ChatSession[];
@@ -24,6 +27,9 @@ export function PagesTab({
   folders?: Folder[];
   openedFolders?: { [key: number]: boolean };
   closeSidebar?: () => void;
+  newFolderId: number | null;
+  showShareModal?: (chatSession: ChatSession) => void;
+  showDeleteModal?: (chatSession: ChatSession) => void;
 }) {
   const groupedChatSessions = existingChats
     ? groupSessionsByDateRange(existingChats)
@@ -60,13 +66,14 @@ export function PagesTab({
   const isHistoryEmpty = !existingChats || existingChats.length === 0;
 
   return (
-    <div className="mb-1 ml-3 relative miniscroll mobile:pb-40 overflow-y-auto h-full">
+    <div className="mb-1 text-text-sidebar ml-3 relative miniscroll mobile:pb-40 overflow-y-auto h-full">
       {folders && folders.length > 0 && (
         <div className="py-2 border-b border-border">
           <div className="text-xs text-subtle flex pb-0.5 mb-1.5 mt-2 font-bold">
             Chat Folders
           </div>
           <FolderList
+            newFolderId={newFolderId}
             folders={folders}
             currentChatId={currentChatId}
             openedFolders={openedFolders}
@@ -85,14 +92,14 @@ export function PagesTab({
         } rounded-md`}
       >
         {(page == "chat" || page == "search") && (
-          <p className="my-2 text-xs text-subtle flex font-bold">
+          <p className="my-2 text-xs text-sidebar-subtle flex font-bold">
             {page == "chat" && "Chat "}
             {page == "search" && "Search "}
             History
           </p>
         )}
         {isHistoryEmpty ? (
-          <p className="text-sm text-subtle mt-2 w-[250px]">
+          <p className="text-sm mt-2 w-[250px]">
             {page === "search"
               ? "Try running a search! Your search history will appear here."
               : "Try sending a message! Your chat history will appear here."}
@@ -104,7 +111,7 @@ export function PagesTab({
                 return (
                   <div key={dateRange}>
                     <div
-                      className={`text-xs text-subtle ${
+                      className={`text-xs text-text-sidebar-subtle ${
                         ind != 0 && "mt-5"
                       } flex pb-0.5 mb-1.5 font-medium`}
                     >
@@ -117,6 +124,8 @@ export function PagesTab({
                         return (
                           <div key={`${chat.id}-${chat.name}`}>
                             <ChatSessionDisplay
+                              showDeleteModal={showDeleteModal}
+                              showShareModal={showShareModal}
                               closeSidebar={closeSidebar}
                               search={page == "search"}
                               chatSession={chat}

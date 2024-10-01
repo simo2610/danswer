@@ -257,6 +257,121 @@ def process_text(
             "[[1]](https://0.com)[[2]]()t]",
             ["doc_0", "doc_1"],
         ),
+        (
+            "Citations with extraneous citations",
+            [
+                "[[1]](https://0.com) Citation",
+                " at ",
+                "the beginning. ",
+                "[",
+                "3",
+                "]",
+                " In the mid",
+                "dle. At the end ",
+                "[",
+                "5",
+                "]",
+                ".",
+            ],
+            "[[1]](https://0.com) Citation at the beginning. [[2]]() In the middle. At the end [[3]](https://2.com).",
+            ["doc_0", "doc_1", "doc_2"],
+        ),
+        (
+            "Citations with extraneous citations, split up",
+            [
+                "[[1]](",
+                "https://0.com) Citation at ",
+                "the beginning. ",
+            ],
+            "[[1]](https://0.com) Citation at the beginning. ",
+            ["doc_0"],
+        ),
+        (
+            "Code block without language specification",
+            [
+                "Here's",
+                " a code block",
+                ":\n```\nd",
+                "ef example():\n    pass\n",
+                "```\n",
+                "End of code.",
+            ],
+            "Here's a code block:\n```plaintext\ndef example():\n    pass\n```\nEnd of code.",
+            [],
+        ),
+        (
+            "Code block with language specification",
+            [
+                "Here's a Python code block:\n",
+                "```",
+                "python",
+                "\n",
+                "def greet",
+                "(name):",
+                "\n    ",
+                "print",
+                "(f'Hello, ",
+                "{name}!')",
+                "\n",
+                "greet('World')",
+                "\n```\n",
+                "This function ",
+                "greets the user.",
+            ],
+            "Here's a Python code block:\n```python\ndef greet(name):\n    "
+            "print(f'Hello, {name}!')\ngreet('World')\n```\nThis function greets the user.",
+            [],
+        ),
+        (
+            "Multiple code blocks with different languages",
+            [
+                "JavaScript example:\n",
+                "```",
+                "javascript",
+                "\n",
+                "console",
+                ".",
+                "log",
+                "('Hello, World!');",
+                "\n```\n",
+                "Python example",
+                ":\n",
+                "```",
+                "python",
+                "\n",
+                "print",
+                "('Hello, World!')",
+                "\n```\n",
+                "Both print greetings",
+                ".",
+            ],
+            "JavaScript example:\n```javascript\nconsole.log('Hello, World!');\n"
+            "```\nPython example:\n```python\nprint('Hello, World!')\n"
+            "```\nBoth print greetings.",
+            [],
+        ),
+        (
+            "Code block with text block",
+            [
+                "Here's a code block with a text block:\n",
+                "```\n",
+                "# This is a comment",
+                "\n",
+                "x = 10  # This assigns 10 to x\n",
+                "print",
+                "(x)  # This prints x",
+                "\n```\n",
+                "The code demonstrates variable assignment.",
+            ],
+            "Here's a code block with a text block:\n"
+            "```plaintext\n"
+            "# This is a comment\n"
+            "x = 10  # This assigns 10 to x\n"
+            "print(x)  # This prints x\n"
+            "```\n"
+            "The code demonstrates variable assignment.",
+            [],
+        ),
     ],
 )
 def test_citation_extraction(

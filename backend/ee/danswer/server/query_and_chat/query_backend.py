@@ -1,5 +1,3 @@
-from typing import cast
-
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
@@ -8,12 +6,7 @@ from sqlalchemy.orm import Session
 
 from danswer.auth.users import current_user
 from danswer.configs.danswerbot_configs import DANSWER_BOT_TARGET_CHUNK_PERCENTAGE
-from danswer.danswerbot.slack.handlers.handle_standard_answers import (
-    oneoff_standard_answers,
-)
-from danswer.db.chat import translate_db_search_doc_to_server_search_doc
 from danswer.db.engine import get_session
-from danswer.db.models import SearchDoc
 from danswer.db.models import User
 from danswer.db.persona import get_persona_by_id
 from danswer.llm.answering.prompts.citations_prompt import (
@@ -31,11 +24,15 @@ from danswer.search.models import SearchRequest
 from danswer.search.pipeline import SearchPipeline
 from danswer.search.utils import dedupe_documents
 from danswer.search.utils import drop_llm_indices
-from danswer.search.utils import relevant_documents_to_indices
+from danswer.search.utils import relevant_sections_to_indices
 from danswer.utils.logger import setup_logger
+from ee.danswer.danswerbot.slack.handlers.handle_standard_answers import (
+    oneoff_standard_answers,
+)
 from ee.danswer.server.query_and_chat.models import DocumentSearchRequest
 from ee.danswer.server.query_and_chat.models import StandardAnswerRequest
 from ee.danswer.server.query_and_chat.models import StandardAnswerResponse
+from ee.danswer.server.query_and_chat.utils import create_temporary_persona
 
 
 logger = setup_logger()
@@ -55,9 +52,10 @@ def handle_search_request(
 ) -> DocumentSearchResponse:
     """Simple search endpoint, does not create a new message or records in the DB"""
     query = search_request.message
-    logger.info(f"Received document search query: {query}")
+    logger.notice(f"Received document search query: {query}")
 
     llm, fast_llm = get_default_llms()
+
     search_pipeline = SearchPipeline(
         search_request=SearchRequest(
             query=query,
@@ -67,7 +65,7 @@ def handle_search_request(
             persona=None,  # For simplicity, default settings should be good for this search
             offset=search_request.retrieval_options.offset,
             limit=search_request.retrieval_options.limit,
-            skip_rerank=search_request.skip_rerank,
+            rerank_settings=search_request.rerank_settings,
             evaluation_type=search_request.evaluation_type,
             chunks_above=search_request.chunks_above,
             chunks_below=search_request.chunks_below,
@@ -113,12 +111,8 @@ def handle_search_request(
     if search_request.retrieval_options.dedupe_docs:
         deduped_docs, dropped_inds = dedupe_documents(top_docs)
 
-    llm_indices = relevant_documents_to_indices(
-        relevance_sections=relevance_sections,
-        search_docs=[
-            translate_db_search_doc_to_server_search_doc(cast(SearchDoc, doc))
-            for doc in deduped_docs
-        ],
+    llm_indices = relevant_sections_to_indices(
+        relevance_sections=relevance_sections, items=deduped_docs
     )
 
     if dropped_inds:
@@ -138,14 +132,25 @@ def get_answer_with_quote(
     db_session: Session = Depends(get_session),
 ) -> OneShotQAResponse:
     query = query_request.messages[0].message
-    logger.info(f"Received query for one shot answer API with quotes: {query}")
+    logger.notice(f"Received query for one shot answer API with quotes: {query}")
 
-    persona = get_persona_by_id(
-        persona_id=query_request.persona_id,
-        user=user,
-        db_session=db_session,
-        is_for_edit=False,
-    )
+    if query_request.persona_config is not None:
+        new_persona = create_temporary_persona(
+            db_session=db_session,
+            persona_config=query_request.persona_config,
+            user=user,
+        )
+        persona = new_persona
+
+    elif query_request.persona_id is not None:
+        persona = get_persona_by_id(
+            persona_id=query_request.persona_id,
+            user=user,
+            db_session=db_session,
+            is_for_edit=False,
+        )
+    else:
+        raise KeyError("Must provide persona ID or Persona Config")
 
     llm = get_main_llm_from_tuple(
         get_default_llms() if not persona else get_llms_for_persona(persona)

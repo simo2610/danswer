@@ -53,10 +53,15 @@ const ToggleSwitch = () => {
         onClick={() => handleTabChange("search")}
       >
         <SearchIcon size={16} className="mr-2" />
-        <p className="items-baseline flex">
+        <div className="flex  items-center">
           Search
-          <span className="text-xs ml-2">{commandSymbol}S</span>
-        </p>
+          <div className="ml-2 flex content-center">
+            <span className="leading-none pb-[1px] my-auto">
+              {commandSymbol}
+            </span>
+            <span className="my-auto">S</span>
+          </div>
+        </div>
       </button>
       <button
         className={`px-4 py-2 rounded-full text-sm font-medium transition-colors duration-300 ease-in-out flex items-center relative z-10 ${
@@ -67,10 +72,15 @@ const ToggleSwitch = () => {
         onClick={() => handleTabChange("chat")}
       >
         <ChatIcon size={16} className="mr-2" />
-        <p className="items-baseline flex">
+        <div className="items-end flex">
           Chat
-          <span className="text-xs ml-2">{commandSymbol}D</span>
-        </p>
+          <div className="ml-2 flex content-center">
+            <span className="leading-none pb-[1px] my-auto">
+              {commandSymbol}
+            </span>
+            <span className="my-auto">D</span>
+          </div>
+        </div>
       </button>
     </div>
   );
@@ -80,7 +90,10 @@ export default function FunctionalWrapper({
   initiallyToggled,
   content,
 }: {
-  content: (toggledSidebar: boolean, toggle: () => void) => ReactNode;
+  content: (
+    toggledSidebar: boolean,
+    toggle: (toggled?: boolean) => void
+  ) => ReactNode;
   initiallyToggled: boolean;
 }) {
   const router = useRouter();
@@ -119,15 +132,15 @@ export default function FunctionalWrapper({
   const settings = combinedSettings?.settings;
   const chatBannerPresent =
     combinedSettings?.enterpriseSettings?.custom_header_content;
+  const twoLines =
+    combinedSettings?.enterpriseSettings?.two_lines_for_chat_header;
 
   const [toggledSidebar, setToggledSidebar] = useState(initiallyToggled);
 
   const toggle = (value?: boolean) => {
-    if (value !== undefined) {
-      setToggledSidebar(value);
-    } else {
-      setToggledSidebar((prevState) => !prevState);
-    }
+    setToggledSidebar((toggledSidebar) =>
+      value !== undefined ? value : !toggledSidebar
+    );
   };
 
   return (
@@ -135,7 +148,7 @@ export default function FunctionalWrapper({
       {(!settings ||
         (settings.search_page_enabled && settings.chat_page_enabled)) && (
         <div
-          className={`mobile:hidden z-30 flex fixed ${chatBannerPresent ? "top-20" : "top-4"} left-1/2 transform -translate-x-1/2`}
+          className={`mobile:hidden z-30 flex fixed ${chatBannerPresent ? (twoLines ? "top-20" : "top-14") : "top-4"} left-1/2 transform -translate-x-1/2`}
         >
           <div
             style={{ transition: "width 0.30s ease-out" }}

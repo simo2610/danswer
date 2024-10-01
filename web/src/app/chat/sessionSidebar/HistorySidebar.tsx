@@ -1,13 +1,11 @@
 "use client";
 
 import { FiEdit, FiFolderPlus } from "react-icons/fi";
-import { ForwardedRef, forwardRef, useContext, useEffect } from "react";
+import { ForwardedRef, forwardRef, useContext, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChatSession } from "../interfaces";
-
 import { NEXT_PUBLIC_NEW_CHAT_DIRECTS_TO_SAME_PERSONA } from "@/lib/constants";
-
 import { Folder } from "../folders/interfaces";
 import { createFolder } from "../folders/FolderManagement";
 import { usePopup } from "@/components/admin/connectors/Popup";
@@ -32,6 +30,10 @@ interface HistorySidebarProps {
   toggled?: boolean;
   removeToggle?: () => void;
   reset?: () => void;
+  showShareModal?: (chatSession: ChatSession) => void;
+  showDeleteModal?: (chatSession: ChatSession) => void;
+  stopGenerating?: () => void;
+  explicitlyUntoggle: () => void;
 }
 
 export const HistorySidebar = forwardRef<HTMLDivElement, HistorySidebarProps>(
@@ -44,28 +46,33 @@ export const HistorySidebar = forwardRef<HTMLDivElement, HistorySidebarProps>(
       currentChatSession,
       folders,
       openedFolders,
+      explicitlyUntoggle,
       toggleSidebar,
       removeToggle,
+      stopGenerating = () => null,
+      showShareModal,
+      showDeleteModal,
     },
     ref: ForwardedRef<HTMLDivElement>
   ) => {
     const router = useRouter();
     const { popup, setPopup } = usePopup();
 
+    // For determining intial focus state
+    const [newFolderId, setNewFolderId] = useState<number | null>(null);
+
     const currentChatId = currentChatSession?.id;
 
-    // prevent the NextJS Router cache from causing the chat sidebar to not
-    // update / show an outdated list of chats
-    useEffect(() => {
-      router.refresh();
-    }, [currentChatId]);
+    // NOTE: do not do something like the below - assume that the parent
+    // will handle properly refreshing the existingChats
+    // useEffect(() => {
+    //   router.refresh();
+    // }, [currentChatId]);
 
     const combinedSettings = useContext(SettingsContext);
     if (!combinedSettings) {
       return null;
     }
-
-    const enterpriseSettings = combinedSettings.enterpriseSettings;
 
     const handleNewChat = () => {
       reset();
@@ -80,13 +87,12 @@ export const HistorySidebar = forwardRef<HTMLDivElement, HistorySidebarProps>(
     return (
       <>
         {popup}
-
         <div
           ref={ref}
           className={`
             flex
             flex-none
-            bg-background-100
+            bg-background-sidebar
             w-full
             border-r 
             border-border 
@@ -94,13 +100,14 @@ export const HistorySidebar = forwardRef<HTMLDivElement, HistorySidebarProps>(
             flex-col relative
             h-screen
             transition-transform 
-            mt-2`}
+            pt-2`}
         >
           <LogoType
             showArrow={true}
             toggled={toggled}
             page={page}
             toggleSidebar={toggleSidebar}
+            explicitlyUntoggle={explicitlyUntoggle}
           />
           {page == "chat" && (
             <div className="mx-3 mt-4 gap-y-1 flex-col flex gap-x-1.5 items-center items-center">
@@ -129,8 +136,8 @@ export const HistorySidebar = forwardRef<HTMLDivElement, HistorySidebarProps>(
                 onClick={() =>
                   createFolder("New Folder")
                     .then((folderId) => {
-                      console.log(`Folder created with ID: ${folderId}`);
                       router.refresh();
+                      setNewFolderId(folderId);
                     })
                     .catch((error) => {
                       console.error("Failed to create folder:", error);
@@ -168,6 +175,9 @@ export const HistorySidebar = forwardRef<HTMLDivElement, HistorySidebarProps>(
           )}
           <div className="border-b border-border pb-4 mx-3" />
           <PagesTab
+            newFolderId={newFolderId}
+            showDeleteModal={showDeleteModal}
+            showShareModal={showShareModal}
             closeSidebar={removeToggle}
             page={page}
             existingChats={existingChats}

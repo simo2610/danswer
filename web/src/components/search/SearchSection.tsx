@@ -4,7 +4,6 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { FullSearchBar } from "./SearchBar";
 import { SearchResultsDisplay } from "./SearchResultsDisplay";
 import { SourceSelector } from "./filtering/Filters";
-import { CCPairBasicInfo, DocumentSet, Tag, User } from "@/lib/types";
 import {
   Quote,
   SearchResponse,
@@ -31,22 +30,16 @@ import { SIDEBAR_TOGGLED_COOKIE_NAME } from "../resizable/constants";
 import { AGENTIC_SEARCH_TYPE_COOKIE_NAME } from "@/lib/constants";
 import Cookies from "js-cookie";
 import FixedLogo from "@/app/chat/shared_chat_search/FixedLogo";
-import { AnswerSection } from "./results/AnswerSection";
-import { QuotesSection } from "./results/QuotesSection";
-import { QAFeedbackBlock } from "./QAFeedback";
 import { usePopup } from "../admin/connectors/Popup";
-import { ToggleRight } from "@phosphor-icons/react";
-import {
-  DislikeFeedbackIcon,
-  LikeFeedbackIcon,
-  ToggleDown,
-  ToggleUp,
-} from "../icons/icons";
-import { CustomTooltip, TooltipGroup } from "../tooltip/CustomTooltip";
-import { HoverableIcon } from "../Hoverable";
 import { FeedbackType } from "@/app/chat/types";
 import { FeedbackModal } from "@/app/chat/modal/FeedbackModal";
-import { handleChatFeedback } from "@/app/chat/lib";
+import { deleteChatSession, handleChatFeedback } from "@/app/chat/lib";
+import SearchAnswer from "./SearchAnswer";
+import { DeleteEntityModal } from "../modals/DeleteEntityModal";
+import { ApiKeyModal } from "../llm/ApiKeyModal";
+import { useSearchContext } from "../context/SearchContext";
+import { useUser } from "../user/UserProvider";
+import UnconfiguredProviderText from "../chat_search/UnconfiguredProviderText";
 
 export type searchState =
   | "input"
@@ -68,33 +61,28 @@ const VALID_QUESTION_RESPONSE_DEFAULT: ValidQuestionResponse = {
 };
 
 interface SearchSectionProps {
-  disabledAgentic: boolean;
-  ccPairs: CCPairBasicInfo[];
-  documentSets: DocumentSet[];
-  personas: Persona[];
-  tags: Tag[];
   toggle: () => void;
-  querySessions: ChatSession[];
   defaultSearchType: SearchType;
-  user: User | null;
   toggledSidebar: boolean;
-  agenticSearchEnabled: boolean;
 }
 
 export const SearchSection = ({
-  ccPairs,
   toggle,
-  disabledAgentic,
-  documentSets,
-  agenticSearchEnabled,
-  personas,
-  user,
-  tags,
-  querySessions,
   toggledSidebar,
   defaultSearchType,
 }: SearchSectionProps) => {
-  // Search Bar
+  const {
+    querySessions,
+    ccPairs,
+    documentSets,
+    assistants,
+    tags,
+    shouldShowWelcomeModal,
+    agenticSearchEnabled,
+    disabledAgentic,
+    shouldDisplayNoSources,
+  } = useSearchContext();
+
   const [query, setQuery] = useState<string>("");
   const [comments, setComments] = useState<any>(null);
   const [contentEnriched, setContentEnriched] = useState(false);
@@ -110,8 +98,9 @@ export const SearchSection = ({
     messageId: null,
   });
 
+  const [showApiKeyModal, setShowApiKeyModal] = useState(true);
+
   const [agentic, setAgentic] = useState(agenticSearchEnabled);
-  const [searchAnswerExpanded, setSearchAnswerExpanded] = useState(false);
 
   const toggleAgentic = () => {
     Cookies.set(
@@ -150,16 +139,13 @@ export const SearchSection = ({
   }, []);
   const [isFetching, setIsFetching] = useState(false);
 
-  const [validQuestionResponse, setValidQuestionResponse] =
-    useObjectState<ValidQuestionResponse>(VALID_QUESTION_RESPONSE_DEFAULT);
-
   // Search Type
-  const [selectedSearchType, setSelectedSearchType] =
-    useState<SearchType>(defaultSearchType);
+  const selectedSearchType = defaultSearchType;
 
-  const [selectedPersona, setSelectedPersona] = useState<number>(
-    personas[0]?.id || 0
-  );
+  // If knowledge assistant exists, use it. Otherwise, use first available assistant for search.
+  const selectedPersona = assistants.find((assistant) => assistant.id === 0)
+    ? 0
+    : assistants[0]?.id;
 
   // Used for search state display
   const [analyzeStartTime, setAnalyzeStartTime] = useState<number>(0);
@@ -169,8 +155,8 @@ export const SearchSection = ({
   const availableSources = ccPairs.map((ccPair) => ccPair.source);
   const [finalAvailableSources, finalAvailableDocumentSets] =
     computeAvailableFilters({
-      selectedPersona: personas.find(
-        (persona) => persona.id === selectedPersona
+      selectedPersona: assistants.find(
+        (assistant) => assistant.id === selectedPersona
       ),
       availableSources: availableSources,
       availableDocumentSets: documentSets,
@@ -279,7 +265,7 @@ export const SearchSection = ({
       ...(prevState || initialSearchResponse),
       quotes,
     }));
-    setSearchState((searchState) => "input");
+    setSearchState((searchState) => "citing");
   };
 
   const updateDocs = (documents: SearchDanswerDocument[]) => {
@@ -306,7 +292,7 @@ export const SearchSection = ({
     }));
     if (disabledAgentic) {
       setIsFetching(false);
-      setSearchState("input");
+      setSearchState((searchState) => "citing");
     }
     if (documents.length == 0) {
       setSearchState("input");
@@ -344,11 +330,8 @@ export const SearchSection = ({
       messageId,
     }));
     router.refresh();
-    // setSearchState("input");
     setIsFetching(false);
     setSearchState((searchState) => "input");
-
-    // router.replace(`/search?searchId=${chat_session_id}`);
   };
 
   const updateDocumentRelevance = (relevance: Relevance) => {
@@ -376,6 +359,8 @@ export const SearchSection = ({
       setSearchState("input");
     }
   };
+  const { user } = useUser();
+  const [searchAnswerExpanded, setSearchAnswerExpanded] = useState(false);
 
   const resetInput = (finalized?: boolean) => {
     setSweep(false);
@@ -385,6 +370,7 @@ export const SearchSection = ({
     setSearchAnswerExpanded(false);
   };
 
+  const [previousSearch, setPreviousSearch] = useState<string>("");
   const [agenticResults, setAgenticResults] = useState<boolean | null>(null);
 
   let lastSearchCancellationToken = useRef<CancellationToken | null>(null);
@@ -408,7 +394,7 @@ export const SearchSection = ({
 
     setIsFetching(true);
     setSearchResponse(initialSearchResponse);
-    setValidQuestionResponse(VALID_QUESTION_RESPONSE_DEFAULT);
+    setPreviousSearch(overrideMessage || query);
     const searchFnArgs = {
       query: overrideMessage || query,
       sources: filterManager.selectedSources,
@@ -416,8 +402,8 @@ export const SearchSection = ({
       documentSets: filterManager.selectedDocumentSets,
       timeRange: filterManager.timeRange,
       tags: filterManager.selectedTags,
-      persona: personas.find(
-        (persona) => persona.id === selectedPersona
+      persona: assistants.find(
+        (assistant) => assistant.id === selectedPersona
       ) as Persona,
       updateCurrentAnswer: cancellable({
         cancellationToken: lastSearchCancellationToken.current,
@@ -522,6 +508,23 @@ export const SearchSection = ({
   };
   const [firstSearch, setFirstSearch] = useState(true);
   const [searchState, setSearchState] = useState<searchState>("input");
+  const [deletingChatSession, setDeletingChatSession] =
+    useState<ChatSession | null>();
+
+  const showDeleteModal = (chatSession: ChatSession) => {
+    setDeletingChatSession(chatSession);
+  };
+  // Used to maintain a "time out" for history sidebar so our existing refs can have time to process change
+  const [untoggled, setUntoggled] = useState(false);
+
+  const explicitlyUntoggle = () => {
+    setShowDocSidebar(false);
+
+    setUntoggled(true);
+    setTimeout(() => {
+      setUntoggled(false);
+    }, 200);
+  };
 
   useSidebarVisibility({
     toggledSidebar,
@@ -545,32 +548,6 @@ export const SearchSection = ({
   const [currentFeedback, setCurrentFeedback] = useState<
     [FeedbackType, number] | null
   >(null);
-
-  //
-  const [searchAnswerOverflowing, setSearchAnswerOverflowing] = useState(false);
-  const answerContainerRef = useRef<HTMLDivElement>(null);
-
-  const handleFeedback = (feedbackType: FeedbackType, messageId: number) => {
-    setCurrentFeedback([feedbackType, messageId]);
-  };
-
-  useEffect(() => {
-    const checkOverflow = () => {
-      if (answerContainerRef.current) {
-        const isOverflowing =
-          answerContainerRef.current.scrollHeight >
-          answerContainerRef.current.clientHeight;
-        setSearchAnswerOverflowing(isOverflowing);
-      }
-    };
-
-    checkOverflow();
-    window.addEventListener("resize", checkOverflow);
-
-    return () => {
-      window.removeEventListener("resize", checkOverflow);
-    };
-  }, [answer]);
 
   const onFeedback = async (
     messageId: number,
@@ -604,10 +581,44 @@ export const SearchSection = ({
 
   const { popup, setPopup } = usePopup();
 
+  const shouldUseAgenticDisplay =
+    agenticResults &&
+    (searchResponse.documents || []).some(
+      (document) =>
+        searchResponse.additional_relevance &&
+        searchResponse.additional_relevance[document.document_id] !== undefined
+    );
+
   return (
     <>
-      <div className="flex relative w-full pr-[8px] h-full text-default">
+      <div className="flex relative pr-[8px] h-full text-default">
         {popup}
+
+        {!shouldDisplayNoSources &&
+          showApiKeyModal &&
+          !shouldShowWelcomeModal && (
+            <ApiKeyModal hide={() => setShowApiKeyModal(false)} />
+          )}
+
+        {deletingChatSession && (
+          <DeleteEntityModal
+            entityType="search"
+            entityName={deletingChatSession.name}
+            onClose={() => setDeletingChatSession(null)}
+            onSubmit={async () => {
+              const response = await deleteChatSession(deletingChatSession.id);
+              if (response.ok) {
+                setDeletingChatSession(null);
+                // go back to the main page
+                router.push("/search");
+              } else {
+                const responseJson = await response.json();
+                setPopup({ message: responseJson.detail, type: "error" });
+              }
+              router.refresh();
+            }}
+          />
+        )}
         {currentFeedback && (
           <FeedbackModal
             feedbackType={currentFeedback[0]}
@@ -637,7 +648,7 @@ export const SearchSection = ({
             duration-300 
             ease-in-out
             ${
-              showDocSidebar || toggledSidebar
+              !untoggled && (showDocSidebar || toggledSidebar)
                 ? "opacity-100 w-[250px] translate-x-0"
                 : "opacity-0 w-[200px] pointer-events-none -translate-x-10"
             }
@@ -645,6 +656,8 @@ export const SearchSection = ({
         >
           <div className="w-full relative">
             <HistorySidebar
+              showDeleteModal={showDeleteModal}
+              explicitlyUntoggle={explicitlyUntoggle}
               reset={() => setQuery("")}
               page="search"
               ref={innerSidebarElementRef}
@@ -655,7 +668,7 @@ export const SearchSection = ({
           </div>
         </div>
 
-        <div className="absolute left-0 w-full top-0">
+        <div className="absolute include-scrollbar h-screen overflow-y-auto left-0 w-full top-0">
           <FunctionalHeader
             sidebarToggled={toggledSidebar}
             reset={() => setQuery("")}
@@ -681,14 +694,14 @@ export const SearchSection = ({
 
             {
               <div
-                className={`desktop:px-24 w-full  ${chatBannerPresent && "mt-10"} pt-10 relative max-w-[2000px] xl:max-w-[1430px] mx-auto`}
+                className={`desktop:px-24 w-full ${chatBannerPresent && "mt-10"} pt-10 relative max-w-[2000px] xl:max-w-[1430px] mx-auto`}
               >
-                <div className="absolute z-10 mobile:px-4 mobile:max-w-searchbar-max mobile:w-[90%] top-12 desktop:left-0 hidden 2xl:block mobile:left-1/2 mobile:transform mobile:-translate-x-1/2 desktop:w-52 3xl:w-64">
+                <div className="absolute z-10 mobile:px-4 mobile:max-w-searchbar-max mobile:w-[90%] top-12 desktop:left-4 hidden 2xl:block mobile:left-1/2 mobile:transform mobile:-translate-x-1/2 desktop:w-52 3xl:w-64">
                   {!settings?.isMobile &&
                     (ccPairs.length > 0 || documentSets.length > 0) && (
                       <SourceSelector
                         {...filterManager}
-                        showDocSidebar={showDocSidebar || toggledSidebar}
+                        showDocSidebar={toggledSidebar}
                         availableDocumentSets={finalAvailableDocumentSets}
                         existingSources={finalAvailableSources}
                         availableTags={tags}
@@ -701,6 +714,7 @@ export const SearchSection = ({
                     <div className="mt-6">
                       {!(agenticResults && isFetching) || disabledAgentic ? (
                         <SearchResultsDisplay
+                          searchState={searchState}
                           disabledAgentic={disabledAgentic}
                           contentEnriched={contentEnriched}
                           comments={comments}
@@ -738,10 +752,17 @@ export const SearchSection = ({
                         </div>
                       </div>
                     </div>
+
+                    <UnconfiguredProviderText
+                      showConfigureAPIKey={() => setShowApiKeyModal(true)}
+                    />
+
                     <FullSearchBar
+                      disabled={previousSearch === query}
                       toggleAgentic={
                         disabledAgentic ? undefined : toggleAgentic
                       }
+                      showingSidebar={toggledSidebar}
                       agentic={agentic}
                       query={query}
                       setQuery={setQuery}
@@ -758,147 +779,29 @@ export const SearchSection = ({
                     />
                   </div>
                   {!firstSearch && (
-                    <div
-                      ref={answerContainerRef}
-                      className={`my-4 ${searchAnswerExpanded ? "min-h-[16rem]" : "h-[16rem]"}  overflow-y-hidden p-4 border-2 border-border rounded-lg relative`}
-                    >
-                      <div>
-                        <div className="flex gap-x-2">
-                          <h2 className="text-emphasis font-bold my-auto mb-1 ">
-                            AI Answer
-                          </h2>
-
-                          {searchState == "generating" && (
-                            <div
-                              key={"generating"}
-                              className="relative inline-block"
-                            >
-                              <span className="loading-text">
-                                Generating response...
-                              </span>
-                            </div>
-                          )}
-
-                          {searchState == "citing" && (
-                            <div
-                              key={"citing"}
-                              className="relative inline-block"
-                            >
-                              <span className="loading-text">
-                                Creating citations...
-                              </span>
-                            </div>
-                          )}
-
-                          {searchState == "searching" && (
-                            <div
-                              key={"Reading"}
-                              className="relative inline-block"
-                            >
-                              <span className="loading-text">Searching...</span>
-                            </div>
-                          )}
-
-                          {searchState == "reading" && (
-                            <div
-                              key={"Reading"}
-                              className="relative inline-block"
-                            >
-                              <span className="loading-text">
-                                Reading{settings?.isMobile ? "" : " Documents"}
-                                ...
-                              </span>
-                            </div>
-                          )}
-
-                          {searchState == "analyzing" && (
-                            <div
-                              key={"Generating"}
-                              className="relative inline-block"
-                            >
-                              <span className="loading-text">
-                                Running
-                                {settings?.isMobile ? "" : " Analysis"}...
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div
-                          className={`pt-1 h-auto   border-t border-border w-full`}
-                        >
-                          <AnswerSection
-                            answer={answer}
-                            quotes={quotes}
-                            error={error}
-                            isFetching={isFetching}
-                          />
-                        </div>
-
-                        {searchAnswerExpanded ||
-                          (!searchAnswerOverflowing && (
-                            <div className="w-full">
-                              {quotes !== null &&
-                                quotes.length > 0 &&
-                                answer && (
-                                  <QuotesSection
-                                    quotes={dedupedQuotes}
-                                    isFetching={isFetching}
-                                  />
-                                )}
-
-                              {searchResponse.messageId !== null && (
-                                <div className="absolute right-3 flex bottom-3">
-                                  <HoverableIcon
-                                    icon={<LikeFeedbackIcon />}
-                                    onClick={() =>
-                                      handleFeedback(
-                                        "like",
-                                        searchResponse?.messageId as number
-                                      )
-                                    }
-                                  />
-                                  <HoverableIcon
-                                    icon={<DislikeFeedbackIcon />}
-                                    onClick={() =>
-                                      handleFeedback(
-                                        "dislike",
-                                        searchResponse?.messageId as number
-                                      )
-                                    }
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                      </div>
-                      {!searchAnswerExpanded && searchAnswerOverflowing && (
-                        <div className="absolute bottom-0 left-0 w-full h-[100px] bg-gradient-to-b from-background/5 via-background/60 to-background/90"></div>
-                      )}
-
-                      {!searchAnswerExpanded && searchAnswerOverflowing && (
-                        <div className="w-full h-12 absolute items-center content-center flex left-0 px-4 bottom-0">
-                          <button
-                            onClick={() => setSearchAnswerExpanded(true)}
-                            className="flex gap-x-1 items-center justify-center hover:bg-background-100 cursor-pointer max-w-sm text-sm mx-auto w-full bg-background border py-2 rounded-full"
-                          >
-                            Show more
-                            <ToggleDown />
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <SearchAnswer
+                      isFetching={isFetching}
+                      dedupedQuotes={dedupedQuotes}
+                      searchResponse={searchResponse}
+                      setSearchAnswerExpanded={setSearchAnswerExpanded}
+                      searchAnswerExpanded={searchAnswerExpanded}
+                      setCurrentFeedback={setCurrentFeedback}
+                      searchState={searchState}
+                    />
                   )}
 
                   {!settings?.isMobile && (
                     <div className="mt-6">
                       {!(agenticResults && isFetching) || disabledAgentic ? (
                         <SearchResultsDisplay
+                          searchState={searchState}
                           disabledAgentic={disabledAgentic}
                           contentEnriched={contentEnriched}
                           comments={comments}
                           sweep={sweep}
-                          agenticResults={agenticResults && !disabledAgentic}
+                          agenticResults={
+                            shouldUseAgenticDisplay && !disabledAgentic
+                          }
                           performSweep={performSweep}
                           searchResponse={searchResponse}
                           isFetching={isFetching}

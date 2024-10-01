@@ -18,11 +18,11 @@ import {
 } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import {
-  FiCheck,
   FiChevronDown,
   FiChevronRight,
   FiSettings,
-  FiXCircle,
+  FiLock,
+  FiUnlock,
 } from "react-icons/fi";
 import { Tooltip } from "@/components/tooltip/Tooltip";
 import { SourceIcon } from "@/components/SourceIcon";
@@ -32,16 +32,7 @@ import { Warning } from "@phosphor-icons/react";
 import Cookies from "js-cookie";
 import { TOGGLED_CONNECTORS_COOKIE_NAME } from "@/lib/constants";
 import { usePaidEnterpriseFeaturesEnabled } from "@/components/settings/usePaidEnterpriseFeaturesEnabled";
-
-const columnWidths = {
-  first: "20%",
-  second: "15%",
-  third: "15%",
-  fourth: "15%",
-  fifth: "15%",
-  sixth: "15%",
-  seventh: "5%",
-};
+import { ConnectorCredentialPairStatus } from "../../connector/[ccPairId]/types";
 
 function SummaryRow({
   source,
@@ -60,9 +51,9 @@ function SummaryRow({
   return (
     <TableRow
       onClick={onToggle}
-      className="border-border bg-white rounded-sm !border sbg-white cursor-pointer"
+      className="border-border bg-white py-4 rounded-sm !border cursor-pointer"
     >
-      <TableCell className={`py-4 w-[${columnWidths.first}]`}>
+      <TableCell>
         <div className="text-xl flex items-center truncate ellipsis gap-x-2 font-semibold">
           <div className="cursor-pointer">
             {isOpen ? (
@@ -76,12 +67,12 @@ function SummaryRow({
         </div>
       </TableCell>
 
-      <TableCell className={`py-4 w-[${columnWidths.first}]`}>
+      <TableCell>
         <div className="text-sm text-gray-500">Total Connectors</div>
         <div className="text-xl font-semibold">{summary.count}</div>
       </TableCell>
 
-      <TableCell className={` py-4 w-[${columnWidths.second}]`}>
+      <TableCell>
         <div className="text-sm text-gray-500">Active Connectors</div>
         <Tooltip
           content={`${summary.active} out of ${summary.count} connectors are active`}
@@ -101,7 +92,7 @@ function SummaryRow({
       </TableCell>
 
       {isPaidEnterpriseFeaturesEnabled && (
-        <TableCell className={`py-4 w-[${columnWidths.fourth}]`}>
+        <TableCell>
           <div className="text-sm text-gray-500">Public Connectors</div>
           <p className="flex text-xl mx-auto font-semibold items-center text-lg mt-1">
             {summary.public}/{summary.count}
@@ -109,14 +100,14 @@ function SummaryRow({
         </TableCell>
       )}
 
-      <TableCell className={`py-4 w-[${columnWidths.fifth}]`}>
+      <TableCell>
         <div className="text-sm text-gray-500">Total Docs Indexed</div>
         <div className="text-xl font-semibold">
           {summary.totalDocsIndexed.toLocaleString()}
         </div>
       </TableCell>
 
-      <TableCell className={`w-[${columnWidths.sixth}]`}>
+      <TableCell>
         <div className="text-sm text-gray-500">Errors</div>
 
         <div className="flex items-center text-lg gap-x-1 font-semibold">
@@ -125,7 +116,7 @@ function SummaryRow({
         </div>
       </TableCell>
 
-      <TableCell className={`w-[${columnWidths.seventh}]`}></TableCell>
+      <TableCell />
     </TableRow>
   );
 }
@@ -133,9 +124,11 @@ function SummaryRow({
 function ConnectorRow({
   ccPairsIndexingStatus,
   invisible,
+  isEditable,
 }: {
   ccPairsIndexingStatus: ConnectorIndexingStatus<any, any>;
   invisible?: boolean;
+  isEditable: boolean;
 }) {
   const router = useRouter();
   const isPaidEnterpriseFeaturesEnabled = usePaidEnterpriseFeaturesEnabled();
@@ -146,20 +139,25 @@ function ConnectorRow({
   };
 
   const getActivityBadge = () => {
-    if (ccPairsIndexingStatus.connector.disabled) {
-      if (ccPairsIndexingStatus.deletion_attempt) {
-        return (
-          <Badge
-            color="red"
-            className="w-fit px-2 py-1 rounded-full border border-red-500"
-          >
-            <div className="flex text-xs items-center gap-x-1">
-              <div className="w-3 h-3 rounded-full bg-red-500"></div>
-              Deleting
-            </div>
-          </Badge>
-        );
-      }
+    if (
+      ccPairsIndexingStatus.cc_pair_status ===
+      ConnectorCredentialPairStatus.DELETING
+    ) {
+      return (
+        <Badge
+          color="red"
+          className="w-fit px-2 py-1 rounded-full border border-red-500"
+        >
+          <div className="flex text-xs items-center gap-x-1">
+            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+            Deleting
+          </div>
+        </Badge>
+      );
+    } else if (
+      ccPairsIndexingStatus.cc_pair_status ===
+      ConnectorCredentialPairStatus.PAUSED
+    ) {
       return (
         <Badge
           color="yellow"
@@ -172,6 +170,8 @@ function ConnectorRow({
         </Badge>
       );
     }
+
+    // ACTIVE case
     switch (ccPairsIndexingStatus.last_status) {
       case "in_progress":
         return (
@@ -217,44 +217,53 @@ function ConnectorRow({
       className={`hover:bg-hover-light ${
         invisible ? "invisible h-0 !-mb-10" : "border border-border !border-b"
       }  w-full cursor-pointer relative`}
-      onClick={() =>
-        router.push(`/admin/connector/${ccPairsIndexingStatus.cc_pair_id}`)
-      }
+      onClick={() => {
+        router.push(`/admin/connector/${ccPairsIndexingStatus.cc_pair_id}`);
+      }}
     >
-      <TableCell className={`!pr-0 w-[${columnWidths.first}]`}>
-        <p className="w-[200px] inline-block ellipsis truncate">
+      <TableCell className="!w-[300px]">
+        <p className="w-[200px] xl:w-[400px] inline-block ellipsis truncate">
           {ccPairsIndexingStatus.name}
         </p>
       </TableCell>
-      <TableCell className={` w-[${columnWidths.fifth}]`}>
+      <TableCell>
         {timeAgo(ccPairsIndexingStatus?.last_success) || "-"}
       </TableCell>
-      <TableCell className={`w-[${columnWidths.third}]`}>
-        {getActivityBadge()}
-      </TableCell>
+      <TableCell>{getActivityBadge()}</TableCell>
       {isPaidEnterpriseFeaturesEnabled && (
-        <TableCell className={`w-[${columnWidths.fourth}]`}>
-          {ccPairsIndexingStatus.public_doc ? (
-            <FiCheck className="my-auto text-emerald-600" size="18" />
+        <TableCell>
+          {ccPairsIndexingStatus.access_type === "public" ? (
+            <Badge
+              size="md"
+              color={isEditable ? "green" : "gray"}
+              icon={FiUnlock}
+            >
+              Public
+            </Badge>
           ) : (
-            <FiXCircle className="my-auto text-red-600" />
+            <Badge size="md" color={isEditable ? "blue" : "gray"} icon={FiLock}>
+              Private
+            </Badge>
           )}
         </TableCell>
       )}
-      <TableCell className={`w-[${columnWidths.sixth}]`}>
-        {ccPairsIndexingStatus.docs_indexed}
-      </TableCell>
-      <TableCell className={`w-[${columnWidths.second}]`}>
+      <TableCell>{ccPairsIndexingStatus.docs_indexed}</TableCell>
+      <TableCell>
         <IndexAttemptStatus
           status={ccPairsIndexingStatus.last_finished_status || null}
           errorMsg={ccPairsIndexingStatus?.latest_index_attempt?.error_msg}
           size="xs"
         />
       </TableCell>
-      <TableCell className={`w-[${columnWidths.seventh}]`}>
-        <CustomTooltip content="Manage Connector">
-          <FiSettings className="cursor-pointer" onClick={handleManageClick} />
-        </CustomTooltip>
+      <TableCell>
+        {isEditable && (
+          <CustomTooltip content="Manage Connector">
+            <FiSettings
+              className="cursor-pointer"
+              onClick={handleManageClick}
+            />
+          </CustomTooltip>
+        )}
       </TableCell>
     </TableRow>
   );
@@ -262,8 +271,10 @@ function ConnectorRow({
 
 export function CCPairIndexingStatusTable({
   ccPairsIndexingStatuses,
+  editableCcPairsIndexingStatuses,
 }: {
   ccPairsIndexingStatuses: ConnectorIndexingStatus<any, any>[];
+  editableCcPairsIndexingStatuses: ConnectorIndexingStatus<any, any>[];
 }) {
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -286,12 +297,29 @@ export function CCPairIndexingStatusTable({
   const { groupedStatuses, sortedSources, groupSummaries } = useMemo(() => {
     const grouped: Record<ValidSources, ConnectorIndexingStatus<any, any>[]> =
       {} as Record<ValidSources, ConnectorIndexingStatus<any, any>[]>;
+
+    // First, add editable connectors
+    editableCcPairsIndexingStatuses.forEach((status) => {
+      const source = status.connector.source;
+      if (!grouped[source]) {
+        grouped[source] = [];
+      }
+      grouped[source].unshift(status);
+    });
+
+    // Then, add non-editable connectors
     ccPairsIndexingStatuses.forEach((status) => {
       const source = status.connector.source;
       if (!grouped[source]) {
         grouped[source] = [];
       }
-      grouped[source].push(status);
+      if (
+        !editableCcPairsIndexingStatuses.some(
+          (e) => e.cc_pair_id === status.cc_pair_id
+        )
+      ) {
+        grouped[source].push(status);
+      }
     });
 
     const sorted = Object.keys(grouped).sort() as ValidSources[];
@@ -302,8 +330,12 @@ export function CCPairIndexingStatusTable({
       const statuses = grouped[source];
       summaries[source] = {
         count: statuses.length,
-        active: statuses.filter((status) => !status.connector.disabled).length,
-        public: statuses.filter((status) => status.public_doc).length,
+        active: statuses.filter(
+          (status) =>
+            status.cc_pair_status === ConnectorCredentialPairStatus.ACTIVE
+        ).length,
+        public: statuses.filter((status) => status.access_type === "public")
+          .length,
         totalDocsIndexed: statuses.reduce(
           (sum, status) => sum + status.docs_indexed,
           0
@@ -318,7 +350,7 @@ export function CCPairIndexingStatusTable({
       sortedSources: sorted,
       groupSummaries: summaries,
     };
-  }, [ccPairsIndexingStatuses]);
+  }, [ccPairsIndexingStatuses, editableCcPairsIndexingStatuses]);
 
   const toggleSource = (
     source: ValidSources,
@@ -362,6 +394,7 @@ export function CCPairIndexingStatusTable({
           ccPairsIndexingStatus={{
             cc_pair_id: 1,
             name: "Sample File Connector",
+            cc_pair_status: ConnectorCredentialPairStatus.ACTIVE,
             last_status: "success",
             connector: {
               name: "Sample File Connector",
@@ -373,7 +406,6 @@ export function CCPairIndexingStatusTable({
               refresh_freq: 86400,
               prune_freq: null,
               indexing_start: new Date("2023-07-01T12:00:00Z"),
-              disabled: false,
               id: 1,
               credential_ids: [],
               time_created: "2023-07-01T12:00:00Z",
@@ -389,7 +421,7 @@ export function CCPairIndexingStatusTable({
               credential_json: {},
               admin_public: false,
             },
-            public_doc: true,
+            access_type: "public",
             docs_indexed: 1000,
             last_success: "2023-07-01T12:00:00Z",
             last_finished_status: "success",
@@ -398,102 +430,87 @@ export function CCPairIndexingStatusTable({
             error_msg: "",
             deletion_attempt: null,
             is_deletable: true,
+            groups: [], // Add this line
           }}
+          isEditable={false}
         />
-        <div className="-mb-10" />
+        <div className="flex items-center w-0 mt-4 gap-x-2">
+          <input
+            type="text"
+            ref={searchInputRef}
+            placeholder="Search connectors..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="ml-1 w-96 h-9 flex-none rounded-md border border-border bg-background-50 px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+
+          <Button className="h-9" onClick={() => toggleSources()}>
+            {!shouldExpand ? "Collapse All" : "Expand All"}
+          </Button>
+        </div>
 
         <TableBody>
-          <div className="flex items-center mt-4 gap-x-2">
-            <input
-              type="text"
-              ref={searchInputRef}
-              placeholder="Search connectors..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="ml-2 w-96 h-9 flex-none rounded-md border-2 border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
-
-            <Button className="h-9" onClick={() => toggleSources()}>
-              {!shouldExpand ? "Collapse All" : "Expand All"}
-            </Button>
-          </div>
-          {sortedSources.map((source, ind) => {
-            const sourceMatches = source
-              .toLowerCase()
-              .includes(searchTerm.toLowerCase());
-            const matchingConnectors = groupedStatuses[source].filter(
-              (status) =>
-                (status.name || "")
-                  .toLowerCase()
-                  .includes(searchTerm.toLowerCase())
-            );
-            if (sourceMatches || matchingConnectors.length > 0) {
-              return (
-                <React.Fragment key={ind}>
-                  <div className="mt-4" />
-
-                  <SummaryRow
-                    source={source}
-                    summary={groupSummaries[source]}
-                    isOpen={connectorsToggled[source] || false}
-                    onToggle={() => toggleSource(source)}
-                  />
-
-                  {connectorsToggled[source] && (
-                    <>
-                      <TableRow className="border border-border">
-                        <TableHeaderCell
-                          className={`w-[${columnWidths.first}]`}
-                        >
-                          Name
-                        </TableHeaderCell>
-                        <TableHeaderCell
-                          className={`w-[${columnWidths.fifth}]`}
-                        >
-                          Last Indexed
-                        </TableHeaderCell>
-                        <TableHeaderCell
-                          className={`w-[${columnWidths.second}]`}
-                        >
-                          Activity
-                        </TableHeaderCell>
-                        {isPaidEnterpriseFeaturesEnabled && (
-                          <TableHeaderCell
-                            className={`w-[${columnWidths.fourth}]`}
-                          >
-                            Public
-                          </TableHeaderCell>
-                        )}
-                        <TableHeaderCell
-                          className={`w-[${columnWidths.sixth}]`}
-                        >
-                          Total Docs
-                        </TableHeaderCell>
-                        <TableHeaderCell
-                          className={`w-[${columnWidths.third}]`}
-                        >
-                          Last Status
-                        </TableHeaderCell>
-                        <TableHeaderCell
-                          className={`w-[${columnWidths.seventh}]`}
-                        ></TableHeaderCell>
-                      </TableRow>
-                      {(sourceMatches
-                        ? groupedStatuses[source]
-                        : matchingConnectors
-                      ).map((ccPairsIndexingStatus) => (
-                        <ConnectorRow
-                          key={ccPairsIndexingStatus.cc_pair_id}
-                          ccPairsIndexingStatus={ccPairsIndexingStatus}
-                        />
-                      ))}
-                    </>
-                  )}
-                </React.Fragment>
+          {sortedSources
+            .filter(
+              (source) =>
+                source != "not_applicable" && source != "ingestion_api"
+            )
+            .map((source, ind) => {
+              const sourceMatches = source
+                .toLowerCase()
+                .includes(searchTerm.toLowerCase());
+              const matchingConnectors = groupedStatuses[source].filter(
+                (status) =>
+                  (status.name || "")
+                    .toLowerCase()
+                    .includes(searchTerm.toLowerCase())
               );
-            }
-            return null;
-          })}
+              if (sourceMatches || matchingConnectors.length > 0) {
+                return (
+                  <React.Fragment key={ind}>
+                    <br className="mt-4" />
+
+                    <SummaryRow
+                      source={source}
+                      summary={groupSummaries[source]}
+                      isOpen={connectorsToggled[source] || false}
+                      onToggle={() => toggleSource(source)}
+                    />
+
+                    {connectorsToggled[source] && (
+                      <>
+                        <TableRow className="border border-border">
+                          <TableHeaderCell>Name</TableHeaderCell>
+                          <TableHeaderCell>Last Indexed</TableHeaderCell>
+                          <TableHeaderCell>Activity</TableHeaderCell>
+                          {isPaidEnterpriseFeaturesEnabled && (
+                            <TableHeaderCell>Permissions</TableHeaderCell>
+                          )}
+                          <TableHeaderCell>Total Docs</TableHeaderCell>
+                          <TableHeaderCell>Last Status</TableHeaderCell>
+                          <TableHeaderCell></TableHeaderCell>
+                        </TableRow>
+                        {(sourceMatches
+                          ? groupedStatuses[source]
+                          : matchingConnectors
+                        ).map((ccPairsIndexingStatus) => (
+                          <ConnectorRow
+                            key={ccPairsIndexingStatus.cc_pair_id}
+                            ccPairsIndexingStatus={ccPairsIndexingStatus}
+                            isEditable={editableCcPairsIndexingStatuses.some(
+                              (e) =>
+                                e.cc_pair_id ===
+                                ccPairsIndexingStatus.cc_pair_id
+                            )}
+                          />
+                        ))}
+                      </>
+                    )}
+                  </React.Fragment>
+                );
+              }
+              return null;
+            })}
         </TableBody>
 
         <div className="invisible w-full pb-40" />

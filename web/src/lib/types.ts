@@ -1,9 +1,13 @@
 import { Persona } from "@/app/admin/assistants/interfaces";
 import { Credential } from "./connectors/credentials";
 import { Connector } from "./connectors/connectors";
+import { ConnectorCredentialPairStatus } from "@/app/admin/connector/[ccPairId]/types";
 
 export interface UserPreferences {
   chosen_assistants: number[] | null;
+  visible_assistants: number[];
+  hidden_assistants: number[];
+  default_model: string | null;
 }
 
 export enum UserStatus {
@@ -12,13 +16,27 @@ export enum UserStatus {
   deactivated = "deactivated",
 }
 
+export enum UserRole {
+  BASIC = "basic",
+  ADMIN = "admin",
+  CURATOR = "curator",
+  GLOBAL_CURATOR = "global_curator",
+}
+
+export const USER_ROLE_LABELS: Record<UserRole, string> = {
+  [UserRole.BASIC]: "Basic",
+  [UserRole.ADMIN]: "Admin",
+  [UserRole.GLOBAL_CURATOR]: "Global Curator",
+  [UserRole.CURATOR]: "Curator",
+};
+
 export interface User {
   id: string;
   email: string;
   is_active: string;
   is_superuser: string;
   is_verified: string;
-  role: "basic" | "admin";
+  role: UserRole;
   preferences: UserPreferences;
   status: UserStatus;
   current_token_created_at?: Date;
@@ -34,11 +52,14 @@ export interface MinimalUserSnapshot {
 export type ValidInputTypes = "load_state" | "poll" | "event";
 export type ValidStatuses =
   | "success"
+  | "completed_with_errors"
   | "failed"
   | "in_progress"
   | "not_started";
 export type TaskStatus = "PENDING" | "STARTED" | "SUCCESS" | "FAILURE";
 export type Feedback = "like" | "dislike";
+export type AccessType = "public" | "private" | "sync";
+export type SessionType = "Chat" | "Search" | "Slack";
 
 export interface DocumentBoostStatus {
   document_id: string;
@@ -48,6 +69,15 @@ export interface DocumentBoostStatus {
   hidden: boolean;
 }
 
+export interface FailedConnectorIndexingStatus {
+  cc_pair_id: number;
+  name: string | null;
+  error_msg: string | null;
+  is_deletable: boolean;
+  connector_id: number;
+  credential_id: number;
+}
+
 export interface IndexAttemptSnapshot {
   id: number;
   status: ValidStatuses | null;
@@ -55,6 +85,7 @@ export interface IndexAttemptSnapshot {
   docs_removed_from_index: number;
   total_docs_indexed: number;
   error_msg: string | null;
+  error_count: number;
   full_exception_trace: string | null;
   time_started: string | null;
   time_updated: string;
@@ -66,10 +97,12 @@ export interface ConnectorIndexingStatus<
 > {
   cc_pair_id: number;
   name: string | null;
+  cc_pair_status: ConnectorCredentialPairStatus;
   connector: Connector<ConnectorConfigType>;
   credential: Credential<ConnectorCredentialType>;
-  public_doc: boolean;
+  access_type: AccessType;
   owner: string;
+  groups: number[];
   last_finished_status: ValidStatuses | null;
   last_status: ValidStatuses | null;
   last_success: string | null;
@@ -139,6 +172,8 @@ export interface StandardAnswer {
   id: number;
   keyword: string;
   answer: string;
+  match_regex: boolean;
+  match_any_keywords: boolean;
   categories: StandardAnswerCategory[];
 }
 
@@ -178,6 +213,7 @@ export interface UserGroup {
   id: number;
   name: string;
   users: User[];
+  curator_ids: string[];
   cc_pairs: CCPairDescriptor<any, any>[];
   document_sets: DocumentSet[];
   personas: Persona[];
@@ -219,11 +255,27 @@ const validSources = [
   "monday_com",
   "wikipedia",
   "mediawiki",
+  "asana",
   "s3",
   "r2",
   "google_cloud_storage",
+  "xenforo",
   "oci_storage",
   "not_applicable",
-];
+  "ingestion_api",
+] as const;
 
 export type ValidSources = (typeof validSources)[number];
+// The valid sources that are actually valid to select in the UI
+export type ConfigurableSources = Exclude<
+  ValidSources,
+  "not_applicable" | "ingestion_api"
+>;
+
+// The sources that have auto-sync support on the backend
+export const validAutoSyncSources = [
+  "confluence",
+  "google_drive",
+  "slack",
+] as const;
+export type ValidAutoSyncSources = (typeof validAutoSyncSources)[number];
