@@ -53,7 +53,6 @@ MASK_CREDENTIAL_PREFIX = (
     os.environ.get("MASK_CREDENTIAL_PREFIX", "True").lower() != "false"
 )
 
-
 SESSION_EXPIRE_TIME_SECONDS = int(
     os.environ.get("SESSION_EXPIRE_TIME_SECONDS") or 86400 * 7
 )  # 7 days
@@ -405,6 +404,8 @@ VESPA_REQUEST_TIMEOUT = int(os.environ.get("VESPA_REQUEST_TIMEOUT") or "5")
 
 SYSTEM_RECURSION_LIMIT = int(os.environ.get("SYSTEM_RECURSION_LIMIT") or "1000")
 
+PARSE_WITH_TRAFILATURA = os.environ.get("PARSE_WITH_TRAFILATURA", "").lower() == "true"
+
 #####
 # Enterprise Edition Configs
 #####
@@ -423,9 +424,27 @@ AZURE_DALLE_API_BASE = os.environ.get("AZURE_DALLE_API_BASE")
 AZURE_DALLE_DEPLOYMENT_NAME = os.environ.get("AZURE_DALLE_DEPLOYMENT_NAME")
 
 
+# Cloud configuration
+
+# Multi-tenancy configuration
 MULTI_TENANT = os.environ.get("MULTI_TENANT", "").lower() == "true"
-SECRET_JWT_KEY = os.environ.get("SECRET_JWT_KEY", "")
+ENABLE_EMAIL_INVITES = os.environ.get("ENABLE_EMAIL_INVITES", "").lower() == "true"
 
+# Security and authentication
+SECRET_JWT_KEY = os.environ.get(
+    "SECRET_JWT_KEY", ""
+)  # Used for encryption of the JWT token for user's tenant context
+DATA_PLANE_SECRET = os.environ.get(
+    "DATA_PLANE_SECRET", ""
+)  # Used for secure communication between the control and data plane
+EXPECTED_API_KEY = os.environ.get(
+    "EXPECTED_API_KEY", ""
+)  # Additional security check for the control plane API
 
-DATA_PLANE_SECRET = os.environ.get("DATA_PLANE_SECRET", "")
-EXPECTED_API_KEY = os.environ.get("EXPECTED_API_KEY", "")
+# API configuration
+CONTROL_PLANE_API_BASE_URL = os.environ.get(
+    "CONTROL_PLANE_API_BASE_URL", "http://localhost:8082"
+)
+
+# JWT configuration
+JWT_ALGORITHM = "HS256"
