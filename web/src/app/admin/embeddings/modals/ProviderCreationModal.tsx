@@ -1,5 +1,7 @@
 import React, { useRef, useState } from "react";
-import { Text, Button, Callout } from "@tremor/react";
+import Text from "@/components/ui/text";
+import { Callout } from "@/components/ui/callout";
+import { Button } from "@/components/ui/button";
 import { Formik, Form } from "formik";
 import * as Yup from "yup";
 import { Label, TextFormField } from "@/components/admin/connectors/Field";
@@ -173,7 +175,6 @@ export function ProviderCreationModal({
 
   return (
     <Modal
-      width="max-w-3xl"
       title={`Configure ${selectedProvider.provider_type}`}
       onOutsideClick={onCancel}
       icon={selectedProvider.icon}
@@ -260,7 +261,9 @@ export function ProviderCreationModal({
                 ) : (
                   <TextFormField
                     name="api_key"
-                    label={`API Key ${isProxy ? "(for non-local deployments)" : ""}`}
+                    label={`API Key ${
+                      isProxy ? "(for non-local deployments)" : ""
+                    }`}
                     placeholder="API Key"
                     type="password"
                   />
@@ -277,14 +280,14 @@ export function ProviderCreationModal({
               </div>
 
               {errorMsg && (
-                <Callout title="Error" color="red">
+                <Callout title="Error" type="danger">
                   {errorMsg}
                 </Callout>
               )}
 
               <Button
                 type="submit"
-                color="blue"
+                variant="submit"
                 className="w-full"
                 disabled={isSubmitting}
               >

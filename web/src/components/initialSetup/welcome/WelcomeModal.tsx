@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { Button, Divider, Text } from "@tremor/react";
+import Text from "@/components/ui/text";
+import { Button } from "@/components/ui/button";
 import { Modal } from "../../Modal";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
@@ -27,7 +28,6 @@ export function _CompletedWelcomeFlowDummyComponent() {
 export function _WelcomeModal({ user }: { user: User | null }) {
   const router = useRouter();
 
-  const [canBegin, setCanBegin] = useState(false);
   const [providerOptions, setProviderOptions] = useState<
     WellKnownLLMProviderDescriptor[]
   >([]);
@@ -59,6 +59,10 @@ export function _WelcomeModal({ user }: { user: User | null }) {
       {popup}
 
       <Modal
+        onOutsideClick={() => {
+          setWelcomeFlowComplete();
+          router.refresh();
+        }}
         title={"Welcome to Danswer!"}
         width="w-full max-h-[900px] overflow-y-scroll max-w-3xl"
       >
@@ -75,19 +79,13 @@ export function _WelcomeModal({ user }: { user: User | null }) {
 
           <div className="max-h-[900px] overflow-y-scroll">
             <ApiKeyForm
+              // Don't show success message on initial setup
+              hideSuccess
               setPopup={setPopup}
-              onSuccess={() => {
-                router.refresh();
-                refreshProviderInfo();
-                setCanBegin(true);
-              }}
+              onSuccess={clientSetWelcomeFlowComplete}
               providerOptions={providerOptions}
             />
           </div>
-          <Divider />
-          <Button disabled={!canBegin} onClick={clientSetWelcomeFlowComplete}>
-            Get Started
-          </Button>
         </div>
       </Modal>
     </>

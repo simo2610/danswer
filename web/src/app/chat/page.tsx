@@ -5,15 +5,14 @@ import { WelcomeModal } from "@/components/initialSetup/welcome/WelcomeModalWrap
 import { ChatProvider } from "@/components/context/ChatContext";
 import { fetchChatData } from "@/lib/chat/fetchChatData";
 import WrappedChat from "./WrappedChat";
-import { AssistantsProvider } from "@/components/context/AssistantsContext";
+import { cookies } from "next/headers";
 
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: { [key: string]: string };
+export default async function Page(props: {
+  searchParams: Promise<{ [key: string]: string }>;
 }) {
+  const searchParams = await props.searchParams;
   noStore();
-
+  const requestCookies = await cookies();
   const data = await fetchChatData(searchParams);
 
   if ("redirect" in data) {
@@ -32,38 +31,31 @@ export default async function Page({
     openedFolders,
     defaultAssistantId,
     shouldShowWelcomeModal,
-    assistants,
     userInputPrompts,
-    hasAnyConnectors,
-    hasImageCompatibleModel,
   } = data;
 
   return (
     <>
       <InstantSSRAutoRefresh />
-      {shouldShowWelcomeModal && <WelcomeModal user={user} />}
-      <AssistantsProvider
-        initialAssistants={assistants}
-        hasAnyConnectors={hasAnyConnectors}
-        hasImageCompatibleModel={hasImageCompatibleModel}
+      {shouldShowWelcomeModal && (
+        <WelcomeModal user={user} requestCookies={requestCookies} />
+      )}
+      <ChatProvider
+        value={{
+          chatSessions,
+          availableSources,
+          availableDocumentSets: documentSets,
+          availableTags: tags,
+          llmProviders,
+          folders,
+          openedFolders,
+          userInputPrompts,
+          shouldShowWelcomeModal,
+          defaultAssistantId,
+        }}
       >
-        <ChatProvider
-          value={{
-            chatSessions,
-            availableSources,
-            availableDocumentSets: documentSets,
-            availableTags: tags,
-            llmProviders,
-            folders,
-            openedFolders,
-            userInputPrompts,
-            shouldShowWelcomeModal,
-            defaultAssistantId,
-          }}
-        >
-          <WrappedChat initiallyToggled={toggleSidebar} />
-        </ChatProvider>
-      </AssistantsProvider>
+        <WrappedChat initiallyToggled={toggleSidebar} />
+      </ChatProvider>
     </>
   );
 }

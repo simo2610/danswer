@@ -16,6 +16,8 @@ from danswer.connectors.discourse.connector import DiscourseConnector
 from danswer.connectors.document360.connector import Document360Connector
 from danswer.connectors.dropbox.connector import DropboxConnector
 from danswer.connectors.file.connector import LocalFileConnector
+from danswer.connectors.fireflies.connector import FirefliesConnector
+from danswer.connectors.freshdesk.connector import FreshdeskConnector
 from danswer.connectors.github.connector import GithubConnector
 from danswer.connectors.gitlab.connector import GitlabConnector
 from danswer.connectors.gmail.connector import GmailConnector
@@ -34,7 +36,6 @@ from danswer.connectors.mediawiki.wiki import MediaWikiConnector
 from danswer.connectors.models import InputType
 from danswer.connectors.notion.connector import NotionConnector
 from danswer.connectors.productboard.connector import ProductboardConnector
-from danswer.connectors.requesttracker.connector import RequestTrackerConnector
 from danswer.connectors.salesforce.connector import SalesforceConnector
 from danswer.connectors.sharepoint.connector import SharepointConnector
 from danswer.connectors.slab.connector import SlabConnector
@@ -65,7 +66,7 @@ def identify_connector_class(
         DocumentSource.SLACK: {
             InputType.LOAD_STATE: SlackLoadConnector,
             InputType.POLL: SlackPollConnector,
-            InputType.PRUNE: SlackPollConnector,
+            InputType.SLIM_RETRIEVAL: SlackPollConnector,
         },
         DocumentSource.GITHUB: GithubConnector,
         DocumentSource.GMAIL: GmailConnector,
@@ -78,7 +79,6 @@ def identify_connector_class(
         DocumentSource.SLAB: SlabConnector,
         DocumentSource.NOTION: NotionConnector,
         DocumentSource.ZULIP: ZulipConnector,
-        DocumentSource.REQUESTTRACKER: RequestTrackerConnector,
         DocumentSource.GURU: GuruConnector,
         DocumentSource.LINEAR: LinearConnector,
         DocumentSource.HUBSPOT: HubSpotConnector,
@@ -103,6 +103,8 @@ def identify_connector_class(
         DocumentSource.OCI_STORAGE: BlobStorageConnector,
         DocumentSource.MONDAY_COM: MondayConnector,
         DocumentSource.XENFORO: XenforoConnector,
+        DocumentSource.FRESHDESK: FreshdeskConnector,
+        DocumentSource.FIREFLIES: FirefliesConnector,
     }
     connector_by_source = connector_map.get(source, {})
 

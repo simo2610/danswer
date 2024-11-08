@@ -11,11 +11,11 @@ from sqlalchemy.orm import Session
 
 from danswer.auth.users import current_curator_or_admin_user
 from danswer.auth.users import current_user
-from danswer.background.celery.celery_redis import RedisConnectorPruning
 from danswer.background.celery.celery_utils import get_deletion_attempt_snapshot
 from danswer.background.celery.tasks.pruning.tasks import (
     try_creating_prune_generator_task,
 )
+from danswer.background.celery.versioned_apps.primary import app as primary_app
 from danswer.db.connector_credential_pair import add_credential_to_connector
 from danswer.db.connector_credential_pair import get_connector_credential_pair_from_id
 from danswer.db.connector_credential_pair import remove_credential_from_connector
@@ -23,7 +23,8 @@ from danswer.db.connector_credential_pair import (
     update_connector_credential_pair_from_id,
 )
 from danswer.db.document import get_document_counts_for_cc_pairs
-from danswer.db.engine import current_tenant_id
+from danswer.db.engine import CURRENT_TENANT_ID_CONTEXTVAR
+from danswer.db.engine import get_current_tenant_id
 from danswer.db.engine import get_session
 from danswer.db.enums import AccessType
 from danswer.db.enums import ConnectorCredentialPairStatus
@@ -33,8 +34,10 @@ from danswer.db.index_attempt import count_index_attempts_for_connector
 from danswer.db.index_attempt import get_latest_index_attempt_for_cc_pair_id
 from danswer.db.index_attempt import get_paginated_index_attempts_for_cc_pair_id
 from danswer.db.models import User
+from danswer.db.search_settings import get_current_search_settings
 from danswer.db.tasks import check_task_is_live_and_not_timed_out
 from danswer.db.tasks import get_latest_task
+from danswer.redis.redis_connector import RedisConnector
 from danswer.redis.redis_pool import get_redis_client
 from danswer.server.documents.models import CCPairFullInfo
 from danswer.server.documents.models import CCStatusUpdateRequest
@@ -48,6 +51,7 @@ from ee.danswer.background.task_name_builders import (
     name_sync_external_doc_permissions_task,
 )
 from ee.danswer.db.user_group import validate_user_creation_permissions
+
 
 logger = setup_logger()
 router = APIRouter(prefix="/manage")
@@ -90,6 +94,7 @@ def get_cc_pair_full_info(
     cc_pair_id: int,
     user: User | None = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str | None = Depends(get_current_tenant_id),
 ) -> CCPairFullInfo:
     cc_pair = get_connector_credential_pair_from_id(
         cc_pair_id, db_session, user, get_editable=False
@@ -120,10 +125,15 @@ def get_cc_pair_full_info(
 
     latest_attempt = get_latest_index_attempt_for_cc_pair_id(
         db_session=db_session,
-        connector_credential_pair_id=cc_pair.id,
+        connector_credential_pair_id=cc_pair_id,
         secondary_index=False,
         only_finished=False,
     )
+
+    search_settings = get_current_search_settings(db_session)
+
+    redis_connector = RedisConnector(tenant_id, cc_pair_id)
+    redis_connector_index = redis_connector.new_index(search_settings.id)
 
     return CCPairFullInfo.from_models(
         cc_pair_model=cc_pair,
@@ -136,9 +146,11 @@ def get_cc_pair_full_info(
             connector_id=cc_pair.connector_id,
             credential_id=cc_pair.credential_id,
             db_session=db_session,
+            tenant_id=tenant_id,
         ),
         num_docs_indexed=documents_indexed,
         is_editable_for_current_user=is_editable_for_current_user,
+        indexing=redis_connector_index.fenced,
     )
 
 
@@ -231,6 +243,7 @@ def prune_cc_pair(
     cc_pair_id: int,
     user: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str | None = Depends(get_current_tenant_id),
 ) -> StatusResponse[list[int]]:
     """Triggers pruning on a particular cc_pair immediately"""
 
@@ -246,9 +259,10 @@ def prune_cc_pair(
             detail="Connection not found for current user's permissions",
         )
 
-    r = get_redis_client()
-    rcp = RedisConnectorPruning(cc_pair_id)
-    if rcp.is_pruning(db_session, r):
+    r = get_redis_client(tenant_id=tenant_id)
+
+    redis_connector = RedisConnector(tenant_id, cc_pair_id)
+    if redis_connector.prune.fenced:
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
             detail="Pruning task already in progress.",
@@ -261,7 +275,7 @@ def prune_cc_pair(
         f"{cc_pair.connector.name} connector."
     )
     tasks_created = try_creating_prune_generator_task(
-        cc_pair, db_session, r, current_tenant_id.get()
+        primary_app, cc_pair, db_session, r, CURRENT_TENANT_ID_CONTEXTVAR.get()
     )
     if not tasks_created:
         raise HTTPException(
@@ -318,7 +332,7 @@ def sync_cc_pair(
     db_session: Session = Depends(get_session),
 ) -> StatusResponse[list[int]]:
     # avoiding circular refs
-    from ee.danswer.background.celery.celery_app import (
+    from ee.danswer.background.celery.apps.primary import (
         sync_external_doc_permissions_task,
     )
 
@@ -347,7 +361,9 @@ def sync_cc_pair(
 
     logger.info(f"Syncing the {cc_pair.connector.name} connector.")
     sync_external_doc_permissions_task.apply_async(
-        kwargs=dict(cc_pair_id=cc_pair_id, tenant_id=current_tenant_id.get()),
+        kwargs=dict(
+            cc_pair_id=cc_pair_id, tenant_id=CURRENT_TENANT_ID_CONTEXTVAR.get()
+        ),
     )
 
     return StatusResponse(

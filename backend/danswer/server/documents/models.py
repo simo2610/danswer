@@ -4,7 +4,6 @@ from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import Field
-from pydantic import model_validator
 
 from danswer.configs.app_configs import MASK_CREDENTIAL_PREFIX
 from danswer.configs.constants import DocumentSource
@@ -222,6 +221,7 @@ class CCPairFullInfo(BaseModel):
     access_type: AccessType
     is_editable_for_current_user: bool
     deletion_failure_message: str | None
+    indexing: bool
 
     @classmethod
     def from_models(
@@ -232,6 +232,7 @@ class CCPairFullInfo(BaseModel):
         last_index_attempt: IndexAttempt | None,
         num_docs_indexed: int,  # not ideal, but this must be computed separately
         is_editable_for_current_user: bool,
+        indexing: bool,
     ) -> "CCPairFullInfo":
         # figure out if we need to artificially deflate the number of docs indexed.
         # This is required since the total number of docs indexed by a CC Pair is
@@ -265,6 +266,7 @@ class CCPairFullInfo(BaseModel):
             access_type=cc_pair_model.access_type,
             is_editable_for_current_user=is_editable_for_current_user,
             deletion_failure_message=cc_pair_model.deletion_failure_message,
+            indexing=indexing,
         )
 
 
@@ -374,18 +376,7 @@ class GoogleServiceAccountKey(BaseModel):
 
 
 class GoogleServiceAccountCredentialRequest(BaseModel):
-    google_drive_delegated_user: str | None = None  # email of user to impersonate
-    gmail_delegated_user: str | None = None  # email of user to impersonate
-
-    @model_validator(mode="after")
-    def check_user_delegation(self) -> "GoogleServiceAccountCredentialRequest":
-        if (self.google_drive_delegated_user is None) == (
-            self.gmail_delegated_user is None
-        ):
-            raise ValueError(
-                "Exactly one of google_drive_delegated_user or gmail_delegated_user must be set"
-            )
-        return self
+    google_primary_admin: str | None = None  # email of user to impersonate
 
 
 class FileUploadResponse(BaseModel):

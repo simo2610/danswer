@@ -1,6 +1,8 @@
 import { LoadingAnimation } from "@/components/Loading";
 import { AdvancedOptionsToggle } from "@/components/AdvancedOptionsToggle";
-import { Button, Divider, Text } from "@tremor/react";
+import Text from "@/components/ui/text";
+import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import { Form, Formik } from "formik";
 import { FiTrash } from "react-icons/fi";
 import { LLM_PROVIDERS_ADMIN_URL } from "./constants";
@@ -25,6 +27,7 @@ export function LLMProviderUpdateForm({
   shouldMarkAsDefault,
   setPopup,
   hideAdvanced,
+  hideSuccess,
 }: {
   llmProviderDescriptor: WellKnownLLMProviderDescriptor;
   onClose: () => void;
@@ -32,6 +35,7 @@ export function LLMProviderUpdateForm({
   shouldMarkAsDefault?: boolean;
   hideAdvanced?: boolean;
   setPopup?: (popup: PopupSpec) => void;
+  hideSuccess?: boolean;
 }) {
   const { mutate } = useSWRConfig();
 
@@ -102,7 +106,7 @@ export function LLMProviderUpdateForm({
       : {}),
     deployment_name: llmProviderDescriptor.deployment_name_required
       ? Yup.string().required("Deployment Name is required")
-      : Yup.string(),
+      : Yup.string().nullable(),
     default_model_name: Yup.string().required("Model name is required"),
     fast_default_model_name: Yup.string().nullable(),
     // EE Only
@@ -142,7 +146,9 @@ export function LLMProviderUpdateForm({
         }
 
         const response = await fetch(
-          `${LLM_PROVIDERS_ADMIN_URL}${existingLlmProvider ? "" : "?is_creation=true"}`,
+          `${LLM_PROVIDERS_ADMIN_URL}${
+            existingLlmProvider ? "" : "?is_creation=true"
+          }`,
           {
             method: "PUT",
             headers: {
@@ -202,7 +208,7 @@ export function LLMProviderUpdateForm({
         const successMsg = existingLlmProvider
           ? "Provider updated successfully!"
           : "Provider enabled successfully!";
-        if (setPopup) {
+        if (!hideSuccess && setPopup) {
           setPopup({
             type: "success",
             message: successMsg,
@@ -271,7 +277,7 @@ export function LLMProviderUpdateForm({
 
           {!(hideAdvanced && llmProviderDescriptor.name != "azure") && (
             <>
-              <Divider />
+              <Separator />
 
               {llmProviderDescriptor.llm_names.length > 0 ? (
                 <SelectorFormField
@@ -330,7 +336,7 @@ export function LLMProviderUpdateForm({
 
               {llmProviderDescriptor.name != "azure" && (
                 <>
-                  <Divider />
+                  <Separator />
 
                   <AdvancedOptionsToggle
                     showAdvancedOptions={showAdvancedOptions}
@@ -381,7 +387,7 @@ export function LLMProviderUpdateForm({
             {testError && <Text className="text-error mt-2">{testError}</Text>}
 
             <div className="flex w-full mt-4">
-              <Button type="submit" size="xs">
+              <Button type="submit" variant="submit">
                 {isTesting ? (
                   <LoadingAnimation text="Testing" />
                 ) : existingLlmProvider ? (
@@ -393,9 +399,8 @@ export function LLMProviderUpdateForm({
               {existingLlmProvider && (
                 <Button
                   type="button"
-                  color="red"
+                  variant="destructive"
                   className="ml-3"
-                  size="xs"
                   icon={FiTrash}
                   onClick={async () => {
                     const response = await fetch(

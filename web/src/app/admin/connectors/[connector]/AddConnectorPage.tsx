@@ -1,10 +1,10 @@
 "use client";
 
-import { FetchError, errorHandlingFetcher } from "@/lib/fetcher";
+import { errorHandlingFetcher } from "@/lib/fetcher";
 import useSWR, { mutate } from "swr";
 import { HealthCheckBanner } from "@/components/health/healthcheck";
 
-import { Card, Title } from "@tremor/react";
+import Title from "@/components/ui/title";
 import { AdminPageTitle } from "@/components/admin/Title";
 import { buildSimilarCredentialInfoURL } from "@/app/admin/connector/[ccPairId]/lib";
 import { usePopup } from "@/components/admin/connectors/Popup";
@@ -40,10 +40,9 @@ import {
   useGoogleDriveCredentials,
 } from "./pages/utils/hooks";
 import { Formik } from "formik";
-import { AccessTypeForm } from "@/components/admin/connectors/AccessTypeForm";
-import { AccessTypeGroupSelector } from "@/components/admin/connectors/AccessTypeGroupSelector";
 import NavigationRow from "./NavigationRow";
 import { useRouter } from "next/navigation";
+import CardSection from "@/components/admin/CardSection";
 export interface AdvancedConfig {
   refreshFreq: number;
   pruneFreq: number;
@@ -143,8 +142,8 @@ export default function AddConnector({
   const { popup, setPopup } = usePopup();
 
   // Hooks for Google Drive and Gmail credentials
-  const { liveGDriveCredential } = useGoogleDriveCredentials();
-  const { liveGmailCredential } = useGmailCredentials();
+  const { liveGDriveCredential } = useGoogleDriveCredentials(connector);
+  const { liveGmailCredential } = useGmailCredentials(connector);
 
   // Check if credential is activated
   const credentialActivated =
@@ -255,9 +254,9 @@ export default function AddConnector({
 
         // Apply advanced configuration-specific transforms.
         const advancedConfiguration: any = {
-          pruneFreq: (pruneFreq || defaultPruneFreqDays) * 60 * 60 * 24,
+          pruneFreq: (pruneFreq ?? defaultPruneFreqDays) * 60 * 60 * 24,
           indexingStart: convertStringToDateTime(indexingStart),
-          refreshFreq: (refreshFreq || defaultRefreshFreqMinutes) * 60,
+          refreshFreq: (refreshFreq ?? defaultRefreshFreqMinutes) * 60,
         };
 
         // Google sites-specific handling
@@ -270,6 +269,7 @@ export default function AddConnector({
             advancedConfiguration.pruneFreq,
             advancedConfiguration.indexingStart,
             values.access_type == "public",
+            groups,
             name
           );
           if (response) {
@@ -364,7 +364,7 @@ export default function AddConnector({
             />
 
             {formStep == 0 && (
-              <Card>
+              <CardSection>
                 <Title className="mb-2 text-lg">Select a credential</Title>
 
                 {connector == "google_drive" ? (
@@ -421,25 +421,31 @@ export default function AddConnector({
                       )}
                   </>
                 )}
-              </Card>
+              </CardSection>
             )}
 
             {formStep == 1 && (
-              <Card className="w-full py-8 flex gap-y-6 flex-col max-w-3xl px-12 mx-auto">
+              <CardSection className="w-full py-8 flex gap-y-6 flex-col max-w-3xl px-12 mx-auto">
                 <DynamicConnectionForm
                   values={formikProps.values}
                   config={configuration}
                   setSelectedFiles={setSelectedFiles}
                   selectedFiles={selectedFiles}
                   connector={connector}
+                  currentCredential={
+                    currentCredential ||
+                    liveGDriveCredential ||
+                    liveGmailCredential ||
+                    null
+                  }
                 />
-              </Card>
+              </CardSection>
             )}
 
             {formStep === 2 && (
-              <Card>
+              <CardSection>
                 <AdvancedFormPage />
-              </Card>
+              </CardSection>
             )}
 
             <NavigationRow

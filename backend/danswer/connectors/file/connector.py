@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from danswer.configs.app_configs import INDEX_BATCH_SIZE
 from danswer.configs.constants import DocumentSource
-from danswer.configs.constants import POSTGRES_DEFAULT_SCHEMA
 from danswer.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
 from danswer.connectors.interfaces import GenerateDocumentsOutput
 from danswer.connectors.interfaces import LoadConnector
@@ -28,6 +27,8 @@ from danswer.file_processing.extract_file_text import read_pdf_file
 from danswer.file_processing.extract_file_text import read_text_file
 from danswer.file_store.file_store import get_default_file_store
 from danswer.utils.logger import setup_logger
+from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
 logger = setup_logger()
 
@@ -174,6 +175,8 @@ class LocalFileConnector(LoadConnector):
 
     def load_from_state(self) -> GenerateDocumentsOutput:
         documents: list[Document] = []
+        token = CURRENT_TENANT_ID_CONTEXTVAR.set(self.tenant_id)
+
         with get_session_with_tenant(self.tenant_id) as db_session:
             for file_path in self.file_locations:
                 current_datetime = datetime.now(timezone.utc)
@@ -195,6 +198,8 @@ class LocalFileConnector(LoadConnector):
 
             if documents:
                 yield documents
+
+        CURRENT_TENANT_ID_CONTEXTVAR.reset(token)
 
 
 if __name__ == "__main__":

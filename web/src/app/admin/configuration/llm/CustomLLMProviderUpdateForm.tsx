@@ -1,5 +1,7 @@
 import { LoadingAnimation } from "@/components/Loading";
-import { Button, Divider, Text } from "@tremor/react";
+import Text from "@/components/ui/text";
+import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import { AdvancedOptionsToggle } from "@/components/AdvancedOptionsToggle";
 import {
   ArrayHelpers,
@@ -38,11 +40,13 @@ export function CustomLLMProviderUpdateForm({
   existingLlmProvider,
   shouldMarkAsDefault,
   setPopup,
+  hideSuccess,
 }: {
   onClose: () => void;
   existingLlmProvider?: FullLLMProvider;
   shouldMarkAsDefault?: boolean;
   setPopup?: (popup: PopupSpec) => void;
+  hideSuccess?: boolean;
 }) {
   const { mutate } = useSWRConfig();
 
@@ -107,9 +111,6 @@ export function CustomLLMProviderUpdateForm({
           setSubmitting(false);
           return;
         }
-
-        // don't set groups if marked as public
-        const groups = values.is_public ? [] : values.groups;
 
         // test the configuration
         if (!isEqual(values, initialValues)) {
@@ -190,7 +191,7 @@ export function CustomLLMProviderUpdateForm({
         const successMsg = existingLlmProvider
           ? "Provider updated successfully!"
           : "Provider enabled successfully!";
-        if (setPopup) {
+        if (!hideSuccess && setPopup) {
           setPopup({
             type: "success",
             message: successMsg,
@@ -233,7 +234,7 @@ export function CustomLLMProviderUpdateForm({
               placeholder="Name of the custom provider"
             />
 
-            <Divider />
+            <Separator />
 
             <SubLabel>
               Fill in the following as is needed. Refer to the LiteLLM
@@ -358,8 +359,7 @@ export function CustomLLMProviderUpdateForm({
                       arrayHelpers.push(["", ""]);
                     }}
                     className="mt-3"
-                    color="green"
-                    size="xs"
+                    variant="next"
                     type="button"
                     icon={FiPlus}
                   >
@@ -369,7 +369,7 @@ export function CustomLLMProviderUpdateForm({
               )}
             />
 
-            <Divider />
+            <Separator />
 
             {!existingLlmProvider?.deployment_name && (
               <TextArrayField
@@ -396,7 +396,7 @@ export function CustomLLMProviderUpdateForm({
               />
             )}
 
-            <Divider />
+            <Separator />
 
             <TextFormField
               name="default_model_name"
@@ -419,7 +419,7 @@ export function CustomLLMProviderUpdateForm({
               />
             )}
 
-            <Divider />
+            <Separator />
 
             <AdvancedOptionsToggle
               showAdvancedOptions={showAdvancedOptions}
@@ -442,7 +442,7 @@ export function CustomLLMProviderUpdateForm({
               )}
 
               <div className="flex w-full mt-4">
-                <Button type="submit" size="xs">
+                <Button type="submit" variant="submit">
                   {isTesting ? (
                     <LoadingAnimation text="Testing" />
                   ) : existingLlmProvider ? (
@@ -454,9 +454,7 @@ export function CustomLLMProviderUpdateForm({
                 {existingLlmProvider && (
                   <Button
                     type="button"
-                    color="red"
-                    className="ml-3"
-                    size="xs"
+                    variant="destructive"
                     icon={FiTrash}
                     onClick={async () => {
                       const response = await fetch(

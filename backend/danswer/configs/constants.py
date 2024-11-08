@@ -31,9 +31,6 @@ DISABLED_GEN_AI_MSG = (
     "You can still use Danswer as a search engine."
 )
 
-# Prefix used for all tenant ids
-TENANT_ID_PREFIX = "tenant_"
-
 # Postgres connection constants for application_name
 POSTGRES_WEB_APP_NAME = "web"
 POSTGRES_INDEXER_APP_NAME = "indexer"
@@ -46,7 +43,6 @@ POSTGRES_CELERY_WORKER_INDEXING_APP_NAME = "celery_worker_indexing"
 POSTGRES_CELERY_WORKER_INDEXING_CHILD_APP_NAME = "celery_worker_indexing_child"
 POSTGRES_PERMISSIONS_APP_NAME = "permissions"
 POSTGRES_UNKNOWN_APP_NAME = "unknown"
-POSTGRES_DEFAULT_SCHEMA = "public"
 
 # API Keys
 DANSWER_API_KEY_PREFIX = "API_KEY__"
@@ -71,6 +67,7 @@ KV_CUSTOMER_UUID_KEY = "customer_uuid"
 KV_INSTANCE_DOMAIN_KEY = "instance_domain"
 KV_ENTERPRISE_SETTINGS_KEY = "danswer_enterprise_settings"
 KV_CUSTOM_ANALYTICS_SCRIPT_KEY = "__custom_analytics_script__"
+KV_DOCUMENTS_SEEDED_KEY = "documents_seeded"
 
 CELERY_VESPA_SYNC_BEAT_LOCK_TIMEOUT = 60
 CELERY_PRIMARY_WORKER_LOCK_TIMEOUT = 120
@@ -129,6 +126,8 @@ class DocumentSource(str, Enum):
     MONDAY_COM = "monday_com"
     XENFORO = "xenforo"
     NOT_APPLICABLE = "not_applicable"
+    FRESHDESK = "freshdesk"
+    FIREFLIES = "fireflies"
 
 
 DocumentSourceRequiringTenantContext: list[DocumentSource] = [DocumentSource.FILE]
@@ -137,6 +136,7 @@ DocumentSourceRequiringTenantContext: list[DocumentSource] = [DocumentSource.FIL
 class NotificationType(str, Enum):
     REINDEX = "reindex"
     PERSONA_SHARED = "persona_shared"
+    TRIAL_ENDS_TWO_DAYS = "two_day_trial_ending"  # 2 days left in trial
 
 
 class BlobType(str, Enum):
@@ -160,6 +160,9 @@ class AuthType(str, Enum):
     GOOGLE_OAUTH = "google_oauth"
     OIDC = "oidc"
     SAML = "saml"
+
+    # google auth and basic
+    CLOUD = "cloud"
 
 
 class SessionType(str, Enum):
@@ -223,6 +226,9 @@ class DanswerRedisLocks:
 
     PRUNING_LOCK_PREFIX = "da_lock:pruning"
     INDEXING_METADATA_PREFIX = "da_metadata:indexing"
+
+    SLACK_BOT_LOCK = "da_lock:slack_bot"
+    SLACK_BOT_HEARTBEAT_PREFIX = "da_heartbeat:slack_bot"
 
 
 class DanswerCeleryPriority(int, Enum):

@@ -134,9 +134,14 @@ class NotionConnector(LoadConnector, PollConnector):
                     f"This is likely due to the block not being shared "
                     f"with the Danswer integration. Exact exception:\n\n{e}"
                 )
-                return None
-            logger.exception(f"Error fetching blocks - {res.json()}")
-            raise e
+            else:
+                logger.exception(
+                    f"Error fetching blocks with status code {res.status_code}: {res.json()}"
+                )
+
+            # This can occasionally happen, the reason is unknown and cannot be reproduced on our internal Notion
+            # Assuming this will not be a critical loss of data
+            return None
         return res.json()
 
     @retry(tries=3, delay=1, backoff=2)
@@ -241,24 +246,29 @@ class NotionConnector(LoadConnector, PollConnector):
                     )
 
             # TODO there may be more types to handle here
-            if "name" in inner_dict:
-                return inner_dict["name"]
-            if "content" in inner_dict:
-                return inner_dict["content"]
-            start = inner_dict.get("start")
-            end = inner_dict.get("end")
-            if start is not None:
-                if end is not None:
-                    return f"{start} - {end}"
-                return start
-            elif end is not None:
-                return f"Until {end}"
+            if isinstance(inner_dict, str):
+                # For some objects the innermost value could just be a string, not sure what causes this
+                return inner_dict
 
-            if "id" in inner_dict:
-                # This is not useful to index, it's a reference to another Notion object
-                # and this ID value in plaintext is useless outside of the Notion context
-                logger.debug("Skipping Notion object id field property")
-                return None
+            elif isinstance(inner_dict, dict):
+                if "name" in inner_dict:
+                    return inner_dict["name"]
+                if "content" in inner_dict:
+                    return inner_dict["content"]
+                start = inner_dict.get("start")
+                end = inner_dict.get("end")
+                if start is not None:
+                    if end is not None:
+                        return f"{start} - {end}"
+                    return start
+                elif end is not None:
+                    return f"Until {end}"
+
+                if "id" in inner_dict:
+                    # This is not useful to index, it's a reference to another Notion object
+                    # and this ID value in plaintext is useless outside of the Notion context
+                    logger.debug("Skipping Notion object id field property")
+                    return None
 
             logger.debug(f"Unreadable property from innermost prop: {inner_dict}")
             return None
@@ -268,7 +278,13 @@ class NotionConnector(LoadConnector, PollConnector):
             if not prop:
                 continue
 
-            inner_value = _recurse_properties(prop)
+            try:
+                inner_value = _recurse_properties(prop)
+            except Exception as e:
+                # This is not a critical failure, these properties are not the actual contents of the page
+                # more similar to metadata
+                logger.warning(f"Error recursing properties for {prop_name}: {e}")
+                continue
             # Not a perfect way to format Notion database tables but there's no perfect representation
             # since this must be represented as plaintext
             if inner_value:

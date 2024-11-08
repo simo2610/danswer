@@ -1,4 +1,3 @@
-import contextvars
 import os
 from typing import List
 from urllib.parse import urlparse
@@ -128,8 +127,14 @@ else:
     # If the environment variable is empty, allow all origins
     CORS_ALLOWED_ORIGIN = ["*"]
 
-current_tenant_id = contextvars.ContextVar("current_tenant_id", default="public")
 
+# Multi-tenancy configuration
+MULTI_TENANT = os.environ.get("MULTI_TENANT", "").lower() == "true"
+
+POSTGRES_DEFAULT_SCHEMA = os.environ.get("POSTGRES_DEFAULT_SCHEMA") or "public"
+
+# Prefix used for all tenant ids
+TENANT_ID_PREFIX = "tenant_"
 
 SUPPORTED_EMBEDDING_MODELS = [
     # Cloud-based models

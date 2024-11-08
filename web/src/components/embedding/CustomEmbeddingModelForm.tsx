@@ -3,7 +3,8 @@ import { Formik, Form } from "formik";
 import * as Yup from "yup";
 import { TextFormField, BooleanFormField } from "../admin/connectors/Field";
 import { Dispatch, SetStateAction } from "react";
-import { Button, Text } from "@tremor/react";
+import Text from "@/components/ui/text";
+import { Button } from "@/components/ui/button";
 import { EmbeddingDetails } from "@/app/admin/embeddings/EmbeddingModelSelectionForm";
 
 export function CustomEmbeddingModelForm({
@@ -33,10 +34,6 @@ export function CustomEmbeddingModelForm({
             api_url: provider.api_url,
             description: "",
             index_name: "",
-            pricePerMillion: 0,
-            mtebScore: 0,
-            maxContext: 4096,
-            max_tokens: 1024,
           }
         }
         validationSchema={Yup.object().shape({
@@ -51,13 +48,8 @@ export function CustomEmbeddingModelForm({
           api_url: Yup.string().required("API base URL is required"),
           description: Yup.string(),
           index_name: Yup.string().nullable(),
-          pricePerMillion: Yup.number(),
-          mtebScore: Yup.number(),
-          maxContext: Yup.number(),
-          max_tokens: Yup.number(),
         })}
         onSubmit={async (values) => {
-          console.log(values);
           setShowTentativeModel(values as CloudEmbeddingModel);
         }}
       >
@@ -71,7 +63,9 @@ export function CustomEmbeddingModelForm({
             <TextFormField
               name="model_name"
               label="Model Name:"
-              subtext={`The name of the ${embeddingType === EmbeddingProvider.AZURE ? "Azure" : "LiteLLM"} model`}
+              subtext={`The name of the ${
+                embeddingType === EmbeddingProvider.AZURE ? "Azure" : "LiteLLM"
+              } model`}
               placeholder="e.g. 'all-MiniLM-L6-v2'"
               autoCompleteDisabled={true}
             />
