@@ -52,6 +52,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useMemo,
 } from "react";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { SEARCH_PARAM_NAMES, shouldSubmitOnLoad } from "./searchParams";
@@ -142,6 +143,16 @@ export function ChatPage({
     refreshChatSessions,
   } = useChatContext();
 
+  // handle redirect if chat page is disabled
+  // NOTE: this must be done here, in a client component since
+  // settings are passed in via Context and therefore aren't
+  // available in server-side components
+  const settings = useContext(SettingsContext);
+  const enterpriseSettings = settings?.enterpriseSettings;
+  if (settings?.settings?.chat_page_enabled === false) {
+    router.push("/search");
+  }
+
   const { assistants: availableAssistants, finalAssistants } = useAssistants();
 
   const [showApiKeyModal, setShowApiKeyModal] = useState(
@@ -149,6 +160,8 @@ export function ChatPage({
   );
 
   const { user, isAdmin, isLoadingUser, refreshUser } = useUser();
+
+  const slackChatId = searchParams.get("slackChatId");
 
   const existingChatIdRaw = searchParams.get("chatId");
   const [sendOnLoad, setSendOnLoad] = useState<string | null>(
@@ -256,12 +269,8 @@ export function ChatPage({
     availableAssistants[0];
 
   const noAssistants = liveAssistant == null || liveAssistant == undefined;
-
+  // always set the model override for the chat session, when an assistant, llm provider, or user preference exists
   useEffect(() => {
-    if (!loadedIdSessionRef.current && !currentPersonaId) {
-      return;
-    }
-
     const personaDefault = getLLMProviderOverrideForPersona(
       liveAssistant,
       llmProviders
@@ -275,7 +284,7 @@ export function ChatPage({
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveAssistant, llmProviders, user?.preferences.default_model]);
+  }, [liveAssistant, user?.preferences.default_model]);
 
   const stopGenerating = () => {
     const currentSession = currentSessionId();
@@ -396,6 +405,7 @@ export function ChatPage({
         }
         return;
       }
+      setIsReady(true);
       const shouldScrollToBottom =
         visibleRange.get(existingChatSessionId) === undefined ||
         visibleRange.get(existingChatSessionId)?.end == 0;
@@ -461,9 +471,12 @@ export function ChatPage({
         });
         // force re-name if the chat session doesn't have one
         if (!chatSession.description) {
-          await nameChatSession(existingChatSessionId, seededMessage);
+          await nameChatSession(existingChatSessionId);
           refreshChatSessions();
         }
+      } else if (newMessageHistory.length === 2 && !chatSession.description) {
+        await nameChatSession(existingChatSessionId);
+        refreshChatSessions();
       }
     }
 
@@ -881,7 +894,6 @@ export function ChatPage({
     }, 1500);
   };
 
-  const distance = 500; // distance that should "engage" the scroll
   const debounceNumber = 100; // time for debouncing
 
   const [hasPerformedInitialScroll, setHasPerformedInitialScroll] = useState(
@@ -1422,7 +1434,7 @@ export function ChatPage({
 
       if (!searchParamBasedChatSessionName) {
         await new Promise((resolve) => setTimeout(resolve, 200));
-        await nameChatSession(currChatSessionId, currMessage);
+        await nameChatSession(currChatSessionId);
         refreshChatSessions();
       }
 
@@ -1545,17 +1557,6 @@ export function ChatPage({
       }
     });
   };
-
-  // handle redirect if chat page is disabled
-  // NOTE: this must be done here, in a client component since
-  // settings are passed in via Context and therefore aren't
-  // available in server-side components
-  const settings = useContext(SettingsContext);
-  const enterpriseSettings = settings?.enterpriseSettings;
-  if (settings?.settings?.chat_page_enabled === false) {
-    router.push("/search");
-  }
-
   const [showDocSidebar, setShowDocSidebar] = useState(false); // State to track if sidebar is open
 
   // Used to maintain a "time out" for history sidebar so our existing refs can have time to process change
@@ -1603,9 +1604,9 @@ export function ChatPage({
     scrollableDivRef,
     scrollDist,
     endDivRef,
-    distance,
     debounceNumber,
     waitForScrollRef,
+    mobile: settings?.isMobile,
   });
 
   // Virtualization + Scrolling related effects and functions
@@ -1815,6 +1816,42 @@ export function ChatPage({
     };
   }
 
+  useEffect(() => {
+    const handleSlackChatRedirect = async () => {
+      if (!slackChatId) return;
+
+      // Set isReady to false before starting retrieval to display loading text
+      setIsReady(false);
+
+      try {
+        const response = await fetch("/api/chat/seed-chat-session-from-slack", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            chat_session_id: slackChatId,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to seed chat from Slack");
+        }
+
+        const data = await response.json();
+        router.push(data.redirect_url);
+      } catch (error) {
+        console.error("Error seeding chat from Slack:", error);
+        setPopup({
+          message: "Failed to load chat from Slack",
+          type: "error",
+        });
+      }
+    };
+
+    handleSlackChatRedirect();
+  }, [searchParams, router]);
+
   return (
     <>
       <HealthCheckBanner />
@@ -1947,6 +1984,7 @@ export function ChatPage({
                   ref={innerSidebarElementRef}
                   toggleSidebar={toggleSidebar}
                   toggled={toggledSidebar && !settings?.isMobile}
+                  backgroundToggled={toggledSidebar || showDocSidebar}
                   existingChats={chatSessions}
                   currentChatSession={selectedChatSession}
                   folders={folders}
@@ -2011,7 +2049,7 @@ export function ChatPage({
                         {...getRootProps()}
                       >
                         <div
-                          className={`w-full h-full flex flex-col overflow-y-auto include-scrollbar overflow-x-hidden relative`}
+                          className={`w-full h-full flex flex-col default-scrollbar overflow-y-auto overflow-x-hidden relative`}
                           ref={scrollableDivRef}
                         >
                           {/* ChatBanner is a custom banner that displays a admin-specified message at 
@@ -2465,7 +2503,6 @@ export function ChatPage({
                               textAreaRef={textAreaRef}
                               chatSessionId={chatSessionIdRef.current!}
                             />
-
                             {enterpriseSettings &&
                               enterpriseSettings.custom_lower_disclaimer_content && (
                                 <div className="mobile:hidden mt-4 flex items-center justify-center relative w-[95%] mx-auto">
@@ -2478,7 +2515,6 @@ export function ChatPage({
                                   </div>
                                 </div>
                               )}
-
                             {enterpriseSettings &&
                               enterpriseSettings.use_custom_logotype && (
                                 <div className="hidden lg:block absolute right-0 bottom-0">

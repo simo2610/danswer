@@ -4,6 +4,7 @@ from typing import Any
 from typing import Dict
 
 from fastapi import Depends
+from fastapi_users.models import ID
 from fastapi_users.models import UP
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from danswer.auth.invited_users import get_invited_users
 from danswer.auth.schemas import UserRole
+from danswer.db.api_key import get_api_key_email_pattern
 from danswer.db.engine import get_async_session
 from danswer.db.engine import get_async_session_with_tenant
 from danswer.db.models import AccessToken
@@ -22,7 +24,6 @@ from danswer.db.models import User
 from danswer.utils.variable_functionality import (
     fetch_versioned_implementation_with_fallback,
 )
-from ee.danswer.db.api_key import get_api_key_email_pattern
 
 
 def get_default_admin_user_emails() -> list[str]:
@@ -43,7 +44,10 @@ def get_total_users_count(db_session: Session) -> int:
     """
     user_count = (
         db_session.query(User)
-        .filter(~User.email.endswith(get_api_key_email_pattern()))  # type: ignore
+        .filter(
+            ~User.email.endswith(get_api_key_email_pattern()),  # type: ignore
+            User.role != UserRole.EXT_PERM_USER,
+        )
         .count()
     )
     invited_users = len(get_invited_users())
@@ -61,7 +65,7 @@ async def get_user_count() -> int:
 
 
 # Need to override this because FastAPI Users doesn't give flexibility for backend field creation logic in OAuth flow
-class SQLAlchemyUserAdminDB(SQLAlchemyUserDatabase):
+class SQLAlchemyUserAdminDB(SQLAlchemyUserDatabase[UP, ID]):
     async def create(
         self,
         create_dict: Dict[str, Any],

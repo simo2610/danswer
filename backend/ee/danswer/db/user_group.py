@@ -11,6 +11,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from danswer.db.connector_credential_pair import get_connector_credential_pair_from_id
+from danswer.db.enums import AccessType
 from danswer.db.enums import ConnectorCredentialPairStatus
 from danswer.db.models import ConnectorCredentialPair
 from danswer.db.models import Credential__UserGroup
@@ -124,16 +125,21 @@ def _cleanup_document_set__user_group_relationships__no_commit(
 def validate_user_creation_permissions(
     db_session: Session,
     user: User | None,
-    target_group_ids: list[int] | None,
-    object_is_public: bool | None,
+    target_group_ids: list[int] | None = None,
+    object_is_public: bool | None = None,
+    object_is_perm_sync: bool | None = None,
 ) -> None:
     """
+    All users can create/edit permission synced objects if they don't specify a group
     All admin actions are allowed.
     Prevents non-admins from creating/editing:
     - public objects
     - objects with no groups
     - objects that belong to a group they don't curate
     """
+    if object_is_perm_sync and not target_group_ids:
+        return
+
     if not user or user.role == UserRole.ADMIN:
         return
 
@@ -293,6 +299,11 @@ def fetch_user_groups_for_documents(
     db_session: Session,
     document_ids: list[str],
 ) -> Sequence[tuple[str, list[str]]]:
+    """
+    Fetches all user groups that have access to the given documents.
+
+    NOTE: this doesn't include groups if the cc_pair is access type SYNC
+    """
     stmt = (
         select(Document.id, func.array_agg(UserGroup.name))
         .join(
@@ -301,7 +312,11 @@ def fetch_user_groups_for_documents(
         )
         .join(
             ConnectorCredentialPair,
-            ConnectorCredentialPair.id == UserGroup__ConnectorCredentialPair.cc_pair_id,
+            and_(
+                ConnectorCredentialPair.id
+                == UserGroup__ConnectorCredentialPair.cc_pair_id,
+                ConnectorCredentialPair.access_type != AccessType.SYNC,
+            ),
         )
         .join(
             DocumentByConnectorCredentialPair,
@@ -406,6 +421,8 @@ def _validate_curator_status__no_commit(
             .all()
         )
 
+        # if the user is a curator in any of their groups, set their role to CURATOR
+        # otherwise, set their role to BASIC
         if curator_relationships:
             user.role = UserRole.CURATOR
         elif user.role == UserRole.CURATOR:
@@ -431,6 +448,15 @@ def update_user_curator_relationship(
     user = fetch_user_by_id(db_session, set_curator_request.user_id)
     if not user:
         raise ValueError(f"User with id '{set_curator_request.user_id}' not found")
+
+    if user.role == UserRole.ADMIN:
+        raise ValueError(
+            f"User '{user.email}' is an admin and therefore has all permissions "
+            "of a curator. If you'd like this user to only have curator permissions, "
+            "you must update their role to BASIC then assign them to be CURATOR in the "
+            "appropriate groups."
+        )
+
     requested_user_groups = fetch_user_groups_for_user(
         db_session=db_session,
         user_id=set_curator_request.user_id,

@@ -6,7 +6,7 @@ import redis
 from pydantic import BaseModel
 
 
-class RedisConnectorIndexingFenceData(BaseModel):
+class RedisConnectorIndexPayload(BaseModel):
     index_attempt_id: int | None
     started: datetime | None
     submitted: datetime
@@ -28,6 +28,8 @@ class RedisConnectorIndex:
     )  # connectorindexing_generator_complete
 
     GENERATOR_LOCK_PREFIX = "da_lock:indexing"
+
+    TERMINATE_PREFIX = PREFIX + "_terminate"  # connectorindexing_terminate
 
     def __init__(
         self,
@@ -51,6 +53,7 @@ class RedisConnectorIndex:
         self.generator_lock_key = (
             f"{self.GENERATOR_LOCK_PREFIX}_{id}/{search_settings_id}"
         )
+        self.terminate_key = f"{self.TERMINATE_PREFIX}_{id}/{search_settings_id}"
 
     @classmethod
     def fence_key_with_ids(cls, cc_pair_id: int, search_settings_id: int) -> str:
@@ -71,28 +74,38 @@ class RedisConnectorIndex:
         return False
 
     @property
-    def payload(self) -> RedisConnectorIndexingFenceData | None:
+    def payload(self) -> RedisConnectorIndexPayload | None:
         # read related data and evaluate/print task progress
         fence_bytes = cast(bytes, self.redis.get(self.fence_key))
         if fence_bytes is None:
             return None
 
         fence_str = fence_bytes.decode("utf-8")
-        payload = RedisConnectorIndexingFenceData.model_validate_json(
-            cast(str, fence_str)
-        )
+        payload = RedisConnectorIndexPayload.model_validate_json(cast(str, fence_str))
 
         return payload
 
     def set_fence(
         self,
-        payload: RedisConnectorIndexingFenceData | None,
+        payload: RedisConnectorIndexPayload | None,
     ) -> None:
         if not payload:
             self.redis.delete(self.fence_key)
             return
 
         self.redis.set(self.fence_key, payload.model_dump_json())
+
+    def terminating(self, celery_task_id: str) -> bool:
+        if self.redis.exists(f"{self.terminate_key}_{celery_task_id}"):
+            return True
+
+        return False
+
+    def set_terminate(self, celery_task_id: str) -> None:
+        """This sets a signal. It does not block!"""
+        # We shouldn't need very long to terminate the spawned task.
+        # 10 minute TTL is good.
+        self.redis.set(f"{self.terminate_key}_{celery_task_id}", 0, ex=600)
 
     def set_generator_complete(self, payload: int | None) -> None:
         if not payload:

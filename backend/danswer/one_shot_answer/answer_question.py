@@ -18,6 +18,11 @@ from danswer.configs.chat_configs import DISABLE_LLM_DOC_RELEVANCE
 from danswer.configs.chat_configs import MAX_CHUNKS_FED_TO_CHAT
 from danswer.configs.chat_configs import QA_TIMEOUT
 from danswer.configs.constants import MessageType
+from danswer.context.search.enums import LLMEvaluationType
+from danswer.context.search.models import RerankMetricsContainer
+from danswer.context.search.models import RetrievalMetricsContainer
+from danswer.context.search.utils import chunks_or_sections_to_search_docs
+from danswer.context.search.utils import dedupe_documents
 from danswer.db.chat import create_chat_session
 from danswer.db.chat import create_db_search_doc
 from danswer.db.chat import create_new_chat_message
@@ -42,11 +47,7 @@ from danswer.one_shot_answer.models import DirectQARequest
 from danswer.one_shot_answer.models import OneShotQAResponse
 from danswer.one_shot_answer.models import QueryRephrase
 from danswer.one_shot_answer.qa_utils import combine_message_thread
-from danswer.search.enums import LLMEvaluationType
-from danswer.search.models import RerankMetricsContainer
-from danswer.search.models import RetrievalMetricsContainer
-from danswer.search.utils import chunks_or_sections_to_search_docs
-from danswer.search.utils import dedupe_documents
+from danswer.one_shot_answer.qa_utils import slackify_message_thread
 from danswer.secondary_llm_flows.answer_validation import get_answer_validity
 from danswer.secondary_llm_flows.query_expansion import thread_based_query_rephrase
 from danswer.server.query_and_chat.models import ChatMessageDetail
@@ -64,8 +65,9 @@ from danswer.tools.tool_implementations.search.search_tool import (
 )
 from danswer.tools.tool_runner import ToolCallKickoff
 from danswer.utils.logger import setup_logger
+from danswer.utils.long_term_log import LongTermLogger
 from danswer.utils.timing import log_generator_function_time
-from ee.danswer.server.query_and_chat.utils import create_temporary_persona
+from danswer.utils.variable_functionality import fetch_ee_implementation_or_noop
 
 logger = setup_logger()
 
@@ -124,17 +126,24 @@ def stream_answer_objects(
         danswerbot_flow=danswerbot_flow,
     )
 
+    # permanent "log" store, used primarily for debugging
+    long_term_logger = LongTermLogger(
+        metadata={"user_id": str(user_id), "chat_session_id": str(chat_session.id)}
+    )
+
     temporary_persona: Persona | None = None
+
     if query_req.persona_config is not None:
-        new_persona = create_temporary_persona(
-            db_session=db_session, persona_config=query_req.persona_config, user=user
-        )
-        temporary_persona = new_persona
+        temporary_persona = fetch_ee_implementation_or_noop(
+            "danswer.server.query_and_chat.utils", "create_temporary_persona", None
+        )(db_session=db_session, persona_config=query_req.persona_config, user=user)
 
     persona = temporary_persona if temporary_persona else chat_session.persona
 
     try:
-        llm, fast_llm = get_llms_for_persona(persona=persona)
+        llm, fast_llm = get_llms_for_persona(
+            persona=persona, long_term_logger=long_term_logger
+        )
     except ValueError as e:
         logger.error(
             f"Failed to initialize LLMs for persona '{persona.name}': {str(e)}"
@@ -186,13 +195,22 @@ def stream_answer_objects(
             )
         prompt = persona.prompts[0]
 
+    user_message_str = query_msg.message
+    # For this endpoint, we only save one user message to the chat session
+    # However, for slackbot, we want to include the history of the entire thread
+    if danswerbot_flow:
+        # Right now, we only support bringing over citations and search docs
+        # from the last message in the thread, not the entire thread
+        # in the future, we may want to retrieve the entire thread
+        user_message_str = slackify_message_thread(query_req.messages)
+
     # Create the first User query message
     new_user_message = create_new_chat_message(
         chat_session_id=chat_session.id,
         parent_message=root_message,
         prompt_id=query_req.prompt_id,
-        message=query_msg.message,
-        token_count=len(llm_tokenizer.encode(query_msg.message)),
+        message=user_message_str,
+        token_count=len(llm_tokenizer.encode(user_message_str)),
         message_type=MessageType.USER,
         db_session=db_session,
         commit=True,
@@ -237,7 +255,9 @@ def stream_answer_objects(
         question=query_msg.message,
         answer_style_config=answer_config,
         prompt_config=PromptConfig.from_model(prompt),
-        llm=get_main_llm_from_tuple(get_llms_for_persona(persona=persona)),
+        llm=get_main_llm_from_tuple(
+            get_llms_for_persona(persona=persona, long_term_logger=long_term_logger)
+        ),
         single_message_history=history_str,
         tools=[search_tool] if search_tool else [],
         force_use_tool=(

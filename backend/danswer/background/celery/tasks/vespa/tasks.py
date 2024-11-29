@@ -5,7 +5,6 @@ from http import HTTPStatus
 from typing import cast
 
 import httpx
-import redis
 from celery import Celery
 from celery import shared_task
 from celery import Task
@@ -13,6 +12,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from celery.result import AsyncResult
 from celery.states import READY_STATES
 from redis import Redis
+from redis.lock import Lock as RedisLock
 from sqlalchemy.orm import Session
 from tenacity import RetryError
 
@@ -27,6 +27,7 @@ from danswer.configs.constants import CELERY_VESPA_SYNC_BEAT_LOCK_TIMEOUT
 from danswer.configs.constants import DanswerCeleryQueues
 from danswer.configs.constants import DanswerRedisLocks
 from danswer.db.connector import fetch_connector_by_id
+from danswer.db.connector import mark_cc_pair_as_permissions_synced
 from danswer.db.connector import mark_ccpair_as_pruned
 from danswer.db.connector_credential_pair import add_deletion_failure_message
 from danswer.db.connector_credential_pair import (
@@ -47,17 +48,19 @@ from danswer.db.document_set import mark_document_set_as_synced
 from danswer.db.engine import get_session_with_tenant
 from danswer.db.enums import IndexingStatus
 from danswer.db.index_attempt import delete_index_attempts
-from danswer.db.index_attempt import get_all_index_attempts_by_status
 from danswer.db.index_attempt import get_index_attempt
 from danswer.db.index_attempt import mark_attempt_failed
 from danswer.db.models import DocumentSet
-from danswer.db.models import IndexAttempt
 from danswer.document_index.document_index_utils import get_both_index_names
 from danswer.document_index.factory import get_default_document_index
 from danswer.document_index.interfaces import VespaDocumentFields
 from danswer.redis.redis_connector import RedisConnector
 from danswer.redis.redis_connector_credential_pair import RedisConnectorCredentialPair
 from danswer.redis.redis_connector_delete import RedisConnectorDelete
+from danswer.redis.redis_connector_doc_perm_sync import RedisConnectorPermissionSync
+from danswer.redis.redis_connector_doc_perm_sync import (
+    RedisConnectorPermissionSyncPayload,
+)
 from danswer.redis.redis_connector_index import RedisConnectorIndex
 from danswer.redis.redis_connector_prune import RedisConnectorPrune
 from danswer.redis.redis_document_set import RedisDocumentSet
@@ -162,7 +165,7 @@ def try_generate_stale_document_sync_tasks(
     celery_app: Celery,
     db_session: Session,
     r: Redis,
-    lock_beat: redis.lock.Lock,
+    lock_beat: RedisLock,
     tenant_id: str | None,
 ) -> int | None:
     # the fence is up, do nothing
@@ -180,7 +183,12 @@ def try_generate_stale_document_sync_tasks(
         f"Stale documents found (at least {stale_doc_count}). Generating sync tasks by cc pair."
     )
 
-    task_logger.info("RedisConnector.generate_tasks starting by cc_pair.")
+    task_logger.info(
+        "RedisConnector.generate_tasks starting by cc_pair. "
+        "Documents spanning multiple cc_pairs will only be synced once."
+    )
+
+    docs_to_skip: set[str] = set()
 
     # rkuo: we could technically sync all stale docs in one big pass.
     # but I feel it's more understandable to group the docs by cc_pair
@@ -188,22 +196,21 @@ def try_generate_stale_document_sync_tasks(
     cc_pairs = get_connector_credential_pairs(db_session)
     for cc_pair in cc_pairs:
         rc = RedisConnectorCredentialPair(tenant_id, cc_pair.id)
-        tasks_generated = rc.generate_tasks(
-            celery_app, db_session, r, lock_beat, tenant_id
-        )
+        rc.set_skip_docs(docs_to_skip)
+        result = rc.generate_tasks(celery_app, db_session, r, lock_beat, tenant_id)
 
-        if tasks_generated is None:
+        if result is None:
             continue
 
-        if tasks_generated == 0:
+        if result[1] == 0:
             continue
 
         task_logger.info(
             f"RedisConnector.generate_tasks finished for single cc_pair. "
-            f"cc_pair_id={cc_pair.id} tasks_generated={tasks_generated}"
+            f"cc_pair={cc_pair.id} tasks_generated={result[0]} tasks_possible={result[1]}"
         )
 
-        total_tasks_generated += tasks_generated
+        total_tasks_generated += result[0]
 
     task_logger.info(
         f"RedisConnector.generate_tasks finished for all cc_pairs. total_tasks_generated={total_tasks_generated}"
@@ -218,7 +225,7 @@ def try_generate_document_set_sync_tasks(
     document_set_id: int,
     db_session: Session,
     r: Redis,
-    lock_beat: redis.lock.Lock,
+    lock_beat: RedisLock,
     tenant_id: str | None,
 ) -> int | None:
     lock_beat.reacquire()
@@ -246,12 +253,11 @@ def try_generate_document_set_sync_tasks(
     )
 
     # Add all documents that need to be updated into the queue
-    tasks_generated = rds.generate_tasks(
-        celery_app, db_session, r, lock_beat, tenant_id
-    )
-    if tasks_generated is None:
+    result = rds.generate_tasks(celery_app, db_session, r, lock_beat, tenant_id)
+    if result is None:
         return None
 
+    tasks_generated = result[0]
     # Currently we are allowing the sync to proceed with 0 tasks.
     # It's possible for sets/groups to be generated initially with no entries
     # and they still need to be marked as up to date.
@@ -260,7 +266,7 @@ def try_generate_document_set_sync_tasks(
 
     task_logger.info(
         f"RedisDocumentSet.generate_tasks finished. "
-        f"document_set_id={document_set.id} tasks_generated={tasks_generated}"
+        f"document_set={document_set.id} tasks_generated={tasks_generated}"
     )
 
     # set this only after all tasks have been added
@@ -273,7 +279,7 @@ def try_generate_user_group_sync_tasks(
     usergroup_id: int,
     db_session: Session,
     r: Redis,
-    lock_beat: redis.lock.Lock,
+    lock_beat: RedisLock,
     tenant_id: str | None,
 ) -> int | None:
     lock_beat.reacquire()
@@ -302,12 +308,11 @@ def try_generate_user_group_sync_tasks(
     task_logger.info(
         f"RedisUserGroup.generate_tasks starting. usergroup_id={usergroup.id}"
     )
-    tasks_generated = rug.generate_tasks(
-        celery_app, db_session, r, lock_beat, tenant_id
-    )
-    if tasks_generated is None:
+    result = rug.generate_tasks(celery_app, db_session, r, lock_beat, tenant_id)
+    if result is None:
         return None
 
+    tasks_generated = result[0]
     # Currently we are allowing the sync to proceed with 0 tasks.
     # It's possible for sets/groups to be generated initially with no entries
     # and they still need to be marked as up to date.
@@ -316,7 +321,7 @@ def try_generate_user_group_sync_tasks(
 
     task_logger.info(
         f"RedisUserGroup.generate_tasks finished. "
-        f"usergroup_id={usergroup.id} tasks_generated={tasks_generated}"
+        f"usergroup={usergroup.id} tasks_generated={tasks_generated}"
     )
 
     # set this only after all tasks have been added
@@ -436,11 +441,22 @@ def monitor_connector_deletion_taskset(
                 db_session, cc_pair.connector_id, cc_pair.credential_id
             )
             if len(doc_ids) > 0:
-                # if this happens, documents somehow got added while deletion was in progress. Likely a bug
-                # gating off pruning and indexing work before deletion starts
+                # NOTE(rkuo): if this happens, documents somehow got added while
+                # deletion was in progress. Likely a bug gating off pruning and indexing
+                # work before deletion starts.
                 task_logger.warning(
-                    f"Connector deletion - documents still found after taskset completion: "
-                    f"cc_pair={cc_pair_id} num={len(doc_ids)}"
+                    "Connector deletion - documents still found after taskset completion. "
+                    "Clearing the current deletion attempt and allowing deletion to restart: "
+                    f"cc_pair={cc_pair_id} "
+                    f"docs_deleted={fence_data.num_tasks} "
+                    f"docs_remaining={len(doc_ids)}"
+                )
+
+                # We don't want to waive off why we get into this state, but resetting
+                # our attempt and letting the deletion restart is a good way to recover
+                redis_connector.delete.reset()
+                raise RuntimeError(
+                    "Connector deletion - documents still found after taskset completion"
                 )
 
             # clean up the rest of the related Postgres entities
@@ -504,8 +520,7 @@ def monitor_connector_deletion_taskset(
         f"docs_deleted={fence_data.num_tasks}"
     )
 
-    redis_connector.delete.taskset_clear()
-    redis_connector.delete.set_fence(None)
+    redis_connector.delete.reset()
 
 
 def monitor_ccpair_pruning_taskset(
@@ -546,6 +561,45 @@ def monitor_ccpair_pruning_taskset(
     redis_connector.prune.set_fence(False)
 
 
+def monitor_ccpair_permissions_taskset(
+    tenant_id: str | None, key_bytes: bytes, r: Redis, db_session: Session
+) -> None:
+    fence_key = key_bytes.decode("utf-8")
+    cc_pair_id_str = RedisConnector.get_id_from_fence_key(fence_key)
+    if cc_pair_id_str is None:
+        task_logger.warning(
+            f"monitor_ccpair_permissions_taskset: could not parse cc_pair_id from {fence_key}"
+        )
+        return
+
+    cc_pair_id = int(cc_pair_id_str)
+
+    redis_connector = RedisConnector(tenant_id, cc_pair_id)
+    if not redis_connector.permissions.fenced:
+        return
+
+    initial = redis_connector.permissions.generator_complete
+    if initial is None:
+        return
+
+    remaining = redis_connector.permissions.get_remaining()
+    task_logger.info(
+        f"Permissions sync progress: cc_pair={cc_pair_id} remaining={remaining} initial={initial}"
+    )
+    if remaining > 0:
+        return
+
+    payload: RedisConnectorPermissionSyncPayload | None = (
+        redis_connector.permissions.payload
+    )
+    start_time: datetime | None = payload.started if payload else None
+
+    mark_cc_pair_as_permissions_synced(db_session, int(cc_pair_id), start_time)
+    task_logger.info(f"Successfully synced permissions for cc_pair={cc_pair_id}")
+
+    redis_connector.permissions.reset()
+
+
 def monitor_ccpair_indexing_taskset(
     tenant_id: str | None, key_bytes: bytes, r: Redis, db_session: Session
 ) -> None:
@@ -580,8 +634,8 @@ def monitor_ccpair_indexing_taskset(
     progress = redis_connector_index.get_progress()
     if progress is not None:
         task_logger.info(
-            f"Connector indexing progress: cc_pair_id={cc_pair_id} "
-            f"search_settings_id={search_settings_id} "
+            f"Connector indexing progress: cc_pair={cc_pair_id} "
+            f"search_settings={search_settings_id} "
             f"progress={progress} "
             f"elapsed_submitted={elapsed_submitted.total_seconds():.2f}"
         )
@@ -590,39 +644,58 @@ def monitor_ccpair_indexing_taskset(
         # the task is still setting up
         return
 
-    # Read result state BEFORE generator_complete_key to avoid a race condition
     # never use any blocking methods on the result from inside a task!
     result: AsyncResult = AsyncResult(payload.celery_task_id)
-    result_state = result.state
 
+    # inner/outer/inner double check pattern to avoid race conditions when checking for
+    # bad state
+
+    # inner = get_completion / generator_complete not signaled
+    # outer = result.state in READY state
     status_int = redis_connector_index.get_completion()
-    if status_int is None:
-        if result_state in READY_STATES:
-            # IF the task state is READY, THEN generator_complete should be set
-            # if it isn't, then the worker crashed
-            task_logger.info(
-                f"Connector indexing aborted: "
-                f"cc_pair_id={cc_pair_id} "
-                f"search_settings_id={search_settings_id} "
-                f"elapsed_submitted={elapsed_submitted.total_seconds():.2f}"
-            )
+    if status_int is None:  # inner signal not set ... possible error
+        result_state = result.state
+        if (
+            result_state in READY_STATES
+        ):  # outer signal in terminal state ... possible error
+            # Now double check!
+            if redis_connector_index.get_completion() is None:
+                # inner signal still not set (and cannot change when outer result_state is READY)
+                # Task is finished but generator complete isn't set.
+                # We have a problem! Worker may have crashed.
 
-            index_attempt = get_index_attempt(db_session, payload.index_attempt_id)
-            if index_attempt:
-                mark_attempt_failed(
-                    index_attempt_id=payload.index_attempt_id,
-                    db_session=db_session,
-                    failure_reason="Connector indexing aborted or exceptioned.",
+                msg = (
+                    f"Connector indexing aborted or exceptioned: "
+                    f"attempt={payload.index_attempt_id} "
+                    f"celery_task={payload.celery_task_id} "
+                    f"result_state={result_state} "
+                    f"cc_pair={cc_pair_id} "
+                    f"search_settings={search_settings_id} "
+                    f"elapsed_submitted={elapsed_submitted.total_seconds():.2f}"
                 )
+                task_logger.warning(msg)
 
-            redis_connector_index.reset()
+                index_attempt = get_index_attempt(db_session, payload.index_attempt_id)
+                if index_attempt:
+                    if (
+                        index_attempt.status != IndexingStatus.CANCELED
+                        and index_attempt.status != IndexingStatus.FAILED
+                    ):
+                        mark_attempt_failed(
+                            index_attempt_id=payload.index_attempt_id,
+                            db_session=db_session,
+                            failure_reason=msg,
+                        )
+
+                redis_connector_index.reset()
         return
 
     status_enum = HTTPStatus(status_int)
 
     task_logger.info(
-        f"Connector indexing finished: cc_pair_id={cc_pair_id} "
-        f"search_settings_id={search_settings_id} "
+        f"Connector indexing finished: cc_pair={cc_pair_id} "
+        f"search_settings={search_settings_id} "
+        f"progress={progress} "
         f"status={status_enum.name} "
         f"elapsed_submitted={elapsed_submitted.total_seconds():.2f}"
     )
@@ -643,7 +716,7 @@ def monitor_vespa_sync(self: Task, tenant_id: str | None) -> bool:
     """
     r = get_redis_client(tenant_id=tenant_id)
 
-    lock_beat: redis.lock.Lock = r.lock(
+    lock_beat: RedisLock = r.lock(
         DanswerRedisLocks.MONITOR_VESPA_SYNC_BEAT_LOCK,
         timeout=CELERY_VESPA_SYNC_BEAT_LOCK_TIMEOUT,
     )
@@ -655,7 +728,7 @@ def monitor_vespa_sync(self: Task, tenant_id: str | None) -> bool:
 
         # print current queue lengths
         r_celery = self.app.broker_connection().channel().client  # type: ignore
-        n_celery = celery_get_queue_length("celery", r)
+        n_celery = celery_get_queue_length("celery", r_celery)
         n_indexing = celery_get_queue_length(
             DanswerCeleryQueues.CONNECTOR_INDEXING, r_celery
         )
@@ -668,40 +741,18 @@ def monitor_vespa_sync(self: Task, tenant_id: str | None) -> bool:
         n_pruning = celery_get_queue_length(
             DanswerCeleryQueues.CONNECTOR_PRUNING, r_celery
         )
+        n_permissions_sync = celery_get_queue_length(
+            DanswerCeleryQueues.CONNECTOR_DOC_PERMISSIONS_SYNC, r_celery
+        )
 
         task_logger.info(
             f"Queue lengths: celery={n_celery} "
             f"indexing={n_indexing} "
             f"sync={n_sync} "
             f"deletion={n_deletion} "
-            f"pruning={n_pruning}"
+            f"pruning={n_pruning} "
+            f"permissions_sync={n_permissions_sync} "
         )
-
-        # do some cleanup before clearing fences
-        # check the db for any outstanding index attempts
-        with get_session_with_tenant(tenant_id) as db_session:
-            attempts: list[IndexAttempt] = []
-            attempts.extend(
-                get_all_index_attempts_by_status(IndexingStatus.NOT_STARTED, db_session)
-            )
-            attempts.extend(
-                get_all_index_attempts_by_status(IndexingStatus.IN_PROGRESS, db_session)
-            )
-
-            for a in attempts:
-                # if attempts exist in the db but we don't detect them in redis, mark them as failed
-                fence_key = RedisConnectorIndex.fence_key_with_ids(
-                    a.connector_credential_pair_id, a.search_settings_id
-                )
-                if not r.exists(fence_key):
-                    failure_reason = (
-                        f"Unknown index attempt. Might be left over from a process restart: "
-                        f"index_attempt={a.id} "
-                        f"cc_pair={a.connector_credential_pair_id} "
-                        f"search_settings={a.search_settings_id}"
-                    )
-                    task_logger.warning(failure_reason)
-                    mark_attempt_failed(a.id, db_session, failure_reason=failure_reason)
 
         lock_beat.reacquire()
         if r.exists(RedisConnectorCredentialPair.get_fence_key()):
@@ -740,6 +791,12 @@ def monitor_vespa_sync(self: Task, tenant_id: str | None) -> bool:
             lock_beat.reacquire()
             with get_session_with_tenant(tenant_id) as db_session:
                 monitor_ccpair_indexing_taskset(tenant_id, key_bytes, r, db_session)
+
+        lock_beat.reacquire()
+        for key_bytes in r.scan_iter(RedisConnectorPermissionSync.FENCE_PREFIX + "*"):
+            lock_beat.reacquire()
+            with get_session_with_tenant(tenant_id) as db_session:
+                monitor_ccpair_permissions_taskset(tenant_id, key_bytes, r, db_session)
 
         # uncomment for debugging if needed
         # r_celery = celery_app.broker_connection().channel().client
@@ -811,7 +868,9 @@ def vespa_metadata_sync_task(
         )
     except Exception as ex:
         if isinstance(ex, RetryError):
-            task_logger.warning(f"Retry failed: {ex.last_attempt.attempt_number}")
+            task_logger.warning(
+                f"Tenacity retry failed: num_attempts={ex.last_attempt.attempt_number}"
+            )
 
             # only set the inner exception if it is of type Exception
             e_temp = ex.last_attempt.exception()

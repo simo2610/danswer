@@ -1,7 +1,5 @@
 import time
 import traceback
-from abc import ABC
-from abc import abstractmethod
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -21,6 +19,7 @@ from danswer.db.connector_credential_pair import get_last_successful_attempt_tim
 from danswer.db.connector_credential_pair import update_connector_credential_pair
 from danswer.db.engine import get_session_with_tenant
 from danswer.db.enums import ConnectorCredentialPairStatus
+from danswer.db.index_attempt import mark_attempt_canceled
 from danswer.db.index_attempt import mark_attempt_failed
 from danswer.db.index_attempt import mark_attempt_partially_succeeded
 from danswer.db.index_attempt import mark_attempt_succeeded
@@ -31,28 +30,15 @@ from danswer.db.models import IndexingStatus
 from danswer.db.models import IndexModelStatus
 from danswer.document_index.factory import get_default_document_index
 from danswer.indexing.embedder import DefaultIndexingEmbedder
-from danswer.indexing.indexing_heartbeat import IndexingHeartbeat
+from danswer.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from danswer.indexing.indexing_pipeline import build_indexing_pipeline
-from danswer.utils.logger import IndexAttemptSingleton
 from danswer.utils.logger import setup_logger
+from danswer.utils.logger import TaskAttemptSingleton
 from danswer.utils.variable_functionality import global_version
 
 logger = setup_logger()
 
 INDEXING_TRACER_NUM_PRINT_ENTRIES = 5
-
-
-class RunIndexingCallbackInterface(ABC):
-    """Defines a callback interface to be passed to
-    to run_indexing_entrypoint."""
-
-    @abstractmethod
-    def should_stop(self) -> bool:
-        """Signal to stop the looping function in flight."""
-
-    @abstractmethod
-    def progress(self, amount: int) -> None:
-        """Send progress updates to the caller."""
 
 
 def _get_connector_runner(
@@ -102,11 +88,15 @@ def _get_connector_runner(
     )
 
 
+class ConnectorStopSignal(Exception):
+    """A custom exception used to signal a stop in processing."""
+
+
 def _run_indexing(
     db_session: Session,
     index_attempt: IndexAttempt,
     tenant_id: str | None,
-    callback: RunIndexingCallbackInterface | None = None,
+    callback: IndexingHeartbeatInterface | None = None,
 ) -> None:
     """
     1. Get documents which are either new or updated from specified application
@@ -138,13 +128,7 @@ def _run_indexing(
 
     embedding_model = DefaultIndexingEmbedder.from_db_search_settings(
         search_settings=search_settings,
-        heartbeat=IndexingHeartbeat(
-            index_attempt_id=index_attempt.id,
-            db_session=db_session,
-            # let the world know we're still making progress after
-            # every 10 batches
-            freq=10,
-        ),
+        callback=callback,
     )
 
     indexing_pipeline = build_indexing_pipeline(
@@ -157,6 +141,7 @@ def _run_indexing(
         ),
         db_session=db_session,
         tenant_id=tenant_id,
+        callback=callback,
     )
 
     db_cc_pair = index_attempt.connector_credential_pair
@@ -228,7 +213,7 @@ def _run_indexing(
                 # contents still need to be initially pulled.
                 if callback:
                     if callback.should_stop():
-                        raise RuntimeError("Connector stop signal detected")
+                        raise ConnectorStopSignal("Connector stop signal detected")
 
                 # TODO: should we move this into the above callback instead?
                 db_session.refresh(db_cc_pair)
@@ -289,7 +274,7 @@ def _run_indexing(
                 db_session.commit()
 
                 if callback:
-                    callback.progress(len(doc_batch))
+                    callback.progress("_run_indexing", len(doc_batch))
 
                 # This new value is updated every batch, so UI can refresh per batch update
                 update_docs_indexed(
@@ -322,26 +307,16 @@ def _run_indexing(
                 )
         except Exception as e:
             logger.exception(
-                f"Connector run ran into exception after elapsed time: {time.time() - start_time} seconds"
+                f"Connector run exceptioned after elapsed time: {time.time() - start_time} seconds"
             )
-            # Only mark the attempt as a complete failure if this is the first indexing window.
-            # Otherwise, some progress was made - the next run will not start from the beginning.
-            # In this case, it is not accurate to mark it as a failure. When the next run begins,
-            # if that fails immediately, it will be marked as a failure.
-            #
-            # NOTE: if the connector is manually disabled, we should mark it as a failure regardless
-            # to give better clarity in the UI, as the next run will never happen.
-            if (
-                ind == 0
-                or not db_cc_pair.status.is_active()
-                or index_attempt.status != IndexingStatus.IN_PROGRESS
-            ):
-                mark_attempt_failed(
+
+            if isinstance(e, ConnectorStopSignal):
+                mark_attempt_canceled(
                     index_attempt.id,
                     db_session,
-                    failure_reason=str(e),
-                    full_exception_trace=traceback.format_exc(),
+                    reason=str(e),
                 )
+
                 if is_primary:
                     update_connector_credential_pair(
                         db_session=db_session,
@@ -353,6 +328,37 @@ def _run_indexing(
                 if INDEXING_TRACER_INTERVAL > 0:
                     tracer.stop()
                 raise e
+            else:
+                # Only mark the attempt as a complete failure if this is the first indexing window.
+                # Otherwise, some progress was made - the next run will not start from the beginning.
+                # In this case, it is not accurate to mark it as a failure. When the next run begins,
+                # if that fails immediately, it will be marked as a failure.
+                #
+                # NOTE: if the connector is manually disabled, we should mark it as a failure regardless
+                # to give better clarity in the UI, as the next run will never happen.
+                if (
+                    ind == 0
+                    or not db_cc_pair.status.is_active()
+                    or index_attempt.status != IndexingStatus.IN_PROGRESS
+                ):
+                    mark_attempt_failed(
+                        index_attempt.id,
+                        db_session,
+                        failure_reason=str(e),
+                        full_exception_trace=traceback.format_exc(),
+                    )
+
+                    if is_primary:
+                        update_connector_credential_pair(
+                            db_session=db_session,
+                            connector_id=db_connector.id,
+                            credential_id=db_credential.id,
+                            net_docs=net_doc_change,
+                        )
+
+                    if INDEXING_TRACER_INTERVAL > 0:
+                        tracer.stop()
+                    raise e
 
             # break => similar to success case. As mentioned above, if the next run fails for the same
             # reason it will then be marked as a failure
@@ -419,7 +425,7 @@ def run_indexing_entrypoint(
     tenant_id: str | None,
     connector_credential_pair_id: int,
     is_ee: bool = False,
-    callback: RunIndexingCallbackInterface | None = None,
+    callback: IndexingHeartbeatInterface | None = None,
 ) -> None:
     try:
         if is_ee:
@@ -427,17 +433,19 @@ def run_indexing_entrypoint(
 
         # set the indexing attempt ID so that all log messages from this process
         # will have it added as a prefix
-        IndexAttemptSingleton.set_cc_and_index_id(
+        TaskAttemptSingleton.set_cc_and_index_id(
             index_attempt_id, connector_credential_pair_id
         )
         with get_session_with_tenant(tenant_id) as db_session:
             attempt = transition_attempt_to_in_progress(index_attempt_id, db_session)
 
+            tenant_str = ""
+            if tenant_id is not None:
+                tenant_str = f" for tenant {tenant_id}"
+
             logger.info(
-                f"Indexing starting for tenant {tenant_id}: "
-                if tenant_id is not None
-                else ""
-                + f"connector='{attempt.connector_credential_pair.connector.name}' "
+                f"Indexing starting{tenant_str}: "
+                f"connector='{attempt.connector_credential_pair.connector.name}' "
                 f"config='{attempt.connector_credential_pair.connector.connector_specific_config}' "
                 f"credentials='{attempt.connector_credential_pair.connector_id}'"
             )
@@ -445,10 +453,8 @@ def run_indexing_entrypoint(
             _run_indexing(db_session, attempt, tenant_id, callback)
 
             logger.info(
-                f"Indexing finished for tenant {tenant_id}: "
-                if tenant_id is not None
-                else ""
-                + f"connector='{attempt.connector_credential_pair.connector.name}' "
+                f"Indexing finished{tenant_str}: "
+                f"connector='{attempt.connector_credential_pair.connector.name}' "
                 f"config='{attempt.connector_credential_pair.connector.connector_specific_config}' "
                 f"credentials='{attempt.connector_credential_pair.connector_id}'"
             )

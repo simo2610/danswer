@@ -18,6 +18,7 @@ from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from danswer.auth.users import current_limited_user
 from danswer.auth.users import current_user
 from danswer.chat.chat_utils import create_chat_chain
 from danswer.chat.chat_utils import extract_headers
@@ -26,9 +27,11 @@ from danswer.configs.app_configs import WEB_DOMAIN
 from danswer.configs.constants import FileOrigin
 from danswer.configs.constants import MessageType
 from danswer.configs.model_configs import LITELLM_PASS_THROUGH_HEADERS
+from danswer.db.chat import add_chats_to_session_from_slack_thread
 from danswer.db.chat import create_chat_session
 from danswer.db.chat import create_new_chat_message
 from danswer.db.chat import delete_chat_session
+from danswer.db.chat import duplicate_chat_session_for_user_from_slack
 from danswer.db.chat import get_chat_message
 from danswer.db.chat import get_chat_messages_by_session
 from danswer.db.chat import get_chat_session_by_id
@@ -309,7 +312,7 @@ async def is_connected(request: Request) -> Callable[[], bool]:
 def handle_new_chat_message(
     chat_message_req: CreateChatMessageRequest,
     request: Request,
-    user: User | None = Depends(current_user),
+    user: User | None = Depends(current_limited_user),
     _: None = Depends(check_token_rate_limits),
     is_connected_func: Callable[[], bool] = Depends(is_connected),
 ) -> StreamingResponse:
@@ -347,7 +350,6 @@ def handle_new_chat_message(
             for packet in stream_chat_message(
                 new_msg_req=chat_message_req,
                 user=user,
-                use_existing_user_message=chat_message_req.use_existing_user_message,
                 litellm_additional_headers=extract_headers(
                     request.headers, LITELLM_PASS_THROUGH_HEADERS
                 ),
@@ -359,7 +361,7 @@ def handle_new_chat_message(
                 yield json.dumps(packet) if isinstance(packet, dict) else packet
 
         except Exception as e:
-            logger.exception(f"Error in chat message streaming: {e}")
+            logger.exception("Error in chat message streaming")
             yield json.dumps({"error": str(e)})
 
         finally:
@@ -392,7 +394,7 @@ def set_message_as_latest(
 @router.post("/create-chat-message-feedback")
 def create_chat_feedback(
     feedback: ChatFeedbackRequest,
-    user: User | None = Depends(current_user),
+    user: User | None = Depends(current_limited_user),
     db_session: Session = Depends(get_session),
 ) -> None:
     user_id = user.id if user else None
@@ -529,6 +531,38 @@ def seed_chat(
 
     return ChatSeedResponse(
         redirect_url=f"{WEB_DOMAIN}/chat?chatId={new_chat_session.id}&seeded=true"
+    )
+
+
+class SeedChatFromSlackRequest(BaseModel):
+    chat_session_id: UUID
+
+
+class SeedChatFromSlackResponse(BaseModel):
+    redirect_url: str
+
+
+@router.post("/seed-chat-session-from-slack")
+def seed_chat_from_slack(
+    chat_seed_request: SeedChatFromSlackRequest,
+    user: User | None = Depends(current_user),
+    db_session: Session = Depends(get_session),
+) -> SeedChatFromSlackResponse:
+    slack_chat_session_id = chat_seed_request.chat_session_id
+    new_chat_session = duplicate_chat_session_for_user_from_slack(
+        db_session=db_session,
+        user=user,
+        chat_session_id=slack_chat_session_id,
+    )
+
+    add_chats_to_session_from_slack_thread(
+        db_session=db_session,
+        slack_chat_session_id=slack_chat_session_id,
+        new_chat_session_id=new_chat_session.id,
+    )
+
+    return SeedChatFromSlackResponse(
+        redirect_url=f"{WEB_DOMAIN}/chat?chatId={new_chat_session.id}"
     )
 
 

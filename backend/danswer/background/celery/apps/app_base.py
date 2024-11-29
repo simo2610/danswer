@@ -24,6 +24,8 @@ from danswer.document_index.vespa_constants import VESPA_CONFIG_SERVER_URL
 from danswer.redis.redis_connector import RedisConnector
 from danswer.redis.redis_connector_credential_pair import RedisConnectorCredentialPair
 from danswer.redis.redis_connector_delete import RedisConnectorDelete
+from danswer.redis.redis_connector_doc_perm_sync import RedisConnectorPermissionSync
+from danswer.redis.redis_connector_ext_group_sync import RedisConnectorExternalGroupSync
 from danswer.redis.redis_connector_prune import RedisConnectorPrune
 from danswer.redis.redis_document_set import RedisDocumentSet
 from danswer.redis.redis_pool import get_redis_client
@@ -31,7 +33,6 @@ from danswer.redis.redis_usergroup import RedisUserGroup
 from danswer.utils.logger import ColoredFormatter
 from danswer.utils.logger import PlainFormatter
 from danswer.utils.logger import setup_logger
-from shared_configs.configs import MULTI_TENANT
 from shared_configs.configs import SENTRY_DSN
 
 
@@ -135,6 +136,22 @@ def on_task_postrun(
         cc_pair_id = RedisConnector.get_id_from_task_id(task_id)
         if cc_pair_id is not None:
             RedisConnectorPrune.remove_from_taskset(int(cc_pair_id), task_id, r)
+        return
+
+    if task_id.startswith(RedisConnectorPermissionSync.SUBTASK_PREFIX):
+        cc_pair_id = RedisConnector.get_id_from_task_id(task_id)
+        if cc_pair_id is not None:
+            RedisConnectorPermissionSync.remove_from_taskset(
+                int(cc_pair_id), task_id, r
+            )
+        return
+
+    if task_id.startswith(RedisConnectorExternalGroupSync.SUBTASK_PREFIX):
+        cc_pair_id = RedisConnector.get_id_from_task_id(task_id)
+        if cc_pair_id is not None:
+            RedisConnectorExternalGroupSync.remove_from_taskset(
+                int(cc_pair_id), task_id, r
+            )
         return
 
 
@@ -273,10 +290,6 @@ def wait_for_vespa(sender: Any, **kwargs: Any) -> None:
 
 def on_secondary_worker_init(sender: Any, **kwargs: Any) -> None:
     logger.info("Running as a secondary celery worker.")
-
-    # Exit early if multi-tenant since primary worker check not needed
-    if MULTI_TENANT:
-        return
 
     # Set up variables for waiting on primary worker
     WAIT_INTERVAL = 5

@@ -234,7 +234,7 @@ except ValueError:
         CELERY_WORKER_LIGHT_PREFETCH_MULTIPLIER_DEFAULT
     )
 
-CELERY_WORKER_INDEXING_CONCURRENCY_DEFAULT = 1
+CELERY_WORKER_INDEXING_CONCURRENCY_DEFAULT = 3
 try:
     env_value = os.environ.get("CELERY_WORKER_INDEXING_CONCURRENCY")
     if not env_value:
@@ -422,6 +422,9 @@ LOG_ALL_MODEL_INTERACTIONS = (
 LOG_DANSWER_MODEL_INTERACTIONS = (
     os.environ.get("LOG_DANSWER_MODEL_INTERACTIONS", "").lower() == "true"
 )
+LOG_INDIVIDUAL_MODEL_TOKENS = (
+    os.environ.get("LOG_INDIVIDUAL_MODEL_TOKENS", "").lower() == "true"
+)
 # If set to `true` will enable additional logs about Vespa query performance
 # (time spent on finding the right docs + time spent fetching summaries from disk)
 LOG_VESPA_TIMING_INFORMATION = (
@@ -493,3 +496,17 @@ JWT_ALGORITHM = "HS256"
 # Super Users
 SUPER_USERS = json.loads(os.environ.get("SUPER_USERS", '["pablo@danswer.ai"]'))
 SUPER_CLOUD_API_KEY = os.environ.get("SUPER_CLOUD_API_KEY", "api_key")
+
+
+#####
+# API Key Configs
+#####
+# refers to the rounds described here: https://passlib.readthedocs.io/en/stable/lib/passlib.hash.sha256_crypt.html
+_API_KEY_HASH_ROUNDS_RAW = os.environ.get("API_KEY_HASH_ROUNDS")
+API_KEY_HASH_ROUNDS = (
+    int(_API_KEY_HASH_ROUNDS_RAW) if _API_KEY_HASH_ROUNDS_RAW else None
+)
+
+
+POD_NAME = os.environ.get("POD_NAME")
+POD_NAMESPACE = os.environ.get("POD_NAMESPACE")

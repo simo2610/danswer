@@ -1,4 +1,3 @@
-import re
 import threading
 import time
 from collections.abc import Callable
@@ -7,6 +6,9 @@ from typing import Any
 
 import requests
 from httpx import HTTPError
+from requests import JSONDecodeError
+from requests import RequestException
+from requests import Response
 from retry import retry
 
 from danswer.configs.app_configs import LARGE_CHUNK_RATIO
@@ -16,7 +18,10 @@ from danswer.configs.model_configs import (
 )
 from danswer.configs.model_configs import DOC_EMBEDDING_CONTEXT_SIZE
 from danswer.db.models import SearchSettings
-from danswer.indexing.indexing_heartbeat import Heartbeat
+from danswer.indexing.indexing_heartbeat import IndexingHeartbeatInterface
+from danswer.natural_language_processing.exceptions import (
+    ModelServerRateLimitError,
+)
 from danswer.natural_language_processing.utils import get_tokenizer
 from danswer.natural_language_processing.utils import tokenizer_trim_content
 from danswer.utils.logger import setup_logger
@@ -50,28 +55,6 @@ def clean_model_name(model_str: str) -> str:
     return model_str.replace("/", "_").replace("-", "_").replace(".", "_")
 
 
-_INITIAL_FILTER = re.compile(
-    "["
-    "\U0000FFF0-\U0000FFFF"  # Specials
-    "\U0001F000-\U0001F9FF"  # Emoticons
-    "\U00002000-\U0000206F"  # General Punctuation
-    "\U00002190-\U000021FF"  # Arrows
-    "\U00002700-\U000027BF"  # Dingbats
-    "]+",
-    flags=re.UNICODE,
-)
-
-
-def clean_openai_text(text: str) -> str:
-    # Remove specific Unicode ranges that might cause issues
-    cleaned = _INITIAL_FILTER.sub("", text)
-
-    # Remove any control characters except for newline and tab
-    cleaned = "".join(ch for ch in cleaned if ch >= " " or ch in "\n\t")
-
-    return cleaned
-
-
 def build_model_server_url(
     model_server_host: str,
     model_server_port: int,
@@ -99,7 +82,7 @@ class EmbeddingModel:
         api_url: str | None,
         provider_type: EmbeddingProvider | None,
         retrim_content: bool = False,
-        heartbeat: Heartbeat | None = None,
+        callback: IndexingHeartbeatInterface | None = None,
         api_version: str | None = None,
         deployment_name: str | None = None,
     ) -> None:
@@ -116,34 +99,49 @@ class EmbeddingModel:
         self.tokenizer = get_tokenizer(
             model_name=model_name, provider_type=provider_type
         )
-        self.heartbeat = heartbeat
+        self.callback = callback
 
         model_server_url = build_model_server_url(server_host, server_port)
         self.embed_server_endpoint = f"{model_server_url}/encoder/bi-encoder-embed"
 
     def _make_model_server_request(self, embed_request: EmbedRequest) -> EmbedResponse:
-        def _make_request() -> EmbedResponse:
+        def _make_request() -> Response:
             response = requests.post(
                 self.embed_server_endpoint, json=embed_request.model_dump()
             )
-            try:
-                response.raise_for_status()
-            except requests.HTTPError as e:
-                try:
-                    error_detail = response.json().get("detail", str(e))
-                except Exception:
-                    error_detail = response.text
-                raise HTTPError(f"HTTP error occurred: {error_detail}") from e
-            except requests.RequestException as e:
-                raise HTTPError(f"Request failed: {str(e)}") from e
+            # signify that this is a rate limit error
+            if response.status_code == 429:
+                raise ModelServerRateLimitError(response.text)
 
-            return EmbedResponse(**response.json())
+            response.raise_for_status()
+            return response
 
-        # only perform retries for the non-realtime embedding of passages (e.g. for indexing)
+        final_make_request_func = _make_request
+
+        # if the text type is a passage, add some default
+        # retries + handling for rate limiting
         if embed_request.text_type == EmbedTextType.PASSAGE:
-            return retry(tries=3, delay=5)(_make_request)()
-        else:
-            return _make_request()
+            final_make_request_func = retry(
+                tries=3,
+                delay=5,
+                exceptions=(RequestException, ValueError, JSONDecodeError),
+            )(final_make_request_func)
+            # use 10 second delay as per Azure suggestion
+            final_make_request_func = retry(
+                tries=10, delay=10, exceptions=ModelServerRateLimitError
+            )(final_make_request_func)
+
+        try:
+            response = final_make_request_func()
+            return EmbedResponse(**response.json())
+        except requests.HTTPError as e:
+            try:
+                error_detail = response.json().get("detail", str(e))
+            except Exception:
+                error_detail = response.text
+            raise HTTPError(f"HTTP error occurred: {error_detail}") from e
+        except requests.RequestException as e:
+            raise HTTPError(f"Request failed: {str(e)}") from e
 
     def _batch_encode_texts(
         self,
@@ -160,6 +158,10 @@ class EmbeddingModel:
 
         embeddings: list[Embedding] = []
         for idx, text_batch in enumerate(text_batches, start=1):
+            if self.callback:
+                if self.callback.should_stop():
+                    raise RuntimeError("_batch_encode_texts detected stop signal")
+
             logger.debug(f"Encoding batch {idx} of {len(text_batches)}")
             embed_request = EmbedRequest(
                 model_name=self.model_name,
@@ -179,8 +181,8 @@ class EmbeddingModel:
             response = self._make_model_server_request(embed_request)
             embeddings.extend(response.embeddings)
 
-            if self.heartbeat:
-                self.heartbeat.heartbeat()
+            if self.callback:
+                self.callback.progress("_batch_encode_texts", 1)
         return embeddings
 
     def encode(
@@ -210,11 +212,6 @@ class EmbeddingModel:
                 )
                 for text in texts
             ]
-
-        if self.provider_type == EmbeddingProvider.OPENAI:
-            # If the provider is openai, we need to clean the text
-            # as a temporary workaround for the openai API
-            texts = [clean_openai_text(text) for text in texts]
 
         batch_size = (
             api_embedding_batch_size

@@ -4,22 +4,19 @@ https://confluence.atlassian.com/conf85/check-who-can-view-a-page-1283360557.htm
 """
 from typing import Any
 
-from sqlalchemy.orm import Session
-
+from danswer.access.models import DocExternalAccess
 from danswer.access.models import ExternalAccess
 from danswer.connectors.confluence.connector import ConfluenceConnector
 from danswer.connectors.confluence.onyx_confluence import OnyxConfluence
 from danswer.connectors.confluence.utils import get_user_email_from_username__server
 from danswer.connectors.models import SlimDocument
 from danswer.db.models import ConnectorCredentialPair
-from danswer.db.users import batch_add_non_web_user_if_not_exists__no_commit
 from danswer.utils.logger import setup_logger
-from ee.danswer.db.document import upsert_document_external_perms__no_commit
 
 logger = setup_logger()
 
 _VIEWSPACE_PERMISSION_TYPE = "VIEWSPACE"
-_REQUEST_PAGINATION_LIMIT = 100
+_REQUEST_PAGINATION_LIMIT = 5000
 
 
 def _get_server_space_permissions(
@@ -100,6 +97,7 @@ def _get_space_permissions(
     confluence_client: OnyxConfluence,
     is_cloud: bool,
 ) -> dict[str, ExternalAccess]:
+    logger.debug("Getting space permissions")
     # Gets all the spaces in the Confluence instance
     all_space_keys = []
     start = 0
@@ -116,6 +114,7 @@ def _get_space_permissions(
         start += len(spaces_batch.get("results", []))
 
     # Gets the permissions for each space
+    logger.debug(f"Got {len(all_space_keys)} spaces from confluence")
     space_permissions_by_space_key: dict[str, ExternalAccess] = {}
     for space_key in all_space_keys:
         if is_cloud:
@@ -163,7 +162,13 @@ def _extract_read_access_restrictions(
                     f"Email for user {user['username']} not found in Confluence"
                 )
         else:
-            logger.warning(f"User {user} does not have an email or username")
+            if user.get("email") is not None:
+                logger.warning(f"Cant find email for user {user.get('displayName')}")
+                logger.warning(
+                    "This user needs to make their email accessible in Confluence Settings"
+                )
+
+            logger.warning(f"no user email or username for {user}")
 
     # Extract the groups with read access
     read_access_group = read_access_restrictions.get("group", {})
@@ -190,12 +195,12 @@ def _fetch_all_page_restrictions_for_space(
     confluence_client: OnyxConfluence,
     slim_docs: list[SlimDocument],
     space_permissions_by_space_key: dict[str, ExternalAccess],
-) -> dict[str, ExternalAccess]:
+) -> list[DocExternalAccess]:
     """
     For all pages, if a page has restrictions, then use those restrictions.
     Otherwise, use the space's restrictions.
     """
-    document_restrictions: dict[str, ExternalAccess] = {}
+    document_restrictions: list[DocExternalAccess] = []
 
     for slim_doc in slim_docs:
         if slim_doc.perm_sync_data is None:
@@ -207,60 +212,73 @@ def _fetch_all_page_restrictions_for_space(
             restrictions=slim_doc.perm_sync_data.get("restrictions", {}),
         )
         if restrictions:
-            document_restrictions[slim_doc.id] = restrictions
-        else:
-            space_key = slim_doc.perm_sync_data.get("space_key")
-            if space_permissions := space_permissions_by_space_key.get(space_key):
-                document_restrictions[slim_doc.id] = space_permissions
-            else:
-                logger.warning(f"No permissions found for document {slim_doc.id}")
+            document_restrictions.append(
+                DocExternalAccess(
+                    doc_id=slim_doc.id,
+                    external_access=restrictions,
+                )
+            )
+            # If there are restrictions, then we don't need to use the space's restrictions
+            continue
 
+        space_key = slim_doc.perm_sync_data.get("space_key")
+        if space_permissions := space_permissions_by_space_key.get(space_key):
+            # If there are no restrictions, then use the space's restrictions
+            document_restrictions.append(
+                DocExternalAccess(
+                    doc_id=slim_doc.id,
+                    external_access=space_permissions,
+                )
+            )
+            if (
+                not space_permissions.is_public
+                and not space_permissions.external_user_emails
+                and not space_permissions.external_user_group_ids
+            ):
+                logger.warning(
+                    f"Permissions are empty for document: {slim_doc.id}\n"
+                    "This means space permissions are may be wrong for"
+                    f" Space key: {space_key}"
+                )
+            continue
+
+        logger.warning(f"No permissions found for document {slim_doc.id}")
+
+    logger.debug("Finished fetching all page restrictions for space")
     return document_restrictions
 
 
 def confluence_doc_sync(
-    db_session: Session,
     cc_pair: ConnectorCredentialPair,
-) -> None:
+) -> list[DocExternalAccess]:
     """
     Adds the external permissions to the documents in postgres
     if the document doesn't already exists in postgres, we create
     it in postgres so that when it gets created later, the permissions are
     already populated
     """
+    logger.debug("Starting confluence doc sync")
     confluence_connector = ConfluenceConnector(
         **cc_pair.connector.connector_specific_config
     )
     confluence_connector.load_credentials(cc_pair.credential.credential_json)
-    if confluence_connector.confluence_client is None:
-        raise ValueError("Failed to load credentials")
-    confluence_client = confluence_connector.confluence_client
 
     is_cloud = cc_pair.connector.connector_specific_config.get("is_cloud", False)
 
     space_permissions_by_space_key = _get_space_permissions(
-        confluence_client=confluence_client,
+        confluence_client=confluence_connector.confluence_client,
         is_cloud=is_cloud,
     )
 
     slim_docs = []
+    logger.debug("Fetching all slim documents from confluence")
     for doc_batch in confluence_connector.retrieve_all_slim_documents():
+        logger.debug(f"Got {len(doc_batch)} slim documents from confluence")
         slim_docs.extend(doc_batch)
 
-    permissions_by_doc_id = _fetch_all_page_restrictions_for_space(
-        confluence_client=confluence_client,
+    logger.debug("Fetching all page restrictions for space")
+    return _fetch_all_page_restrictions_for_space(
+        confluence_client=confluence_connector.confluence_client,
         slim_docs=slim_docs,
         space_permissions_by_space_key=space_permissions_by_space_key,
     )
-
-    all_emails = set()
-    for doc_id, page_specific_access in permissions_by_doc_id.items():
-        upsert_document_external_perms__no_commit(
-            db_session=db_session,
-            doc_id=doc_id,
-            external_access=page_specific_access,
-            source_type=cc_pair.connector.source,
-        )
-        all_emails.update(page_specific_access.external_user_emails)
-
-    batch_add_non_web_user_if_not_exists__no_commit(db_session, list(all_emails))

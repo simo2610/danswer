@@ -1,4 +1,5 @@
 import os
+from typing import Any
 from typing import List
 from urllib.parse import urlparse
 
@@ -133,8 +134,27 @@ MULTI_TENANT = os.environ.get("MULTI_TENANT", "").lower() == "true"
 
 POSTGRES_DEFAULT_SCHEMA = os.environ.get("POSTGRES_DEFAULT_SCHEMA") or "public"
 
+
+async def async_return_default_schema(*args: Any, **kwargs: Any) -> str:
+    return POSTGRES_DEFAULT_SCHEMA
+
+
 # Prefix used for all tenant ids
 TENANT_ID_PREFIX = "tenant_"
+
+DISALLOWED_SLACK_BOT_TENANT_IDS = os.environ.get("DISALLOWED_SLACK_BOT_TENANT_IDS")
+DISALLOWED_SLACK_BOT_TENANT_LIST = (
+    [tenant.strip() for tenant in DISALLOWED_SLACK_BOT_TENANT_IDS.split(",")]
+    if DISALLOWED_SLACK_BOT_TENANT_IDS
+    else None
+)
+
+IGNORED_SYNCING_TENANT_IDS = os.environ.get("IGNORED_SYNCING_TENANT_IDS")
+IGNORED_SYNCING_TENANT_LIST = (
+    [tenant.strip() for tenant in IGNORED_SYNCING_TENANT_IDS.split(",")]
+    if IGNORED_SYNCING_TENANT_IDS
+    else None
+)
 
 SUPPORTED_EMBEDDING_MODELS = [
     # Cloud-based models
