@@ -645,6 +645,7 @@ For example, specifying .*-support.* as a "channel" will cause the connector to 
   },
   monday_com: {
     description: "Configure Monday.com connector",
+    advanced_values: [],
     values: [
       {
         type: "select",
