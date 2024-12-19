@@ -10,7 +10,8 @@ export function HeaderTitle({
   backgroundToggled?: boolean;
 }) {
   const isString = typeof children === "string";
-  const textSize = isString && children.length > 10 ? "text-xl" : "text-2xl";
+  const textSize =
+    isString && children.length > 10 ? "text-lg mb-[4px] " : "text-2xl";
 
   return (
     <h1
@@ -18,7 +19,7 @@ export function HeaderTitle({
         backgroundToggled
           ? "text-text-sidebar-toggled-header"
           : "text-text-sidebar-header"
-      } break-words line-clamp-2 ellipsis text-strong leading-none font-bold`}
+      } break-words text-left line-clamp-2 ellipsis text-strong overflow-hidden leading-none font-bold`}
     >
       {children}
     </h1>

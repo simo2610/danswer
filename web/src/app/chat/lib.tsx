@@ -1,7 +1,8 @@
 import {
   AnswerPiecePacket,
-  DanswerDocument,
+  OnyxDocument,
   Filters,
+  DocumentInfoPacket,
   StreamStopInfo,
 } from "@/lib/search/interfaces";
 import { handleSSEStream } from "@/lib/search/streamingUtils";
@@ -102,6 +103,7 @@ export type PacketType =
   | ToolCallMetadata
   | BackendMessage
   | AnswerPiecePacket
+  | DocumentInfoPacket
   | DocumentsResponse
   | FileChatDisplay
   | StreamingError
@@ -147,7 +149,6 @@ export async function* sendMessage({
 }): AsyncGenerator<PacketType, void, unknown> {
   const documentsAreSelected =
     selectedDocumentIds && selectedDocumentIds.length > 0;
-
   const body = JSON.stringify({
     alternate_assistant_id: alternateAssistantId,
     chat_session_id: chatSessionId,
@@ -277,6 +278,16 @@ export async function deleteChatSession(chatSessionId: string) {
   return response;
 }
 
+export async function deleteAllChatSessions(sessionType: "Chat" | "Search") {
+  const response = await fetch(`/api/chat/delete-all-chat-sessions`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  return response;
+}
+
 export async function* simulateLLMResponse(input: string, delay: number = 30) {
   // Split the input string into tokens. This is a simple example, and in real use case, tokenization can be more complex.
   // Iterate over tokens and yield them one by one
@@ -333,7 +344,7 @@ export function getCitedDocumentsFromMessage(message: Message) {
     return [];
   }
 
-  const documentsWithCitationKey: [string, DanswerDocument][] = [];
+  const documentsWithCitationKey: [string, OnyxDocument][] = [];
   Object.entries(message.citations).forEach(([citationKey, documentDbId]) => {
     const matchingDocument = message.documents!.find(
       (document) => document.db_doc_id === documentDbId
@@ -639,14 +650,15 @@ export async function useScrollonStream({
   endDivRef,
   debounceNumber,
   mobile,
+  enableAutoScroll,
 }: {
   chatState: ChatState;
   scrollableDivRef: RefObject<HTMLDivElement>;
-  waitForScrollRef: RefObject<boolean>;
   scrollDist: MutableRefObject<number>;
   endDivRef: RefObject<HTMLDivElement>;
   debounceNumber: number;
   mobile?: boolean;
+  enableAutoScroll?: boolean;
 }) {
   const mobileDistance = 900; // distance that should "engage" the scroll
   const desktopDistance = 500; // distance that should "engage" the scroll
@@ -659,6 +671,10 @@ export async function useScrollonStream({
   const previousScroll = useRef<number>(0);
 
   useEffect(() => {
+    if (!enableAutoScroll) {
+      return;
+    }
+
     if (chatState != "input" && scrollableDivRef && scrollableDivRef.current) {
       const newHeight: number = scrollableDivRef.current?.scrollTop!;
       const heightDifference = newHeight - previousScroll.current;
@@ -716,7 +732,7 @@ export async function useScrollonStream({
 
   // scroll on end of stream if within distance
   useEffect(() => {
-    if (scrollableDivRef?.current && chatState == "input") {
+    if (scrollableDivRef?.current && chatState == "input" && enableAutoScroll) {
       if (scrollDist.current < distance - 50) {
         scrollableDivRef?.current?.scrollBy({
           left: 0,

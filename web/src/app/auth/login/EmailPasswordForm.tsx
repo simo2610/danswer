@@ -5,11 +5,11 @@ import { usePopup } from "@/components/admin/connectors/Popup";
 import { basicLogin, basicSignup } from "@/lib/user";
 import { Button } from "@/components/ui/button";
 import { Form, Formik } from "formik";
-import { useRouter } from "next/navigation";
 import * as Yup from "yup";
 import { requestEmailVerification } from "../lib";
 import { useState } from "react";
 import { Spinner } from "@/components/Spinner";
+import { set } from "lodash";
 
 export function EmailPasswordForm({
   isSignup = false,
@@ -22,10 +22,8 @@ export function EmailPasswordForm({
   referralSource?: string;
   nextUrl?: string | null;
 }) {
-  const router = useRouter();
   const { popup, setPopup } = usePopup();
   const [isWorking, setIsWorking] = useState(false);
-
   return (
     <>
       {isWorking && <Spinner />}
@@ -50,10 +48,12 @@ export function EmailPasswordForm({
             );
 
             if (!response.ok) {
+              setIsWorking(false);
               const errorDetail = (await response.json()).detail;
-
               let errorMsg = "Unknown error";
-              if (errorDetail === "REGISTER_USER_ALREADY_EXISTS") {
+              if (typeof errorDetail === "object" && errorDetail.reason) {
+                errorMsg = errorDetail.reason;
+              } else if (errorDetail === "REGISTER_USER_ALREADY_EXISTS") {
                 errorMsg =
                   "An account already exists with the specified email.";
               }
@@ -69,9 +69,13 @@ export function EmailPasswordForm({
           if (loginResponse.ok) {
             if (isSignup && shouldVerify) {
               await requestEmailVerification(values.email);
-              router.push("/auth/waiting-on-verification");
+              // Use window.location.href to force a full page reload,
+              // ensuring app re-initializes with the new state (including
+              // server-side provider values)
+              window.location.href = "/auth/waiting-on-verification";
             } else {
-              router.push(nextUrl ? encodeURI(nextUrl) : "/");
+              // See above comment
+              window.location.href = nextUrl ? encodeURI(nextUrl) : "/";
             }
           } else {
             setIsWorking(false);
