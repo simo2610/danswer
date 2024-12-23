@@ -49,7 +49,7 @@ from onyx.connectors.zendesk.connector import ZendeskConnector
 from onyx.connectors.zulip.connector import ZulipConnector
 from onyx.db.credentials import backend_update_credential_json
 from onyx.db.models import Credential
-from danswer.connectors.monday_com.connector import MondayConnector
+# from danswer.connectors.monday_com.connector import MondayConnector
 
 
 class ConnectorMissingException(Exception):
@@ -100,7 +100,7 @@ def identify_connector_class(
         DocumentSource.R2: BlobStorageConnector,
         DocumentSource.GOOGLE_CLOUD_STORAGE: BlobStorageConnector,
         DocumentSource.OCI_STORAGE: BlobStorageConnector,
-        DocumentSource.MONDAY_COM: MondayConnector,
+        # DocumentSource.MONDAY_COM: MondayConnector,
         DocumentSource.XENFORO: XenforoConnector,
         DocumentSource.FRESHDESK: FreshdeskConnector,
         DocumentSource.FIREFLIES: FirefliesConnector,
