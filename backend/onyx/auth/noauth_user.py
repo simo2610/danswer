@@ -23,6 +23,7 @@ def load_no_auth_user_preferences(store: KeyValueStore) -> UserPreferences:
         preferences_data = cast(
             Mapping[str, Any], store.load(KV_NO_AUTH_USER_PREFERENCES_KEY)
         )
+        print("preferences_data", preferences_data)
         return UserPreferences(**preferences_data)
     except KvKeyNotFoundError:
         return UserPreferences(
@@ -30,13 +31,16 @@ def load_no_auth_user_preferences(store: KeyValueStore) -> UserPreferences:
         )
 
 
-def fetch_no_auth_user(store: KeyValueStore) -> UserInfo:
+def fetch_no_auth_user(
+    store: KeyValueStore, *, anonymous_user_enabled: bool | None = None
+) -> UserInfo:
     return UserInfo(
         id=NO_AUTH_USER_ID,
         email=NO_AUTH_USER_EMAIL,
         is_active=True,
         is_superuser=False,
         is_verified=True,
-        role=UserRole.ADMIN,
+        role=UserRole.BASIC if anonymous_user_enabled else UserRole.ADMIN,
         preferences=load_no_auth_user_preferences(store),
+        is_anonymous_user=anonymous_user_enabled,
     )

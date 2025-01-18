@@ -8,9 +8,8 @@ export function OnyxInitializingLoader() {
   return (
     <div className="mx-auto my-auto animate-pulse">
       <Logo height={96} width={96} className="mx-auto mb-3" />
-      <p className="text-lg font-bold">
-        Initializing{" "}
-        {settings?.enterpriseSettings?.application_name ?? "Scientifica Answer"}
+      <p className="text-lg text-text font-semibold">
+        Initializing {settings?.enterpriseSettings?.application_name ?? "Scientifica Answer"}
       </p>
     </div>
   );

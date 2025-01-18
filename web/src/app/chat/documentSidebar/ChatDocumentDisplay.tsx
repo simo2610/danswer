@@ -16,6 +16,7 @@ interface DocumentDisplayProps {
   isSelected: boolean;
   handleSelect: (documentId: string) => void;
   tokenLimitReached: boolean;
+  hideSelection?: boolean;
   setPresentingDocument: Dispatch<SetStateAction<OnyxDocument | null>>;
 }
 
@@ -62,6 +63,7 @@ export function ChatDocumentDisplay({
   closeSidebar,
   document,
   modal,
+  hideSelection,
   isSelected,
   handleSelect,
   tokenLimitReached,
@@ -75,16 +77,21 @@ export function ChatDocumentDisplay({
 
   const hasMetadata =
     document.updated_at || Object.keys(document.metadata).length > 0;
+
   return (
-    <div className={`opacity-100 ${modal ? "w-[90vw]" : "w-full"}`}>
+    <div
+      className={`desktop:max-w-[400px] opacity-100 ${
+        modal ? "w-[90vw]" : "w-full"
+      }`}
+    >
       <div
-        className={`flex relative flex-col gap-0.5  rounded-xl mx-2 my-1 ${
-          isSelected ? "bg-gray-200" : "hover:bg-background-125"
+        className={`flex relative flex-col px-3 py-2.5 gap-0.5 rounded-xl mx-2 my-1 ${
+          isSelected ? "bg-[#ebe7de]" : "bg- hover:bg-[#ebe7de]/80"
         }`}
       >
         <button
           onClick={() => openDocument(document, setPresentingDocument)}
-          className="cursor-pointer text-left flex flex-col px-2 py-1.5"
+          className="cursor-pointer text-left flex flex-col"
         >
           <div className="line-clamp-1 mb-1 flex h-6 items-center gap-2 text-xs">
             {document.is_internet || document.source_type === "web" ? (
@@ -115,7 +122,7 @@ export function ChatDocumentDisplay({
             )}
           </div>
           <div className="absolute top-2 right-2">
-            {!isInternet && (
+            {!isInternet && !hideSelection && (
               <DocumentSelector
                 isSelected={isSelected}
                 handleSelect={() => handleSelect(document.document_id)}
