@@ -30,6 +30,10 @@ export interface GithubCredentialJson {
   github_access_token: string;
 }
 
+export interface GitbookCredentialJson {
+  gitbook_api_key: string;
+}
+
 export interface GitlabCredentialJson {
   gitlab_url: string;
   gitlab_access_token: string;
@@ -114,7 +118,7 @@ export interface LoopioCredentialJson {
 }
 
 export interface LinearCredentialJson {
-  linear_api_key: string;
+  linear_access_token: string;
 }
 
 export interface HubSpotCredentialJson {
@@ -255,7 +259,7 @@ export const credentialTemplates: Record<ValidSources, any> = {
     gong_access_key_secret: "",
   } as GongCredentialJson,
   zulip: { zuliprc_content: "" } as ZulipCredentialJson,
-  linear: { linear_api_key: "" } as LinearCredentialJson,
+  linear: { linear_access_token: "" } as LinearCredentialJson,
   hubspot: { hubspot_access_token: "" } as HubSpotCredentialJson,
   document360: {
     portal_id: "",
@@ -352,6 +356,9 @@ export const credentialTemplates: Record<ValidSources, any> = {
   // NOTE: These are Special Cases
   google_drive: { google_tokens: "" } as GoogleDriveCredentialJson,
   gmail: { google_tokens: "" } as GmailCredentialJson,
+  gitbook: {
+    gitbook_api_key: "",
+  } as GitbookCredentialJson,
 };
 
 export const credentialDisplayNames: Record<string, string> = {
@@ -412,7 +419,7 @@ export const credentialDisplayNames: Record<string, string> = {
   loopio_client_token: "Loopio Client Token",
 
   // Linear
-  linear_api_key: "Linear API Key",
+  linear_access_token: "Linear Access Token",
 
   // HubSpot
   hubspot_access_token: "HubSpot Access Token",
@@ -485,6 +492,10 @@ export const credentialDisplayNames: Record<string, string> = {
 
   // Fireflies
   fireflies_api_key: "Fireflies API Key",
+
+  // GitBook
+  gitbook_space_id: "GitBook Space ID",
+  gitbook_api_key: "GitBook API Key",
 };
 
 export function getDisplayNameForCredentialKey(key: string): string {

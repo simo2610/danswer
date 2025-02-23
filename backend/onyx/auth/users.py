@@ -1,5 +1,7 @@
 import json
+import random
 import secrets
+import string
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
@@ -57,7 +59,7 @@ from onyx.auth.invited_users import get_invited_users
 from onyx.auth.schemas import AuthBackend
 from onyx.auth.schemas import UserCreate
 from onyx.auth.schemas import UserRole
-from onyx.auth.schemas import UserUpdate
+from onyx.auth.schemas import UserUpdateWithRole
 from onyx.configs.app_configs import AUTH_BACKEND
 from onyx.configs.app_configs import AUTH_COOKIE_EXPIRE_TIME_SECONDS
 from onyx.configs.app_configs import AUTH_TYPE
@@ -73,6 +75,7 @@ from onyx.configs.app_configs import WEB_DOMAIN
 from onyx.configs.constants import AuthType
 from onyx.configs.constants import DANSWER_API_KEY_DUMMY_EMAIL_DOMAIN
 from onyx.configs.constants import DANSWER_API_KEY_PREFIX
+from onyx.configs.constants import FASTAPI_USERS_AUTH_COOKIE_NAME
 from onyx.configs.constants import MilestoneRecordType
 from onyx.configs.constants import OnyxRedisLocks
 from onyx.configs.constants import PASSWORD_SPECIAL_CHARS
@@ -85,7 +88,6 @@ from onyx.db.auth import get_user_db
 from onyx.db.auth import SQLAlchemyUserAdminDB
 from onyx.db.engine import get_async_session
 from onyx.db.engine import get_async_session_with_tenant
-from onyx.db.engine import get_current_tenant_id
 from onyx.db.engine import get_session_with_tenant
 from onyx.db.models import AccessToken
 from onyx.db.models import OAuthAccount
@@ -93,6 +95,7 @@ from onyx.db.models import User
 from onyx.db.users import get_user_by_email
 from onyx.redis.redis_pool import get_async_redis_connection
 from onyx.redis.redis_pool import get_redis_client
+from onyx.server.utils import BasicAuthenticationError
 from onyx.utils.logger import setup_logger
 from onyx.utils.telemetry import create_milestone_and_report
 from onyx.utils.telemetry import optional_telemetry
@@ -102,13 +105,9 @@ from onyx.utils.variable_functionality import fetch_versioned_implementation
 from shared_configs.configs import async_return_default_schema
 from shared_configs.configs import MULTI_TENANT
 from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
+from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
-
-
-class BasicAuthenticationError(HTTPException):
-    def __init__(self, detail: str):
-        super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 def is_user_admin(user: User | None) -> bool:
@@ -140,6 +139,30 @@ def get_display_email(email: str | None, space_less: bool = False) -> str:
         return name.replace("API_KEY__", "API Key: ")
 
     return email or ""
+
+
+def generate_password() -> str:
+    lowercase_letters = string.ascii_lowercase
+    uppercase_letters = string.ascii_uppercase
+    digits = string.digits
+    special_characters = string.punctuation
+
+    # Ensure at least one of each required character type
+    password = [
+        secrets.choice(uppercase_letters),
+        secrets.choice(digits),
+        secrets.choice(special_characters),
+    ]
+
+    # Fill the rest with a mix of characters
+    remaining_length = 12 - len(password)
+    all_characters = lowercase_letters + uppercase_letters + digits + special_characters
+    password.extend(secrets.choice(all_characters) for _ in range(remaining_length))
+
+    # Shuffle the password to randomize the position of the required characters
+    random.shuffle(password)
+
+    return "".join(password)
 
 
 def user_needs_to_be_verified() -> bool:
@@ -192,7 +215,7 @@ def verify_email_is_invited(email: str) -> None:
 
 
 def verify_email_in_whitelist(email: str, tenant_id: str | None = None) -> None:
-    with get_session_with_tenant(tenant_id) as db_session:
+    with get_session_with_tenant(tenant_id=tenant_id) as db_session:
         if not get_user_by_email(email, db_session):
             verify_email_is_invited(email)
 
@@ -216,8 +239,25 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = USER_AUTH_SECRET
     verification_token_secret = USER_AUTH_SECRET
     verification_token_lifetime_seconds = AUTH_COOKIE_EXPIRE_TIME_SECONDS
-
     user_db: SQLAlchemyUserDatabase[User, uuid.UUID]
+
+    async def get_by_email(self, user_email: str) -> User:
+        tenant_id = fetch_ee_implementation_or_noop(
+            "onyx.server.tenants.user_mapping", "get_tenant_id_for_email", None
+        )(user_email)
+        async with get_async_session_with_tenant(tenant_id) as db_session:
+            if MULTI_TENANT:
+                tenant_user_db = SQLAlchemyUserAdminDB[User, uuid.UUID](
+                    db_session, User, OAuthAccount
+                )
+                user = await tenant_user_db.get_by_email(user_email)
+            else:
+                user = await self.user_db.get_by_email(user_email)
+
+        if not user:
+            raise exceptions.UserNotExists()
+
+        return user
 
     async def create(
         self,
@@ -246,10 +286,10 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             referral_source=referral_source,
             request=request,
         )
+        user: User
 
         async with get_async_session_with_tenant(tenant_id) as db_session:
             token = CURRENT_TENANT_ID_CONTEXTVAR.set(tenant_id)
-
             verify_email_is_invited(user_create.email)
             verify_email_domain(user_create.email)
             if MULTI_TENANT:
@@ -268,16 +308,16 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
                     user_create.role = UserRole.ADMIN
                 else:
                     user_create.role = UserRole.BASIC
-
             try:
                 user = await super().create(user_create, safe=safe, request=request)  # type: ignore
             except exceptions.UserAlreadyExists:
                 user = await self.get_by_email(user_create.email)
                 # Handle case where user has used product outside of web and is now creating an account through web
                 if not user.role.is_web_login() and user_create.role.is_web_login():
-                    user_update = UserUpdate(
+                    user_update = UserUpdateWithRole(
                         password=user_create.password,
                         is_verified=user_create.is_verified,
+                        role=user_create.role,
                     )
                     user = await self.update(user_update, user)
                 else:
@@ -285,7 +325,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
             finally:
                 CURRENT_TENANT_ID_CONTEXTVAR.reset(token)
-
         return user
 
     async def validate_password(self, password: str, _: schemas.UC | models.UP) -> None:
@@ -371,6 +410,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
                 "expires_at": expires_at,
                 "refresh_token": refresh_token,
             }
+
+            user: User
 
             try:
                 # Attempt to get user by OAuth account
@@ -504,9 +545,15 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             )
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "Your admin has not enbaled this feature.",
+                "Your admin has not enabled this feature.",
             )
-        send_forgot_password_email(user.email, token)
+        tenant_id = await fetch_ee_implementation_or_noop(
+            "onyx.server.tenants.provisioning",
+            "get_or_provision_tenant",
+            async_return_default_schema,
+        )(email=user.email)
+
+        send_forgot_password_email(user.email, token, tenant_id=tenant_id)
 
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
@@ -570,6 +617,39 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
             return user
 
+    async def reset_password_as_admin(self, user_id: uuid.UUID) -> str:
+        """Admin-only. Generate a random password for a user and return it."""
+        user = await self.get(user_id)
+        new_password = generate_password()
+        await self._update(user, {"password": new_password})
+        return new_password
+
+    async def change_password_if_old_matches(
+        self, user: User, old_password: str, new_password: str
+    ) -> None:
+        """
+        For normal users to change password if they know the old one.
+        Raises 400 if old password doesn't match.
+        """
+        verified, updated_password_hash = self.password_helper.verify_and_update(
+            old_password, user.hashed_password
+        )
+        if not verified:
+            # Raise some HTTPException (or your custom exception) if old password is invalid:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid current password",
+            )
+
+        # If the hash was upgraded behind the scenes, we can keep it before setting the new password:
+        if updated_password_hash:
+            user.hashed_password = updated_password_hash
+
+        # Now apply and validate the new password
+        await self._update(user, {"password": new_password})
+
 
 async def get_user_manager(
     user_db: SQLAlchemyUserDatabase = Depends(get_user_db),
@@ -580,6 +660,7 @@ async def get_user_manager(
 cookie_transport = CookieTransport(
     cookie_max_age=SESSION_EXPIRE_TIME_SECONDS,
     cookie_secure=WEB_DOMAIN.startswith("https"),
+    cookie_name=FASTAPI_USERS_AUTH_COOKIE_NAME,
 )
 
 
@@ -793,8 +874,9 @@ async def current_limited_user(
 
 async def current_chat_accesssible_user(
     user: User | None = Depends(optional_user),
-    tenant_id: str | None = Depends(get_current_tenant_id),
 ) -> User | None:
+    tenant_id = get_current_tenant_id()
+
     return await double_check_user(
         user, allow_anonymous_access=anonymous_user_enabled(tenant_id=tenant_id)
     )
@@ -1046,6 +1128,8 @@ async def api_key_dep(
 ) -> User | None:
     if AUTH_TYPE == AuthType.DISABLED:
         return None
+
+    user: User | None = None
 
     hashed_api_key = get_hashed_api_key_from_request(request)
     if not hashed_api_key:

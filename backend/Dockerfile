@@ -9,8 +9,10 @@ LABEL com.danswer.description="This image is the web/frontend container of Onyx 
 
 # Default ONYX_VERSION, typically overriden during builds by GitHub Actions.
 ARG ONYX_VERSION=0.8-dev
+# DO_NOT_TRACK is used to disable telemetry for Unstructured
 ENV ONYX_VERSION=${ONYX_VERSION} \
-    DANSWER_RUNNING_IN_DOCKER="true"
+    DANSWER_RUNNING_IN_DOCKER="true" \
+    DO_NOT_TRACK="true"
 
 
 RUN echo "ONYX_VERSION: ${ONYX_VERSION}"
@@ -22,18 +24,20 @@ RUN echo "ONYX_VERSION: ${ONYX_VERSION}"
 # ca-certificates for HTTPS
 RUN apt-get update && \
     apt-get install -y \
-    cmake \
-    curl \
-    zip \
-    ca-certificates \
-    libgnutls30=3.7.9-2+deb12u3 \
-    libblkid1=2.38.1-5+deb12u1 \
-    libmount1=2.38.1-5+deb12u1 \
-    libsmartcols1=2.38.1-5+deb12u1 \
-    libuuid1=2.38.1-5+deb12u1 \
-    libxmlsec1-dev \
-    pkg-config \
-    gcc && \
+        cmake \
+        curl \
+        zip \
+        ca-certificates \
+        libgnutls30 \
+        libblkid1 \
+        libmount1 \
+        libsmartcols1 \
+        libuuid1 \
+        libxmlsec1-dev \
+        pkg-config \
+        gcc \
+        nano \
+        vim && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
@@ -99,7 +103,8 @@ COPY ./alembic_tenants /app/alembic_tenants
 COPY ./alembic.ini /app/alembic.ini
 COPY supervisord.conf /usr/etc/supervisord.conf
 
-# Escape hatch
+# Escape hatch scripts
+COPY ./scripts/debugging /app/scripts/debugging
 COPY ./scripts/force_delete_connector_by_id.py /app/scripts/force_delete_connector_by_id.py
 
 # Put logo in assets
