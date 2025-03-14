@@ -4,15 +4,17 @@ from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any
-from typing import cast
+from urllib.parse import urlparse
 
 from google.oauth2.credentials import Credentials as OAuthCredentials  # type: ignore
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
-from onyx.configs.app_configs import MAX_FILE_SIZE_BYTES
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.exceptions import ConnectorValidationError
+from onyx.connectors.exceptions import CredentialExpiredError
+from onyx.connectors.exceptions import InsufficientPermissionsError
 from onyx.connectors.google_drive.doc_conversion import build_slim_document
 from onyx.connectors.google_drive.doc_conversion import (
     convert_drive_item_to_document,
@@ -33,7 +35,6 @@ from onyx.connectors.google_utils.shared_constants import (
 )
 from onyx.connectors.google_utils.shared_constants import MISSING_SCOPES_ERROR_STR
 from onyx.connectors.google_utils.shared_constants import ONYX_SCOPE_INSTRUCTIONS
-from onyx.connectors.google_utils.shared_constants import SCOPE_DOC_URL
 from onyx.connectors.google_utils.shared_constants import SLIM_BATCH_SIZE
 from onyx.connectors.google_utils.shared_constants import USER_FIELDS
 from onyx.connectors.interfaces import GenerateDocumentsOutput
@@ -42,6 +43,7 @@ from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.interfaces import SlimConnector
+from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
 from onyx.utils.retry_wrapper import retry_builder
@@ -58,11 +60,13 @@ def _extract_str_list_from_comma_str(string: str | None) -> list[str]:
 
 
 def _extract_ids_from_urls(urls: list[str]) -> list[str]:
-    return [url.split("/")[-1] for url in urls]
+    return [urlparse(url).path.strip("/").split("/")[-1] for url in urls]
 
 
 def _convert_single_file(
-    creds: Any, primary_admin_email: str, file: dict[str, Any]
+    creds: Any,
+    primary_admin_email: str,
+    file: dict[str, Any],
 ) -> Any:
     user_email = file.get("owners", [{}])[0].get("emailAddress") or primary_admin_email
     user_drive_service = get_drive_service(creds, user_email=user_email)
@@ -75,7 +79,9 @@ def _convert_single_file(
 
 
 def _process_files_batch(
-    files: list[GoogleDriveFileType], convert_func: Callable, batch_size: int
+    files: list[GoogleDriveFileType],
+    convert_func: Callable[[GoogleDriveFileType], Any],
+    batch_size: int,
 ) -> GenerateDocumentsOutput:
     doc_batch = []
     with ThreadPoolExecutor(max_workers=min(16, len(files))) as executor:
@@ -125,23 +131,20 @@ class GoogleDriveConnector(LoadConnector, PollConnector, SlimConnector):
         continue_on_failure: bool | None = None,
     ) -> None:
         # Check for old input parameters
-        if (
-            folder_paths is not None
-            or include_shared is not None
-            or follow_shortcuts is not None
-            or only_org_public is not None
-            or continue_on_failure is not None
-        ):
-            logger.exception(
-                "Google Drive connector received old input parameters. "
-                "Please visit the docs for help with the new setup: "
-                f"{SCOPE_DOC_URL}"
+        if folder_paths is not None:
+            logger.warning(
+                "The 'folder_paths' parameter is deprecated. Use 'shared_folder_urls' instead."
             )
-            raise ValueError(
-                "Google Drive connector received old input parameters. "
-                "Please visit the docs for help with the new setup: "
-                f"{SCOPE_DOC_URL}"
+        if include_shared is not None:
+            logger.warning(
+                "The 'include_shared' parameter is deprecated. Use 'include_files_shared_with_me' instead."
             )
+        if follow_shortcuts is not None:
+            logger.warning("The 'follow_shortcuts' parameter is deprecated.")
+        if only_org_public is not None:
+            logger.warning("The 'only_org_public' parameter is deprecated.")
+        if continue_on_failure is not None:
+            logger.warning("The 'continue_on_failure' parameter is deprecated.")
 
         if (
             not include_shared_drives
@@ -151,7 +154,7 @@ class GoogleDriveConnector(LoadConnector, PollConnector, SlimConnector):
             and not my_drive_emails
             and not shared_drive_urls
         ):
-            raise ValueError(
+            raise ConnectorValidationError(
                 "Nothing to index. Please specify at least one of the following: "
                 "include_shared_drives, include_my_drives, include_files_shared_with_me, "
                 "shared_folder_urls, or my_drive_emails"
@@ -233,6 +236,7 @@ class GoogleDriveConnector(LoadConnector, PollConnector, SlimConnector):
             credentials=credentials,
             source=DocumentSource.GOOGLE_DRIVE,
         )
+
         return new_creds_dict
 
     def _update_traversed_parent_ids(self, folder_id: str) -> None:
@@ -304,7 +308,9 @@ class GoogleDriveConnector(LoadConnector, PollConnector, SlimConnector):
         # validate that the user has access to the drive APIs by performing a simple
         # request and checking for a 401
         try:
-            retry_builder()(get_root_folder_id)(drive_service)
+            # default is ~17mins of retries, don't do that here for cases so we don't
+            # waste 17mins everytime we run into a user without access to drive APIs
+            retry_builder(tries=3, delay=1)(get_root_folder_id)(drive_service)
         except HttpError as e:
             if e.status_code == 401:
                 # fail gracefully, let the other impersonations continue
@@ -519,36 +525,51 @@ class GoogleDriveConnector(LoadConnector, PollConnector, SlimConnector):
         end: SecondsSinceUnixEpoch | None = None,
     ) -> GenerateDocumentsOutput:
         # Create a larger process pool for file conversion
-        convert_func = partial(
-            _convert_single_file, self.creds, self.primary_admin_email
-        )
-
-        # Process files in larger batches
-        LARGE_BATCH_SIZE = self.batch_size * 4
-        files_to_process = []
-        # Gather the files into batches to be processed in parallel
-        for file in self._fetch_drive_items(is_slim=False, start=start, end=end):
-            if (
-                file.get("size")
-                and int(cast(str, file.get("size"))) > MAX_FILE_SIZE_BYTES
-            ):
-                logger.warning(
-                    f"Skipping file {file.get('name', 'Unknown')} as it is too large: {file.get('size')} bytes"
-                )
-                continue
-
-            files_to_process.append(file)
-            if len(files_to_process) >= LARGE_BATCH_SIZE:
-                yield from _process_files_batch(
-                    files_to_process, convert_func, self.batch_size
-                )
-                files_to_process = []
-
-        # Process any remaining files
-        if files_to_process:
-            yield from _process_files_batch(
-                files_to_process, convert_func, self.batch_size
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            # Prepare a partial function with the credentials and admin email
+            convert_func = partial(
+                _convert_single_file,
+                self.creds,
+                self.primary_admin_email,
             )
+
+            # Fetch files in batches
+            files_batch: list[GoogleDriveFileType] = []
+            for file in self._fetch_drive_items(is_slim=False, start=start, end=end):
+                files_batch.append(file)
+
+                if len(files_batch) >= self.batch_size:
+                    # Process the batch
+                    futures = [
+                        executor.submit(convert_func, file) for file in files_batch
+                    ]
+                    documents = []
+                    for future in as_completed(futures):
+                        try:
+                            doc = future.result()
+                            if doc is not None:
+                                documents.append(doc)
+                        except Exception as e:
+                            logger.error(f"Error converting file: {e}")
+
+                    if documents:
+                        yield documents
+                    files_batch = []
+
+            # Process any remaining files
+            if files_batch:
+                futures = [executor.submit(convert_func, file) for file in files_batch]
+                documents = []
+                for future in as_completed(futures):
+                    try:
+                        doc = future.result()
+                        if doc is not None:
+                            documents.append(doc)
+                    except Exception as e:
+                        logger.error(f"Error converting file: {e}")
+
+                if documents:
+                    yield documents
 
     def load_from_state(self) -> GenerateDocumentsOutput:
         try:
@@ -609,3 +630,50 @@ class GoogleDriveConnector(LoadConnector, PollConnector, SlimConnector):
             if MISSING_SCOPES_ERROR_STR in str(e):
                 raise PermissionError(ONYX_SCOPE_INSTRUCTIONS) from e
             raise e
+
+    def validate_connector_settings(self) -> None:
+        if self._creds is None:
+            raise ConnectorMissingCredentialError(
+                "Google Drive credentials not loaded."
+            )
+
+        if self._primary_admin_email is None:
+            raise ConnectorValidationError(
+                "Primary admin email not found in credentials. "
+                "Ensure DB_CREDENTIALS_PRIMARY_ADMIN_KEY is set."
+            )
+
+        try:
+            drive_service = get_drive_service(self._creds, self._primary_admin_email)
+            drive_service.files().list(pageSize=1, fields="files(id)").execute()
+
+            if isinstance(self._creds, ServiceAccountCredentials):
+                retry_builder()(get_root_folder_id)(drive_service)
+
+        except HttpError as e:
+            status_code = e.resp.status if e.resp else None
+            if status_code == 401:
+                raise CredentialExpiredError(
+                    "Invalid or expired Google Drive credentials (401)."
+                )
+            elif status_code == 403:
+                raise InsufficientPermissionsError(
+                    "Google Drive app lacks required permissions (403). "
+                    "Please ensure the necessary scopes are granted and Drive "
+                    "apps are enabled."
+                )
+            else:
+                raise ConnectorValidationError(
+                    f"Unexpected Google Drive error (status={status_code}): {e}"
+                )
+
+        except Exception as e:
+            # Check for scope-related hints from the error message
+            if MISSING_SCOPES_ERROR_STR in str(e):
+                raise InsufficientPermissionsError(
+                    "Google Drive credentials are missing required scopes. "
+                    f"{ONYX_SCOPE_INSTRUCTIONS}"
+                )
+            raise ConnectorValidationError(
+                f"Unexpected error during Google Drive validation: {e}"
+            )

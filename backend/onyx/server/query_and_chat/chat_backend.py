@@ -1,15 +1,18 @@
 import asyncio
+import datetime
 import io
 import json
 import os
 import uuid
 from collections.abc import Callable
 from collections.abc import Generator
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Query
 from fastapi import Request
 from fastapi import Response
 from fastapi import UploadFile
@@ -17,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from onyx.auth.users import current_chat_accesssible_user
+from onyx.auth.users import current_chat_accessible_user
 from onyx.auth.users import current_user
 from onyx.chat.chat_utils import create_chat_chain
 from onyx.chat.chat_utils import extract_headers
@@ -44,6 +47,7 @@ from onyx.db.chat import get_or_create_root_message
 from onyx.db.chat import set_as_latest_chat_message
 from onyx.db.chat import translate_db_message_to_chat_message_detail
 from onyx.db.chat import update_chat_session
+from onyx.db.chat_search import search_chat_sessions
 from onyx.db.engine import get_session
 from onyx.db.engine import get_session_with_tenant
 from onyx.db.feedback import create_chat_message_feedback
@@ -65,10 +69,13 @@ from onyx.secondary_llm_flows.chat_session_naming import (
 from onyx.server.query_and_chat.models import ChatFeedbackRequest
 from onyx.server.query_and_chat.models import ChatMessageIdentifier
 from onyx.server.query_and_chat.models import ChatRenameRequest
+from onyx.server.query_and_chat.models import ChatSearchResponse
 from onyx.server.query_and_chat.models import ChatSessionCreationRequest
 from onyx.server.query_and_chat.models import ChatSessionDetailResponse
 from onyx.server.query_and_chat.models import ChatSessionDetails
+from onyx.server.query_and_chat.models import ChatSessionGroup
 from onyx.server.query_and_chat.models import ChatSessionsResponse
+from onyx.server.query_and_chat.models import ChatSessionSummary
 from onyx.server.query_and_chat.models import ChatSessionUpdateRequest
 from onyx.server.query_and_chat.models import CreateChatMessageRequest
 from onyx.server.query_and_chat.models import CreateChatSessionID
@@ -112,6 +119,7 @@ def get_user_chat_sessions(
                 name=chat.description,
                 persona_id=chat.persona_id,
                 time_created=chat.time_created.isoformat(),
+                time_updated=chat.time_updated.isoformat(),
                 shared_status=chat.shared_status,
                 folder_id=chat.folder_id,
                 current_alternate_model=chat.current_alternate_model,
@@ -182,7 +190,7 @@ def update_chat_session_model(
 def get_chat_session(
     session_id: UUID,
     is_shared: bool = False,
-    user: User | None = Depends(current_chat_accesssible_user),
+    user: User | None = Depends(current_chat_accessible_user),
     db_session: Session = Depends(get_session),
 ) -> ChatSessionDetailResponse:
     user_id = user.id if user is not None else None
@@ -238,7 +246,7 @@ def get_chat_session(
 @router.post("/create-chat-session")
 def create_new_chat_session(
     chat_session_creation_request: ChatSessionCreationRequest,
-    user: User | None = Depends(current_chat_accesssible_user),
+    user: User | None = Depends(current_chat_accessible_user),
     db_session: Session = Depends(get_session),
 ) -> CreateChatSessionID:
     user_id = user.id if user is not None else None
@@ -373,7 +381,7 @@ async def is_connected(request: Request) -> Callable[[], bool]:
 def handle_new_chat_message(
     chat_message_req: CreateChatMessageRequest,
     request: Request,
-    user: User | None = Depends(current_chat_accesssible_user),
+    user: User | None = Depends(current_chat_accessible_user),
     _rate_limit_check: None = Depends(check_token_rate_limits),
     is_connected_func: Callable[[], bool] = Depends(is_connected),
 ) -> StreamingResponse:
@@ -465,7 +473,7 @@ def set_message_as_latest(
 @router.post("/create-chat-message-feedback")
 def create_chat_feedback(
     feedback: ChatFeedbackRequest,
-    user: User | None = Depends(current_chat_accesssible_user),
+    user: User | None = Depends(current_chat_accessible_user),
     db_session: Session = Depends(get_session),
 ) -> None:
     user_id = user.id if user else None
@@ -794,3 +802,84 @@ def fetch_chat_file(
     file_io = file_store.read_file(file_id, mode="b")
 
     return StreamingResponse(file_io, media_type=media_type)
+
+
+@router.get("/search")
+async def search_chats(
+    query: str | None = Query(None),
+    page: int = Query(1),
+    page_size: int = Query(10),
+    user: User | None = Depends(current_user),
+    db_session: Session = Depends(get_session),
+) -> ChatSearchResponse:
+    """
+    Search for chat sessions based on the provided query.
+    If no query is provided, returns recent chat sessions.
+    """
+
+    # Use the enhanced database function for chat search
+    chat_sessions, has_more = search_chat_sessions(
+        user_id=user.id if user else None,
+        db_session=db_session,
+        query=query,
+        page=page,
+        page_size=page_size,
+        include_deleted=False,
+        include_onyxbot_flows=False,
+    )
+
+    # Group chat sessions by time period
+    today = datetime.datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    this_week = today - timedelta(days=7)
+    this_month = today - timedelta(days=30)
+
+    today_chats: list[ChatSessionSummary] = []
+    yesterday_chats: list[ChatSessionSummary] = []
+    this_week_chats: list[ChatSessionSummary] = []
+    this_month_chats: list[ChatSessionSummary] = []
+    older_chats: list[ChatSessionSummary] = []
+
+    for session in chat_sessions:
+        session_date = session.time_created.date()
+
+        chat_summary = ChatSessionSummary(
+            id=session.id,
+            name=session.description,
+            persona_id=session.persona_id,
+            time_created=session.time_created,
+            shared_status=session.shared_status,
+            folder_id=session.folder_id,
+            current_alternate_model=session.current_alternate_model,
+            current_temperature_override=session.temperature_override,
+        )
+
+        if session_date == today:
+            today_chats.append(chat_summary)
+        elif session_date == yesterday:
+            yesterday_chats.append(chat_summary)
+        elif session_date > this_week:
+            this_week_chats.append(chat_summary)
+        elif session_date > this_month:
+            this_month_chats.append(chat_summary)
+        else:
+            older_chats.append(chat_summary)
+
+    # Create groups
+    groups = []
+    if today_chats:
+        groups.append(ChatSessionGroup(title="Today", chats=today_chats))
+    if yesterday_chats:
+        groups.append(ChatSessionGroup(title="Yesterday", chats=yesterday_chats))
+    if this_week_chats:
+        groups.append(ChatSessionGroup(title="This Week", chats=this_week_chats))
+    if this_month_chats:
+        groups.append(ChatSessionGroup(title="This Month", chats=this_month_chats))
+    if older_chats:
+        groups.append(ChatSessionGroup(title="Older", chats=older_chats))
+
+    return ChatSearchResponse(
+        groups=groups,
+        has_more=has_more,
+        next_page=page + 1 if has_more else None,
+    )

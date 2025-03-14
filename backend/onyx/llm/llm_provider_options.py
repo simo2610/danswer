@@ -56,7 +56,9 @@ BEDROCK_PROVIDER_NAME = "bedrock"
 # models
 BEDROCK_MODEL_NAMES = [
     model
-    for model in litellm.bedrock_models
+    # bedrock_converse_models are just extensions of the bedrock_models, not sure why
+    # litellm has split them into two lists :(
+    for model in litellm.bedrock_models + litellm.bedrock_converse_models
     if "/" not in model and "embed" not in model
 ][::-1]
 
@@ -103,7 +105,7 @@ def fetch_available_well_known_llms() -> list[WellKnownLLMProviderDescriptor]:
             api_version_required=False,
             custom_config_keys=[],
             llm_names=fetch_models_for_provider(ANTHROPIC_PROVIDER_NAME),
-            default_model="claude-3-5-sonnet-20241022",
+            default_model="claude-3-7-sonnet-20250219",
             default_fast_model="claude-3-5-sonnet-20241022",
         ),
         WellKnownLLMProviderDescriptor(

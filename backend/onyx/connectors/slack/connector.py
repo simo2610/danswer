@@ -18,6 +18,10 @@ from slack_sdk.errors import SlackApiError
 from onyx.configs.app_configs import ENABLE_EXPENSIVE_EXPERT_CALLS
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.exceptions import ConnectorValidationError
+from onyx.connectors.exceptions import CredentialExpiredError
+from onyx.connectors.exceptions import InsufficientPermissionsError
+from onyx.connectors.exceptions import UnexpectedValidationError
 from onyx.connectors.interfaces import CheckpointConnector
 from onyx.connectors.interfaces import CheckpointOutput
 from onyx.connectors.interfaces import GenerateSlimDocumentOutput
@@ -30,8 +34,8 @@ from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
 from onyx.connectors.models import DocumentFailure
 from onyx.connectors.models import EntityFailure
-from onyx.connectors.models import Section
 from onyx.connectors.models import SlimDocument
+from onyx.connectors.models import TextSection
 from onyx.connectors.slack.utils import expert_info_from_slack_id
 from onyx.connectors.slack.utils import get_message_link
 from onyx.connectors.slack.utils import make_paginated_slack_api_call_w_retries
@@ -82,14 +86,14 @@ def get_channels(
     get_public: bool = True,
     get_private: bool = True,
 ) -> list[ChannelType]:
-    """Get all channels in the workspace"""
+    """Get all channels in the workspace."""
     channels: list[dict[str, Any]] = []
     channel_types = []
     if get_public:
         channel_types.append("public_channel")
     if get_private:
         channel_types.append("private_channel")
-    # try getting private channels as well at first
+    # Try fetching both public and private channels first:
     try:
         channels = _collect_paginated_channels(
             client=client,
@@ -97,19 +101,19 @@ def get_channels(
             channel_types=channel_types,
         )
     except SlackApiError as e:
-        logger.info(f"Unable to fetch private channels due to - {e}")
-        logger.info("trying again without private channels")
+        logger.info(
+            f"Unable to fetch private channels due to: {e}. Trying again without private channels."
+        )
         if get_public:
             channel_types = ["public_channel"]
         else:
-            logger.warning("No channels to fetch")
+            logger.warning("No channels to fetch.")
             return []
         channels = _collect_paginated_channels(
             client=client,
             exclude_archived=exclude_archived,
             channel_types=channel_types,
         )
-
     return channels
 
 
@@ -207,7 +211,7 @@ def thread_to_doc(
     return Document(
         id=_build_doc_id(channel_id=channel_id, thread_ts=thread[0]["ts"]),
         sections=[
-            Section(
+            TextSection(
                 link=get_message_link(event=m, client=client, channel_id=channel_id),
                 text=slack_cleaner.index_clean(cast(str, m["text"])),
             )
@@ -216,7 +220,6 @@ def thread_to_doc(
         source=DocumentSource.SLACK,
         semantic_identifier=doc_sem_id,
         doc_updated_at=get_latest_message_time(thread),
-        title="",  # slack docs don't really have a "title"
         primary_owners=valid_experts,
         metadata={"Channel": channel["name"]},
     )
@@ -409,8 +412,8 @@ def _get_all_doc_ids(
             callback=callback,
         )
 
-        message_ts_set: set[str] = set()
         for message_batch in channel_message_batches:
+            slim_doc_batch: list[SlimDocument] = []
             for message in message_batch:
                 if msg_filter_func(message):
                     continue
@@ -418,18 +421,17 @@ def _get_all_doc_ids(
                 # The document id is the channel id and the ts of the first message in the thread
                 # Since we already have the first message of the thread, we dont have to
                 # fetch the thread for id retrieval, saving time and API calls
-                message_ts_set.add(message["ts"])
 
-        channel_metadata_list: list[SlimDocument] = []
-        for message_ts in message_ts_set:
-            channel_metadata_list.append(
-                SlimDocument(
-                    id=_build_doc_id(channel_id=channel_id, thread_ts=message_ts),
-                    perm_sync_data={"channel_id": channel_id},
+                slim_doc_batch.append(
+                    SlimDocument(
+                        id=_build_doc_id(
+                            channel_id=channel_id, thread_ts=message["ts"]
+                        ),
+                        perm_sync_data={"channel_id": channel_id},
+                    )
                 )
-            )
 
-        yield channel_metadata_list
+            yield slim_doc_batch
 
 
 def _process_message(
@@ -477,6 +479,8 @@ def _process_message(
 
 
 class SlackConnector(SlimConnector, CheckpointConnector):
+    MAX_WORKERS = 2
+
     def __init__(
         self,
         channels: list[str] | None = None,
@@ -590,7 +594,7 @@ class SlackConnector(SlimConnector, CheckpointConnector):
             new_latest = message_batch[-1]["ts"] if message_batch else latest
 
             # Process messages in parallel using ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=8) as executor:
+            with ThreadPoolExecutor(max_workers=SlackConnector.MAX_WORKERS) as executor:
                 futures: list[Future] = []
                 for message in message_batch:
                     # Capture the current context so that the thread gets the current tenant ID
@@ -665,6 +669,88 @@ class SlackConnector(SlimConnector, CheckpointConnector):
                 exception=e,
             )
             return checkpoint
+
+    def validate_connector_settings(self) -> None:
+        """
+        1. Verify the bot token is valid for the workspace (via auth_test).
+        2. Ensure the bot has enough scope to list channels.
+        3. Check that every channel specified in self.channels exists (only when regex is not enabled).
+        """
+        if self.client is None:
+            raise ConnectorMissingCredentialError("Slack credentials not loaded.")
+
+        try:
+            # 1) Validate connection to workspace
+            auth_response = self.client.auth_test()
+            if not auth_response.get("ok", False):
+                error_msg = auth_response.get(
+                    "error", "Unknown error from Slack auth_test"
+                )
+                raise ConnectorValidationError(f"Failed Slack auth_test: {error_msg}")
+
+            # 2) Minimal test to confirm listing channels works
+            test_resp = self.client.conversations_list(
+                limit=1, types=["public_channel"]
+            )
+            if not test_resp.get("ok", False):
+                error_msg = test_resp.get("error", "Unknown error from Slack")
+                if error_msg == "invalid_auth":
+                    raise ConnectorValidationError(
+                        f"Invalid Slack bot token ({error_msg})."
+                    )
+                elif error_msg == "not_authed":
+                    raise CredentialExpiredError(
+                        f"Invalid or expired Slack bot token ({error_msg})."
+                    )
+                raise UnexpectedValidationError(
+                    f"Slack API returned a failure: {error_msg}"
+                )
+
+            # 3) If channels are specified and regex is not enabled, verify each is accessible
+            if self.channels and not self.channel_regex_enabled:
+                accessible_channels = get_channels(
+                    client=self.client,
+                    exclude_archived=True,
+                    get_public=True,
+                    get_private=True,
+                )
+                # For quick lookups by name or ID, build a map:
+                accessible_channel_names = {ch["name"] for ch in accessible_channels}
+                accessible_channel_ids = {ch["id"] for ch in accessible_channels}
+
+                for user_channel in self.channels:
+                    if (
+                        user_channel not in accessible_channel_names
+                        and user_channel not in accessible_channel_ids
+                    ):
+                        raise ConnectorValidationError(
+                            f"Channel '{user_channel}' not found or inaccessible in this workspace."
+                        )
+
+        except SlackApiError as e:
+            slack_error = e.response.get("error", "")
+            if slack_error == "missing_scope":
+                raise InsufficientPermissionsError(
+                    "Slack bot token lacks the necessary scope to list/access channels. "
+                    "Please ensure your Slack app has 'channels:read' (and/or 'groups:read' for private channels)."
+                )
+            elif slack_error == "invalid_auth":
+                raise CredentialExpiredError(
+                    f"Invalid Slack bot token ({slack_error})."
+                )
+            elif slack_error == "not_authed":
+                raise CredentialExpiredError(
+                    f"Invalid or expired Slack bot token ({slack_error})."
+                )
+            raise UnexpectedValidationError(
+                f"Unexpected Slack error '{slack_error}' during settings validation."
+            )
+        except ConnectorValidationError as e:
+            raise e
+        except Exception as e:
+            raise UnexpectedValidationError(
+                f"Unexpected error during Slack settings validation: {e}"
+            )
 
 
 if __name__ == "__main__":

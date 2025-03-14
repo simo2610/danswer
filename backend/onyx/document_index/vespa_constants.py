@@ -6,6 +6,7 @@ from onyx.configs.app_configs import VESPA_TENANT_PORT
 from onyx.configs.constants import SOURCE_TYPE
 
 VESPA_DIM_REPLACEMENT_PAT = "VARIABLE_DIM"
+EMBEDDING_PRECISION_REPLACEMENT_PAT = "EMBEDDING_PRECISION"
 DANSWER_CHUNK_REPLACEMENT_PAT = "DANSWER_CHUNK_NAME"
 DOCUMENT_REPLACEMENT_PAT = "DOCUMENT_REPLACEMENT"
 SEARCH_THREAD_NUMBER_PAT = "SEARCH_THREAD_NUMBER"
@@ -71,11 +72,13 @@ METADATA = "metadata"
 METADATA_LIST = "metadata_list"
 METADATA_SUFFIX = "metadata_suffix"
 BOOST = "boost"
+AGGREGATED_CHUNK_BOOST_FACTOR = "aggregated_chunk_boost_factor"
 DOC_UPDATED_AT = "doc_updated_at"  # Indexed as seconds since epoch
 PRIMARY_OWNERS = "primary_owners"
 SECONDARY_OWNERS = "secondary_owners"
 RECENCY_BIAS = "recency_bias"
 HIDDEN = "hidden"
+IMAGE_FILE_NAME = "image_file_name"
 
 # Specific to Vespa, needed for highlighting matching keywords / section
 CONTENT_SUMMARY = "content_summary"
@@ -93,7 +96,9 @@ YQL_BASE = (
     f"{SEMANTIC_IDENTIFIER}, "
     f"{TITLE}, "
     f"{SECTION_CONTINUATION}, "
+    f"{IMAGE_FILE_NAME}, "
     f"{BOOST}, "
+    f"{AGGREGATED_CHUNK_BOOST_FACTOR}, "
     f"{HIDDEN}, "
     f"{DOC_UPDATED_AT}, "
     f"{PRIMARY_OWNERS}, "

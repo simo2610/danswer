@@ -56,6 +56,7 @@ import {
   Dispatch,
   SetStateAction,
   use,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -108,7 +109,6 @@ import {
 } from "@/components/resizable/constants";
 import FixedLogo from "../../components/logo/FixedLogo";
 
-import { MinimalMarkdown } from "@/components/chat/MinimalMarkdown";
 import ExceptionTraceModal from "@/components/modals/ExceptionTraceModal";
 
 import {
@@ -131,17 +131,12 @@ import {
 
 import { getSourceMetadata } from "@/lib/sources";
 import { UserSettingsModal } from "./modal/UserSettingsModal";
-import { AlignStartVertical } from "lucide-react";
 import { AgenticMessage } from "./message/AgenticMessage";
 import AssistantModal from "../assistants/mine/AssistantModal";
-import {
-  OperatingSystem,
-  useOperatingSystem,
-  useSidebarShortcut,
-} from "@/lib/browserUtilities";
-import { Button } from "@/components/ui/button";
-import { ConfirmEntityModal } from "@/components/modals/ConfirmEntityModal";
-import { MessageChannel } from "node:worker_threads";
+import { useSidebarShortcut } from "@/lib/browserUtilities";
+import { ChatSearchModal } from "./chat_search/ChatSearchModal";
+import { ErrorBanner } from "./message/Resubmit";
+import MinimalMarkdown from "@/components/chat/MinimalMarkdown";
 
 const TEMP_USER_MESSAGE_ID = -1;
 const TEMP_ASSISTANT_MESSAGE_ID = -2;
@@ -208,7 +203,6 @@ export function ChatPage({
 
   const [documentSidebarVisible, setDocumentSidebarVisible] = useState(false);
   const [proSearchEnabled, setProSearchEnabled] = useState(proSearchToggled);
-  const [streamingAllowed, setStreamingAllowed] = useState(false);
   const toggleProSearch = () => {
     Cookies.set(
       PRO_SEARCH_TOGGLED_COOKIE_NAME,
@@ -220,11 +214,7 @@ export function ChatPage({
   const isInitialLoad = useRef(true);
   const [userSettingsToggled, setUserSettingsToggled] = useState(false);
 
-  const {
-    assistants: availableAssistants,
-    finalAssistants,
-    pinnedAssistants,
-  } = useAssistants();
+  const { assistants: availableAssistants, pinnedAssistants } = useAssistants();
 
   const [showApiKeyModal, setShowApiKeyModal] = useState(
     !shouldShowWelcomeModal
@@ -234,7 +224,7 @@ export function ChatPage({
   const slackChatId = searchParams.get("slackChatId");
   const existingChatIdRaw = searchParams.get("chatId");
 
-  const [showHistorySidebar, setShowHistorySidebar] = useState(false); // State to track if sidebar is open
+  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
 
   const existingChatSessionId = existingChatIdRaw ? existingChatIdRaw : null;
 
@@ -870,6 +860,7 @@ export function ChatPage({
   }, [liveAssistant]);
 
   const filterManager = useFilters();
+  const [isChatSearchModalOpen, setIsChatSearchModalOpen] = useState(false);
 
   const [currentFeedback, setCurrentFeedback] = useState<
     [FeedbackType, number] | null
@@ -890,24 +881,6 @@ export function ChatPage({
     inputRef.current?.getBoundingClientRect().height!
   );
   const scrollDist = useRef<number>(0);
-
-  const updateScrollTracking = () => {
-    const scrollDistance =
-      endDivRef?.current?.getBoundingClientRect()?.top! -
-      inputRef?.current?.getBoundingClientRect()?.top!;
-    scrollDist.current = scrollDistance;
-    setAboveHorizon(scrollDist.current > 500);
-  };
-
-  useEffect(() => {
-    const scrollableDiv = scrollableDivRef.current;
-    if (scrollableDiv) {
-      scrollableDiv.addEventListener("scroll", updateScrollTracking);
-      return () => {
-        scrollableDiv.removeEventListener("scroll", updateScrollTracking);
-      };
-    }
-  }, []);
 
   const handleInputResize = () => {
     setTimeout(() => {
@@ -960,33 +933,12 @@ export function ChatPage({
       if (isVisible) return;
 
       // Check if all messages are currently rendered
-      if (currentVisibleRange.end < messageHistory.length) {
-        // Update visible range to include the last messages
-        updateCurrentVisibleRange({
-          start: Math.max(
-            0,
-            messageHistory.length -
-              (currentVisibleRange.end - currentVisibleRange.start)
-          ),
-          end: messageHistory.length,
-          mostVisibleMessageId: currentVisibleRange.mostVisibleMessageId,
-        });
+      // If all messages are already rendered, scroll immediately
+      endDivRef.current.scrollIntoView({
+        behavior: fast ? "auto" : "smooth",
+      });
 
-        // Wait for the state update and re-render before scrolling
-        setTimeout(() => {
-          endDivRef.current?.scrollIntoView({
-            behavior: fast ? "auto" : "smooth",
-          });
-          setHasPerformedInitialScroll(true);
-        }, 100);
-      } else {
-        // If all messages are already rendered, scroll immediately
-        endDivRef.current.scrollIntoView({
-          behavior: fast ? "auto" : "smooth",
-        });
-
-        setHasPerformedInitialScroll(true);
-      }
+      setHasPerformedInitialScroll(true);
     }, 50);
 
     // Reset waitForScrollRef after 1.5 seconds
@@ -1006,11 +958,6 @@ export function ChatPage({
   useEffect(() => {
     handleInputResize();
   }, [message]);
-
-  // tracks scrolling
-  useEffect(() => {
-    updateScrollTracking();
-  }, [messageHistory]);
 
   // used for resizing of the document sidebar
   const masterFlexboxRef = useRef<HTMLDivElement>(null);
@@ -1210,6 +1157,7 @@ export function ChatPage({
     navigatingAway.current = false;
     let frozenSessionId = currentSessionId();
     updateCanContinue(false, frozenSessionId);
+    setUncaughtError(null);
 
     // Mark that we've sent a message for this session in the current page load
     markSessionMessageSent(frozenSessionId);
@@ -1360,6 +1308,7 @@ export function ChatPage({
     let isStreamingQuestions = true;
     let includeAgentic = false;
     let secondLevelMessageId: number | null = null;
+    let isAgentic: boolean = false;
 
     let initialFetchDetails: null | {
       user_message_id: number;
@@ -1522,6 +1471,9 @@ export function ChatPage({
                 second_level_generating = true;
               }
             }
+            if (Object.hasOwn(packet, "is_agentic")) {
+              isAgentic = (packet as any).is_agentic;
+            }
 
             if (Object.hasOwn(packet, "refined_answer_improvement")) {
               isImprovement = (packet as RefinedAnswerImprovement)
@@ -1555,6 +1507,7 @@ export function ChatPage({
               );
             } else if (Object.hasOwn(packet, "sub_question")) {
               updateChatState("toolBuilding", frozenSessionId);
+              isAgentic = true;
               is_generating = true;
               sub_questions = constructSubQuestions(
                 sub_questions,
@@ -1755,6 +1708,7 @@ export function ChatPage({
                 sub_questions: sub_questions,
                 second_level_generating: second_level_generating,
                 agentic_docs: agenticDocs,
+                is_agentic: isAgentic,
               },
               ...(includeAgentic
                 ? [
@@ -1975,122 +1929,6 @@ export function ChatPage({
 
   // Virtualization + Scrolling related effects and functions
   const scrollInitialized = useRef(false);
-  interface VisibleRange {
-    start: number;
-    end: number;
-    mostVisibleMessageId: number | null;
-  }
-
-  const [visibleRange, setVisibleRange] = useState<
-    Map<string | null, VisibleRange>
-  >(() => {
-    const initialRange: VisibleRange = {
-      start: 0,
-      end: BUFFER_COUNT,
-      mostVisibleMessageId: null,
-    };
-    return new Map([[chatSessionIdRef.current, initialRange]]);
-  });
-
-  // Function used to update current visible range. Only method for updating `visibleRange` state.
-  const updateCurrentVisibleRange = (
-    newRange: VisibleRange,
-    forceUpdate?: boolean
-  ) => {
-    if (
-      scrollInitialized.current &&
-      visibleRange.get(loadedIdSessionRef.current) == undefined &&
-      !forceUpdate
-    ) {
-      return;
-    }
-
-    setVisibleRange((prevState) => {
-      const newState = new Map(prevState);
-      newState.set(loadedIdSessionRef.current, newRange);
-      return newState;
-    });
-  };
-
-  //  Set first value for visibleRange state on page load / refresh.
-  const initializeVisibleRange = () => {
-    const upToDatemessageHistory = buildLatestMessageChain(
-      currentMessageMap(completeMessageDetail)
-    );
-
-    if (!scrollInitialized.current && upToDatemessageHistory.length > 0) {
-      const newEnd = Math.max(upToDatemessageHistory.length, BUFFER_COUNT);
-      const newStart = Math.max(0, newEnd - BUFFER_COUNT);
-      const newMostVisibleMessageId =
-        upToDatemessageHistory[newEnd - 1]?.messageId;
-
-      updateCurrentVisibleRange(
-        {
-          start: newStart,
-          end: newEnd,
-          mostVisibleMessageId: newMostVisibleMessageId,
-        },
-        true
-      );
-      scrollInitialized.current = true;
-    }
-  };
-
-  const updateVisibleRangeBasedOnScroll = () => {
-    if (!scrollInitialized.current) return;
-    const scrollableDiv = scrollableDivRef.current;
-    if (!scrollableDiv) return;
-
-    const viewportHeight = scrollableDiv.clientHeight;
-    let mostVisibleMessageIndex = -1;
-
-    messageHistory.forEach((message, index) => {
-      const messageElement = document.getElementById(
-        `message-${message.messageId}`
-      );
-      if (messageElement) {
-        const rect = messageElement.getBoundingClientRect();
-        const isVisible = rect.bottom <= viewportHeight && rect.bottom > 0;
-        if (isVisible && index > mostVisibleMessageIndex) {
-          mostVisibleMessageIndex = index;
-        }
-      }
-    });
-
-    if (mostVisibleMessageIndex !== -1) {
-      const startIndex = Math.max(0, mostVisibleMessageIndex - BUFFER_COUNT);
-      const endIndex = Math.min(
-        messageHistory.length,
-        mostVisibleMessageIndex + BUFFER_COUNT + 1
-      );
-
-      updateCurrentVisibleRange({
-        start: startIndex,
-        end: endIndex,
-        mostVisibleMessageId: messageHistory[mostVisibleMessageIndex].messageId,
-      });
-    }
-  };
-
-  useEffect(() => {
-    initializeVisibleRange();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, messageHistory]);
-
-  useLayoutEffect(() => {
-    const scrollableDiv = scrollableDivRef.current;
-
-    const handleScroll = () => {
-      updateVisibleRangeBasedOnScroll();
-    };
-
-    scrollableDiv?.addEventListener("scroll", handleScroll);
-
-    return () => {
-      scrollableDiv?.removeEventListener("scroll", handleScroll);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messageHistory]);
 
   const imageFileInMessageHistory = useMemo(() => {
     return messageHistory
@@ -2100,11 +1938,6 @@ export function ChatPage({
       );
   }, [messageHistory]);
 
-  const currentVisibleRange = visibleRange.get(currentSessionId()) || {
-    start: 0,
-    end: 0,
-    mostVisibleMessageId: null,
-  };
   useSendMessageToParent();
 
   useEffect(() => {
@@ -2140,9 +1973,16 @@ export function ChatPage({
 
   const innerSidebarElementRef = useRef<HTMLDivElement>(null);
   const [settingsToggled, setSettingsToggled] = useState(false);
-  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
-
   const currentPersona = alternativeAssistant || liveAssistant;
+
+  const HORIZON_DISTANCE = 800;
+  const handleScroll = useCallback(() => {
+    const scrollDistance =
+      endDivRef?.current?.getBoundingClientRect()?.top! -
+      inputRef?.current?.getBoundingClientRect()?.top!;
+    scrollDist.current = scrollDistance;
+    setAboveHorizon(scrollDist.current > HORIZON_DISTANCE);
+  }, []);
 
   useEffect(() => {
     const handleSlackChatRedirect = async () => {
@@ -2215,6 +2055,26 @@ export function ChatPage({
   const [sharedChatSession, setSharedChatSession] =
     useState<ChatSession | null>();
 
+  const handleResubmitLastMessage = () => {
+    // Grab the last user-type message
+    const lastUserMsg = messageHistory
+      .slice()
+      .reverse()
+      .find((m) => m.type === "user");
+    if (!lastUserMsg) {
+      setPopup({
+        message: "No previously-submitted user message found.",
+        type: "error",
+      });
+      return;
+    }
+    // We call onSubmit, passing a `messageOverride`
+    onSubmit({
+      messageIdToResend: lastUserMsg.messageId,
+      messageOverride: lastUserMsg.message,
+    });
+  };
+
   const showShareModal = (chatSession: ChatSession) => {
     setSharedChatSession(chatSession);
   };
@@ -2274,32 +2134,6 @@ export function ChatPage({
 
       <ChatPopup />
 
-      {showDeleteAllModal && (
-        <ConfirmEntityModal
-          entityType="All Chats"
-          entityName="all your chat sessions"
-          onClose={() => setShowDeleteAllModal(false)}
-          additionalDetails="This action cannot be undone. All your chat sessions will be deleted."
-          onSubmit={async () => {
-            const response = await deleteAllChatSessions("Chat");
-            if (response.ok) {
-              setShowDeleteAllModal(false);
-              setPopup({
-                message: "All your chat sessions have been deleted.",
-                type: "success",
-              });
-              refreshChatSessions();
-              router.push("/chat");
-            } else {
-              setPopup({
-                message: "Failed to delete all chat sessions.",
-                type: "error",
-              });
-            }
-          }}
-        />
-      )}
-
       {currentFeedback && (
         <FeedbackModal
           feedbackType={currentFeedback[0]}
@@ -2328,6 +2162,11 @@ export function ChatPage({
           }}
         />
       )}
+
+      <ChatSearchModal
+        open={isChatSearchModalOpen}
+        onCloseModal={() => setIsChatSearchModalOpen(false)}
+      />
 
       {retrievalEnabled && documentSidebarVisible && settings?.isMobile && (
         <div className="md:hidden">
@@ -2436,6 +2275,9 @@ export function ChatPage({
             >
               <div className="w-full relative">
                 <HistorySidebar
+                  toggleChatSessionSearchModal={() =>
+                    setIsChatSearchModalOpen((open) => !open)
+                  }
                   liveAssistant={liveAssistant}
                   setShowAssistantsModal={setShowAssistantsModal}
                   explicitlyUntoggle={explicitlyUntoggle}
@@ -2449,9 +2291,9 @@ export function ChatPage({
                   folders={folders}
                   removeToggle={removeToggle}
                   showShareModal={showShareModal}
-                  showDeleteAllModal={() => setShowDeleteAllModal(true)}
                 />
               </div>
+
               <div
                 className={`
                 flex-none
@@ -2585,6 +2427,7 @@ export function ChatPage({
                         {...getRootProps()}
                       >
                         <div
+                          onScroll={handleScroll}
                           className={`w-full h-[calc(100vh-160px)] flex flex-col default-scrollbar overflow-y-auto overflow-x-hidden relative`}
                           ref={scrollableDivRef}
                         >
@@ -2603,7 +2446,7 @@ export function ChatPage({
                                   h-full
                                   ${sidebarVisible ? "w-[200px]" : "w-[0px]"}
                               `}
-                                ></div>
+                                />
                               )}
                             </div>
                           )}
@@ -2642,18 +2485,7 @@ export function ChatPage({
                             // NOTE: temporarily removing this to fix the scroll bug
                             // (hasPerformedInitialScroll ? "" : "invisible")
                           >
-                            {(messageHistory.length < BUFFER_COUNT
-                              ? messageHistory
-                              : messageHistory.slice(
-                                  currentVisibleRange.start,
-                                  currentVisibleRange.end
-                                )
-                            ).map((message, fauxIndex) => {
-                              const i =
-                                messageHistory.length < BUFFER_COUNT
-                                  ? fauxIndex
-                                  : fauxIndex + currentVisibleRange.start;
-
+                            {messageHistory.map((message, i) => {
                               const messageMap = currentMessageMap(
                                 completeMessageDetail
                               );
@@ -2798,9 +2630,9 @@ export function ChatPage({
                                         : null
                                     }
                                   >
-                                    {message.sub_questions &&
-                                    message.sub_questions.length > 0 ? (
+                                    {message.is_agentic ? (
                                       <AgenticMessage
+                                        resubmit={handleResubmitLastMessage}
                                         error={uncaughtError}
                                         isStreamingQuestions={
                                           message.isStreamingQuestions ?? false
@@ -3148,21 +2980,18 @@ export function ChatPage({
                                       currentPersona={liveAssistant}
                                       messageId={message.messageId}
                                       content={
-                                        <p className="text-red-700 text-sm my-auto">
-                                          {message.message}
-                                          {message.stackTrace && (
-                                            <span
-                                              onClick={() =>
-                                                setStackTraceModalContent(
-                                                  message.stackTrace!
-                                                )
-                                              }
-                                              className="ml-2 cursor-pointer underline"
-                                            >
-                                              Show stack trace.
-                                            </span>
-                                          )}
-                                        </p>
+                                        <ErrorBanner
+                                          resubmit={handleResubmitLastMessage}
+                                          error={message.message}
+                                          showStackTrace={
+                                            message.stackTrace
+                                              ? () =>
+                                                  setStackTraceModalContent(
+                                                    message.stackTrace!
+                                                  )
+                                              : undefined
+                                          }
+                                        />
                                       }
                                     />
                                   </div>

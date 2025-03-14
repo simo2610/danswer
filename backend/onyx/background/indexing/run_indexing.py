@@ -21,12 +21,14 @@ from onyx.configs.app_configs import POLL_CONNECTOR_OFFSET
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import MilestoneRecordType
 from onyx.connectors.connector_runner import ConnectorRunner
+from onyx.connectors.exceptions import ConnectorValidationError
+from onyx.connectors.exceptions import UnexpectedValidationError
 from onyx.connectors.factory import instantiate_connector
-from onyx.connectors.interfaces import ConnectorValidationError
 from onyx.connectors.models import ConnectorCheckpoint
 from onyx.connectors.models import ConnectorFailure
 from onyx.connectors.models import Document
 from onyx.connectors.models import IndexAttemptMetadata
+from onyx.connectors.models import TextSection
 from onyx.db.connector_credential_pair import get_connector_credential_pair_from_id
 from onyx.db.connector_credential_pair import get_last_successful_attempt_time
 from onyx.db.connector_credential_pair import update_connector_credential_pair
@@ -51,10 +53,14 @@ from onyx.httpx.httpx_pool import HttpxPool
 from onyx.indexing.embedder import DefaultIndexingEmbedder
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.indexing.indexing_pipeline import build_indexing_pipeline
+from onyx.natural_language_processing.search_nlp_models import (
+    InformationContentClassificationModel,
+)
 from onyx.utils.logger import setup_logger
 from onyx.utils.logger import TaskAttemptSingleton
 from onyx.utils.telemetry import create_milestone_and_report
 from onyx.utils.variable_functionality import global_version
+from shared_configs.configs import MULTI_TENANT
 
 logger = setup_logger()
 
@@ -67,7 +73,6 @@ def _get_connector_runner(
     batch_size: int,
     start_time: datetime,
     end_time: datetime,
-    tenant_id: str | None,
     leave_connector_active: bool = LEAVE_CONNECTOR_ACTIVE_ON_INITIALIZATION_FAILURE,
 ) -> ConnectorRunner:
     """
@@ -86,18 +91,23 @@ def _get_connector_runner(
             input_type=task,
             connector_specific_config=attempt.connector_credential_pair.connector.connector_specific_config,
             credential=attempt.connector_credential_pair.credential,
-            tenant_id=tenant_id,
         )
 
         # validate the connector settings
         if not INTEGRATION_TESTS_MODE:
             runnable_connector.validate_connector_settings()
 
+    except UnexpectedValidationError as e:
+        logger.exception(
+            "Unable to instantiate connector due to an unexpected temporary issue."
+        )
+        raise e
     except Exception as e:
-        logger.exception(f"Unable to instantiate connector due to {e}")
-
+        logger.exception("Unable to instantiate connector. Pausing until fixed.")
         # since we failed to even instantiate the connector, we pause the CCPair since
-        # it will never succeed. Sometimes there are cases where the connector will
+        # it will never succeed
+
+        # Sometimes there are cases where the connector will
         # intermittently fail to initialize in which case we should pass in
         # leave_connector_active=True to allow it to continue.
         # For example, if there is nightly maintenance on a Confluence Server instance,
@@ -148,14 +158,12 @@ def strip_null_characters(doc_batch: list[Document]) -> list[Document]:
             )
 
         for section in cleaned_doc.sections:
-            if section.link and "\x00" in section.link:
-                logger.warning(
-                    f"NUL characters found in document link for document: {cleaned_doc.id}"
-                )
+            if section.link is not None:
                 section.link = section.link.replace("\x00", "")
 
             # since text can be longer, just replace to avoid double scan
-            section.text = section.text.replace("\x00", "")
+            if isinstance(section, TextSection) and section.text is not None:
+                section.text = section.text.replace("\x00", "")
 
         cleaned_batch.append(cleaned_doc)
 
@@ -241,7 +249,7 @@ def _check_failure_threshold(
 def _run_indexing(
     db_session: Session,
     index_attempt_id: int,
-    tenant_id: str | None,
+    tenant_id: str,
     callback: IndexingHeartbeatInterface | None = None,
 ) -> None:
     """
@@ -343,6 +351,8 @@ def _run_indexing(
             callback=callback,
         )
 
+    information_content_classification_model = InformationContentClassificationModel()
+
     document_index = get_default_document_index(
         index_attempt_start.search_settings,
         None,
@@ -351,6 +361,7 @@ def _run_indexing(
 
     indexing_pipeline = build_indexing_pipeline(
         embedder=embedding_model,
+        information_content_classification_model=information_content_classification_model,
         document_index=document_index,
         ignore_time_skip=(
             ctx.from_beginning
@@ -388,7 +399,6 @@ def _run_indexing(
                 batch_size=INDEX_BATCH_SIZE,
                 start_time=window_start,
                 end_time=window_end,
-                tenant_id=tenant_id,
             )
 
             # don't use a checkpoint if we're explicitly indexing from
@@ -474,7 +484,11 @@ def _run_indexing(
 
                     doc_size = 0
                     for section in doc.sections:
-                        doc_size += len(section.text)
+                        if (
+                            isinstance(section, TextSection)
+                            and section.text is not None
+                        ):
+                            doc_size += len(section.text)
 
                     if doc_size > INDEXING_SIZE_WARNING_THRESHOLD:
                         logger.warning(
@@ -681,7 +695,7 @@ def _run_indexing(
 
 def run_indexing_entrypoint(
     index_attempt_id: int,
-    tenant_id: str | None,
+    tenant_id: str,
     connector_credential_pair_id: int,
     is_ee: bool = False,
     callback: IndexingHeartbeatInterface | None = None,
@@ -701,7 +715,7 @@ def run_indexing_entrypoint(
         attempt = transition_attempt_to_in_progress(index_attempt_id, db_session)
 
         tenant_str = ""
-        if tenant_id is not None:
+        if MULTI_TENANT:
             tenant_str = f" for tenant {tenant_id}"
 
         connector_name = attempt.connector_credential_pair.connector.name

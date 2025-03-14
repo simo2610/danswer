@@ -706,6 +706,10 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "phi-3.5-mini-instruct": "Phi 3.5 Mini",
   "phi-3.5-moe-instruct": "Phi 3.5 MoE",
   "phi-3.5-vision-instruct": "Phi 3.5 Vision",
+  "phi-4": "Phi 4",
+
+  // Deepseek Models
+  "deepseek-r1": "DeepSeek R1",
 
   // Anthropic models
   "claude-3-opus-20240229": "Claude 3 Opus",
@@ -714,13 +718,16 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "claude-2.1": "Claude 2.1",
   "claude-2.0": "Claude 2.0",
   "claude-instant-1.2": "Claude Instant 1.2",
-  "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet",
-  "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet (New)",
-  "claude-3-5-sonnet-v2@20241022": "Claude 3.5 Sonnet (New)",
-  "claude-3.5-sonnet-v2@20241022": "Claude 3.5 Sonnet (New)",
+  "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet (June 2024)",
+  "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
+  "claude-3-7-sonnet-20250219": "Claude 3.7 Sonnet",
+  "claude-3-5-sonnet-v2@20241022": "Claude 3.5 Sonnet",
+  "claude-3.5-sonnet-v2@20241022": "Claude 3.5 Sonnet",
   "claude-3-5-haiku-20241022": "Claude 3.5 Haiku",
   "claude-3-5-haiku@20241022": "Claude 3.5 Haiku",
   "claude-3.5-haiku@20241022": "Claude 3.5 Haiku",
+  "claude-3.7-sonnet@202502019": "Claude 3.7 Sonnet",
+  "claude-3-7-sonnet-202502019": "Claude 3.7 Sonnet",
 
   // Google Models
   "gemini-1.5-pro": "Gemini 1.5 Pro",
@@ -730,10 +737,16 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "gemini-1.5-pro-002": "Gemini 1.5 Pro (v2)",
   "gemini-1.5-flash-002": "Gemini 1.5 Flash (v2)",
   "gemini-2.0-flash-exp": "Gemini 2.0 Flash (Experimental)",
-
+  "gemini-2.0-flash-001": "Gemini 2.0 Flash",
+  "gemini-2.0-flash-lite-preview-02-05": "Gemini 2.0 Flash Lite (Prv)",
+  "gemini-2.0-flash-thinking-exp-01-02": "Gemini 2.0 Flash Thinking (Exp)",
+  "gemini-2.0-pro-exp-02-05": "Gemini 2.0 Pro (Exp)",
+  "gemini-2.0-flash": "Gemini 2.0 Flash",
+  "gemini-2.0-flash-thinking-exp-01-21": "Gemini 2.0 Flash Thinking",
   // Mistral Models
   "mistral-large-2411": "Mistral Large 24.11",
   "mistral-large@2411": "Mistral Large 24.11",
+  "ministral-3b": "Ministral 3B",
 
   // Bedrock models
   "meta.llama3-1-70b-instruct-v1:0": "Llama 3.1 70B",
@@ -754,6 +767,8 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "anthropic.claude-v2:1": "Claude v2.1",
   "anthropic.claude-v2": "Claude v2",
   "anthropic.claude-v1": "Claude v1",
+  "anthropic.claude-3-7-sonnet-20250219-v1:0": "Claude 3.7 Sonnet",
+  "us.anthropic.claude-3-7-sonnet-20250219-v1:0": "Claude 3.7 Sonnet",
   "anthropic.claude-3-opus-20240229-v1:0": "Claude 3 Opus",
   "anthropic.claude-3-haiku-20240307-v1:0": "Claude 3 Haiku",
   "anthropic.claude-3-5-sonnet-20240620-v1:0": "Claude 3.5 Sonnet",
@@ -770,6 +785,12 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
 };
 
 export function getDisplayNameForModel(modelName: string): string {
+  if (modelName.startsWith("bedrock/")) {
+    const parts = modelName.split("/");
+    const lastPart = parts[parts.length - 1];
+    return MODEL_DISPLAY_NAMES[lastPart] || lastPart;
+  }
+
   return MODEL_DISPLAY_NAMES[modelName] || modelName;
 }
 
@@ -781,6 +802,7 @@ export const defaultModelsByProvider: { [name: string]: string[] } = {
     "anthropic.claude-3-opus-20240229-v1:0",
     "mistral.mistral-large-2402-v1:0",
     "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "anthropic.claude-3-7-sonnet-20250219-v1:0",
   ],
   anthropic: ["claude-3-opus-20240229", "claude-3-5-sonnet-20241022"],
 };
