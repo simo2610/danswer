@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any
 from typing import cast
 
@@ -89,13 +90,14 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
     EXTRA_CONCURRENCY = 4  # small extra fudge factor for connection limits
 
     SqlEngine.set_app_name(POSTGRES_CELERY_WORKER_PRIMARY_APP_NAME)
-    SqlEngine.init_engine(pool_size=sender.concurrency, max_overflow=EXTRA_CONCURRENCY)  # type: ignore
+    pool_size = cast(int, sender.concurrency)  # type: ignore
+    SqlEngine.init_engine(pool_size=pool_size, max_overflow=EXTRA_CONCURRENCY)
 
     app_base.wait_for_redis(sender, **kwargs)
     app_base.wait_for_db(sender, **kwargs)
     app_base.wait_for_vespa_or_shutdown(sender, **kwargs)
 
-    logger.info("Running as the primary celery worker.")
+    logger.info(f"Running as the primary celery worker: pid={os.getpid()}")
 
     # Less startup checks in multi-tenant case
     if MULTI_TENANT:
@@ -174,6 +176,9 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
                 f"search_settings={attempt.search_settings_id}"
             )
             logger.warning(failure_reason)
+            logger.exception(
+                f"Marking attempt {attempt.id} as canceled due to validation error 2"
+            )
             mark_attempt_canceled(attempt.id, db_session, failure_reason)
 
 
@@ -285,5 +290,6 @@ celery_app.autodiscover_tasks(
         "onyx.background.celery.tasks.shared",
         "onyx.background.celery.tasks.vespa",
         "onyx.background.celery.tasks.llm_model_update",
+        "onyx.background.celery.tasks.user_file_folder_sync",
     ]
 )

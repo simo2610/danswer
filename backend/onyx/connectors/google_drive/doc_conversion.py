@@ -12,6 +12,7 @@ from onyx.connectors.google_drive.constants import DRIVE_SHORTCUT_TYPE
 from onyx.connectors.google_drive.models import GDriveMimeType
 from onyx.connectors.google_drive.models import GoogleDriveFileType
 from onyx.connectors.google_drive.section_extraction import get_document_sections
+from onyx.connectors.google_drive.section_extraction import HEADING_DELIMITER
 from onyx.connectors.google_utils.resources import GoogleDocsService
 from onyx.connectors.google_utils.resources import GoogleDriveService
 from onyx.connectors.models import ConnectorFailure
@@ -30,9 +31,14 @@ from onyx.file_processing.file_validation import is_valid_image_type
 from onyx.file_processing.image_summarization import summarize_image_with_error_handling
 from onyx.file_processing.image_utils import store_image_and_create_section
 from onyx.llm.interfaces import LLM
+from onyx.utils.lazy import lazy_eval
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+# This is not a standard valid unicode char, it is used by the docs advanced API to
+# represent smart chips (elements like dates and doc links).
+SMART_CHIP_CHAR = "\ue907"
 
 # Mapping of Google Drive mime types to export formats
 GOOGLE_MIME_TYPES_TO_EXPORT = {
@@ -76,6 +82,26 @@ def is_gdrive_image_mime_type(mime_type: str) -> bool:
     return is_valid_image_type(mime_type)
 
 
+def download_request(service: GoogleDriveService, file_id: str) -> bytes:
+    """
+    Download the file from Google Drive.
+    """
+    # For other file types, download the file
+    # Use the correct API call for downloading files
+    request = service.files().get_media(fileId=file_id)
+    response_bytes = io.BytesIO()
+    downloader = MediaIoBaseDownload(response_bytes, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    response = response_bytes.getvalue()
+    if not response:
+        logger.warning(f"Failed to download {file_id}")
+        return bytes()
+    return response
+
+
 def _download_and_extract_sections_basic(
     file: dict[str, str],
     service: GoogleDriveService,
@@ -114,41 +140,31 @@ def _download_and_extract_sections_basic(
 
     # For other file types, download the file
     # Use the correct API call for downloading files
-    request = service.files().get_media(fileId=file_id)
-    response_bytes = io.BytesIO()
-    downloader = MediaIoBaseDownload(response_bytes, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-
-    response = response_bytes.getvalue()
-    if not response:
-        logger.warning(f"Failed to download {file_name}")
-        return []
+    response_call = lazy_eval(lambda: download_request(service, file_id))
 
     # Process based on mime type
     if mime_type == "text/plain":
-        text = response.decode("utf-8")
+        text = response_call().decode("utf-8")
         return [TextSection(link=link, text=text)]
 
     elif (
         mime_type
         == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ):
-        text, _ = docx_to_text_and_images(io.BytesIO(response))
+        text, _ = docx_to_text_and_images(io.BytesIO(response_call()))
         return [TextSection(link=link, text=text)]
 
     elif (
         mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ):
-        text = xlsx_to_text(io.BytesIO(response))
+        text = xlsx_to_text(io.BytesIO(response_call()))
         return [TextSection(link=link, text=text)]
 
     elif (
         mime_type
         == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     ):
-        text = pptx_to_text(io.BytesIO(response))
+        text = pptx_to_text(io.BytesIO(response_call()))
         return [TextSection(link=link, text=text)]
 
     elif is_gdrive_image_mime_type(mime_type):
@@ -158,7 +174,7 @@ def _download_and_extract_sections_basic(
             with get_session_with_current_tenant() as db_session:
                 section, embedded_id = store_image_and_create_section(
                     db_session=db_session,
-                    image_data=response,
+                    image_data=response_call(),
                     file_name=file_id,
                     display_name=file_name,
                     media_type=mime_type,
@@ -171,7 +187,7 @@ def _download_and_extract_sections_basic(
         return sections
 
     elif mime_type == "application/pdf":
-        text, _pdf_meta, images = read_pdf_file(io.BytesIO(response))
+        text, _pdf_meta, images = read_pdf_file(io.BytesIO(response_call()))
         pdf_sections: list[TextSection | ImageSection] = [
             TextSection(link=link, text=text)
         ]
@@ -194,12 +210,88 @@ def _download_and_extract_sections_basic(
 
     else:
         # For unsupported file types, try to extract text
+        if mime_type in [
+            "application/vnd.google-apps.video",
+            "application/vnd.google-apps.audio",
+            "application/zip",
+        ]:
+            return []
+        # For unsupported file types, try to extract text
         try:
-            text = extract_file_text(io.BytesIO(response), file_name)
+            text = extract_file_text(io.BytesIO(response_call()), file_name)
             return [TextSection(link=link, text=text)]
         except Exception as e:
             logger.warning(f"Failed to extract text from {file_name}: {e}")
             return []
+
+
+def _find_nth(haystack: str, needle: str, n: int, start: int = 0) -> int:
+    start = haystack.find(needle, start)
+    while start >= 0 and n > 1:
+        start = haystack.find(needle, start + len(needle))
+        n -= 1
+    return start
+
+
+def align_basic_advanced(
+    basic_sections: list[TextSection | ImageSection], adv_sections: list[TextSection]
+) -> list[TextSection | ImageSection]:
+    """Align the basic sections with the advanced sections.
+    In particular, the basic sections contain all content of the file,
+    including smart chips like dates and doc links. The advanced sections
+    are separated by section headers and contain header-based links that
+    improve user experience when they click on the source in the UI.
+
+    There are edge cases in text matching (i.e. the heading is a smart chip or
+    there is a smart chip in the doc with text containing the actual heading text)
+    that make the matching imperfect; this is hence done on a best-effort basis.
+    """
+    if len(adv_sections) <= 1:
+        return basic_sections  # no benefit from aligning
+
+    basic_full_text = "".join(
+        [section.text for section in basic_sections if isinstance(section, TextSection)]
+    )
+    new_sections: list[TextSection | ImageSection] = []
+    heading_start = 0
+    for adv_ind in range(1, len(adv_sections)):
+        heading = adv_sections[adv_ind].text.split(HEADING_DELIMITER)[0]
+        # retrieve the longest part of the heading that is not a smart chip
+        heading_key = max(heading.split(SMART_CHIP_CHAR), key=len).strip()
+        if heading_key == "":
+            logger.warning(
+                f"Cannot match heading: {heading}, its link will come from the following section"
+            )
+            continue
+        heading_offset = heading.find(heading_key)
+
+        # count occurrences of heading str in previous section
+        heading_count = adv_sections[adv_ind - 1].text.count(heading_key)
+
+        prev_start = heading_start
+        heading_start = (
+            _find_nth(basic_full_text, heading_key, heading_count, start=prev_start)
+            - heading_offset
+        )
+        if heading_start < 0:
+            logger.warning(
+                f"Heading key {heading_key} from heading {heading} not found in basic text"
+            )
+            heading_start = prev_start
+            continue
+
+        new_sections.append(
+            TextSection(
+                link=adv_sections[adv_ind - 1].link,
+                text=basic_full_text[prev_start:heading_start],
+            )
+        )
+
+    # handle last section
+    new_sections.append(
+        TextSection(link=adv_sections[-1].link, text=basic_full_text[heading_start:])
+    )
+    return new_sections
 
 
 def convert_drive_item_to_document(
@@ -226,10 +318,17 @@ def convert_drive_item_to_document(
             try:
                 # get_document_sections is the advanced approach for Google Docs
                 doc_sections = get_document_sections(
-                    docs_service=docs_service(), doc_id=file.get("id", "")
+                    docs_service=docs_service(),
+                    doc_id=file.get("id", ""),
                 )
                 if doc_sections:
                     sections = cast(list[TextSection | ImageSection], doc_sections)
+                    if any(SMART_CHIP_CHAR in section.text for section in doc_sections):
+                        basic_sections = _download_and_extract_sections_basic(
+                            file, drive_service(), allow_images
+                        )
+                        sections = align_basic_advanced(basic_sections, doc_sections)
+
             except Exception as e:
                 logger.warning(
                     f"Error in advanced parsing: {e}. Falling back to basic extraction."
