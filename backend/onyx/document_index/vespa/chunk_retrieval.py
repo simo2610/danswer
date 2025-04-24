@@ -292,18 +292,20 @@ def parallel_visit_api_retrieval(
 
 @retry(tries=3, delay=1, backoff=2)
 def query_vespa(
-    query_params: Mapping[str, str | int | float]
+    query_params: Mapping[str, str | int | float],
 ) -> list[InferenceChunkUncleaned]:
     if "query" in query_params and not cast(str, query_params["query"]).strip():
         raise ValueError("No/empty query received")
 
     params = dict(
         **query_params,
-        **{
-            "presentation.timing": True,
-        }
-        if LOG_VESPA_TIMING_INFORMATION
-        else {},
+        **(
+            {
+                "presentation.timing": True,
+            }
+            if LOG_VESPA_TIMING_INFORMATION
+            else {}
+        ),
     )
 
     try:
@@ -356,7 +358,7 @@ def query_vespa(
         num_retrieved_document_ids = len(
             set([chunk.document_id for chunk in inference_chunks])
         )
-        logger.debug(
+        logger.info(
             f"Retrieved {num_retrieved_inference_chunks} inference chunks for {num_retrieved_document_ids} documents"
         )
     except Exception as e:

@@ -17,15 +17,6 @@ import { useDocumentsContext } from "./DocumentsContext";
 import TextView from "@/components/chat/TextView";
 import { TokenDisplay } from "@/components/TokenDisplay";
 import { useChatContext } from "@/components/context/ChatContext";
-import {
-  PDFIcon,
-  TXTIcon,
-  DOCIcon,
-  HTMLIcon,
-  JSONIcon,
-  ImagesIcon,
-  XMLIcon,
-} from "@/components/icons/icons";
 
 enum SortType {
   TimeCreated = "Time Created",
@@ -304,13 +295,11 @@ export default function MyDocuments() {
   const { llmProviders } = useChatContext();
 
   const modelDescriptors = llmProviders.flatMap((provider) =>
-    Object.entries(provider.model_token_limits ?? {}).map(
-      ([modelName, maxTokens]) => ({
-        modelName,
-        provider: provider.provider,
-        maxTokens,
-      })
-    )
+    provider.model_configurations.map((modelConfiguration) => ({
+      modelName: modelConfiguration.name,
+      provider: provider.provider,
+      maxTokens: modelConfiguration.max_input_tokens!,
+    }))
   );
 
   const selectedModel = modelDescriptors[0] || {

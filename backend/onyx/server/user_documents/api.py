@@ -45,7 +45,7 @@ from onyx.server.documents.models import CredentialBase
 from onyx.server.user_documents.models import MessageResponse
 from onyx.server.user_documents.models import UserFileSnapshot
 from onyx.server.user_documents.models import UserFolderSnapshot
-from onyx.setup import setup_logger
+from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
@@ -381,6 +381,7 @@ def create_file_from_link(
                 input_type=InputType.LOAD_STATE,
                 connector_specific_config={
                     "file_locations": [user_file.file_id],
+                    "zip_metadata": {},
                 },
                 refresh_freq=None,
                 prune_freq=None,

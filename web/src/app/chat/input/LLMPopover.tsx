@@ -70,22 +70,26 @@ export default function LLMPopover({
           llmOptionsByProvider[llmProvider.provider] = [];
         }
 
-        (llmProvider.display_model_names || llmProvider.model_names).forEach(
-          (modelName) => {
-            if (!uniqueModelNames.has(modelName)) {
-              uniqueModelNames.add(modelName);
-              llmOptionsByProvider[llmProvider.provider].push({
-                name: modelName,
-                value: structureValue(
-                  llmProvider.name,
-                  llmProvider.provider,
-                  modelName
-                ),
-                icon: getProviderIcon(llmProvider.provider, modelName),
-              });
-            }
+        llmProvider.model_configurations.forEach((modelConfiguration) => {
+          if (
+            !uniqueModelNames.has(modelConfiguration.name) &&
+            modelConfiguration.is_visible
+          ) {
+            uniqueModelNames.add(modelConfiguration.name);
+            llmOptionsByProvider[llmProvider.provider].push({
+              name: modelConfiguration.name,
+              value: structureValue(
+                llmProvider.name,
+                llmProvider.provider,
+                modelConfiguration.name
+              ),
+              icon: getProviderIcon(
+                llmProvider.provider,
+                modelConfiguration.name
+              ),
+            });
           }
-        );
+        });
       });
 
       const llmOptions = Object.entries(llmOptionsByProvider).flatMap(

@@ -112,7 +112,8 @@ class DocumentManager:
             )
             response.raise_for_status()
 
-        print("Seeding completed successfully.")
+        api_key_id = api_key.api_key_id if api_key else ""
+        print(f"Seeding docs for api_key_id={api_key_id} completed successfully.")
         return [
             SimpleTestDocument(
                 id=document["document"]["id"],
@@ -140,7 +141,8 @@ class DocumentManager:
         )
         response.raise_for_status()
 
-        print("Seeding completed successfully.")
+        api_key_id = api_key.api_key_id if api_key else ""
+        print(f"Seeding doc for api_key_id={api_key_id} completed successfully.")
 
         return SimpleTestDocument(
             id=document["document"]["id"],
@@ -231,6 +233,11 @@ class DocumentManager:
         for doc_dict in retrieved_docs_dict:
             doc_id = doc_dict["fields"]["document_id"]
             doc_content = doc_dict["fields"]["content"]
-            final_docs.append(SimpleTestDocument(id=doc_id, content=doc_content))
+            image_file_name = doc_dict["fields"].get("image_file_name", None)
+            final_docs.append(
+                SimpleTestDocument(
+                    id=doc_id, content=doc_content, image_file_name=image_file_name
+                )
+            )
 
         return final_docs

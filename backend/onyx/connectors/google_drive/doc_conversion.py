@@ -1,8 +1,9 @@
 import io
-from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 from typing import cast
 
+from googleapiclient.errors import HttpError  # type: ignore
 from googleapiclient.http import MediaIoBaseDownload  # type: ignore
 
 from onyx.configs.constants import DocumentSource
@@ -13,7 +14,8 @@ from onyx.connectors.google_drive.models import GDriveMimeType
 from onyx.connectors.google_drive.models import GoogleDriveFileType
 from onyx.connectors.google_drive.section_extraction import get_document_sections
 from onyx.connectors.google_drive.section_extraction import HEADING_DELIMITER
-from onyx.connectors.google_utils.resources import GoogleDocsService
+from onyx.connectors.google_utils.resources import get_drive_service
+from onyx.connectors.google_utils.resources import get_google_docs_service
 from onyx.connectors.google_utils.resources import GoogleDriveService
 from onyx.connectors.models import ConnectorFailure
 from onyx.connectors.models import Document
@@ -39,6 +41,9 @@ logger = setup_logger()
 # This is not a standard valid unicode char, it is used by the docs advanced API to
 # represent smart chips (elements like dates and doc links).
 SMART_CHIP_CHAR = "\ue907"
+WEB_VIEW_LINK_KEY = "webViewLink"
+
+MAX_RETRIEVER_EMAILS = 20
 
 # Mapping of Google Drive mime types to export formats
 GOOGLE_MIME_TYPES_TO_EXPORT = {
@@ -111,7 +116,7 @@ def _download_and_extract_sections_basic(
     file_id = file["id"]
     file_name = file["name"]
     mime_type = file["mimeType"]
-    link = file.get("webViewLink", "")
+    link = file.get(WEB_VIEW_LINK_KEY, "")
 
     # skip images if not explicitly enabled
     if not allow_images and is_gdrive_image_mime_type(mime_type):
@@ -295,17 +300,83 @@ def align_basic_advanced(
 
 
 def convert_drive_item_to_document(
-    file: GoogleDriveFileType,
-    drive_service: Callable[[], GoogleDriveService],
-    docs_service: Callable[[], GoogleDocsService],
+    creds: Any,
     allow_images: bool,
     size_threshold: int,
+    retriever_emails: list[str],
+    file: GoogleDriveFileType,
+) -> Document | ConnectorFailure | None:
+    """
+    Attempt to convert a drive item to a document with each retriever email
+    in order. returns upon a successful retrieval or a non-403 error.
+
+    We used to always get the user email from the file owners when available,
+    but this was causing issues with shared folders where the owner was not included in the service account
+    now we use the email of the account that successfully listed the file. There are cases where a
+    user that can list a file cannot download it, so we retry with file owners and admin email.
+    """
+    first_error = None
+    doc_or_failure = None
+    retriever_emails = retriever_emails[:MAX_RETRIEVER_EMAILS]
+    # use seen instead of list(set()) to avoid re-ordering the retriever emails
+    seen = set()
+    for retriever_email in retriever_emails:
+        if retriever_email in seen:
+            continue
+        seen.add(retriever_email)
+        doc_or_failure = _convert_drive_item_to_document(
+            creds, allow_images, size_threshold, retriever_email, file
+        )
+        if (
+            doc_or_failure is None
+            or isinstance(doc_or_failure, Document)
+            or not (
+                isinstance(doc_or_failure.exception, HttpError)
+                and doc_or_failure.exception.status_code == 403
+            )
+        ):
+            return doc_or_failure
+
+        if first_error is None:
+            first_error = doc_or_failure
+        else:
+            first_error.failure_message += f"\n\n{doc_or_failure.failure_message}"
+
+    if (
+        first_error
+        and isinstance(first_error.exception, HttpError)
+        and first_error.exception.status_code == 403
+    ):
+        # This SHOULD happen very rarely, and we don't want to break the indexing process when
+        # a high volume of 403s occurs early. We leave a verbose log to help investigate.
+        logger.error(
+            f"Skipping file id: {file.get('id')} name: {file.get('name')} due to 403 error."
+            f"Attempted to retrieve with {retriever_emails},"
+            f"got the following errors: {first_error.failure_message}"
+        )
+        return None
+    return first_error
+
+
+def _convert_drive_item_to_document(
+    creds: Any,
+    allow_images: bool,
+    size_threshold: int,
+    retriever_email: str,
+    file: GoogleDriveFileType,
 ) -> Document | ConnectorFailure | None:
     """
     Main entry point for converting a Google Drive file => Document object.
     """
-    doc_id = ""
+    doc_id = file.get(WEB_VIEW_LINK_KEY, "")
     sections: list[TextSection | ImageSection] = []
+    # Only construct these services when needed
+    drive_service = lazy_eval(
+        lambda: get_drive_service(creds, user_email=retriever_email)
+    )
+    docs_service = lazy_eval(
+        lambda: get_google_docs_service(creds, user_email=retriever_email)
+    )
 
     try:
         # skip shortcuts or folders
@@ -358,7 +429,7 @@ def convert_drive_item_to_document(
             logger.warning(f"No content extracted from {file.get('name')}. Skipping.")
             return None
 
-        doc_id = file["webViewLink"]
+        doc_id = file[WEB_VIEW_LINK_KEY]
 
         # Create the document
         return Document(
@@ -376,14 +447,24 @@ def convert_drive_item_to_document(
             ),
         )
     except Exception as e:
-        error_str = f"Error converting file '{file.get('name')}' to Document: {e}"
-        logger.exception(error_str)
+        file_name = file.get("name")
+        error_str = (
+            f"Error converting file '{file_name}' to Document as {retriever_email}: {e}"
+        )
+        if isinstance(e, HttpError) and e.status_code == 403:
+            logger.warning(
+                f"Uncommon permissions error while downloading file. User "
+                f"{retriever_email} was able to see file {file_name} "
+                "but cannot download it."
+            )
+            logger.warning(error_str)
+
         return ConnectorFailure(
             failed_document=DocumentFailure(
                 document_id=doc_id,
-                document_link=sections[0].link
-                if sections
-                else None,  # TODO: see if this is the best way to get a link
+                document_link=(
+                    sections[0].link if sections else None
+                ),  # TODO: see if this is the best way to get a link
             ),
             failed_entity=None,
             failure_message=error_str,
@@ -395,7 +476,7 @@ def build_slim_document(file: GoogleDriveFileType) -> SlimDocument | None:
     if file.get("mimeType") in [DRIVE_FOLDER_TYPE, DRIVE_SHORTCUT_TYPE]:
         return None
     return SlimDocument(
-        id=file["webViewLink"],
+        id=file[WEB_VIEW_LINK_KEY],
         perm_sync_data={
             "doc_id": file.get("id"),
             "drive_id": file.get("driveId"),

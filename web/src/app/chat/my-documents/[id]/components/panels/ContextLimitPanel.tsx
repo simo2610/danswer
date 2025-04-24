@@ -1,8 +1,6 @@
-import React, { useState } from "react";
+import React from "react";
 import { Info, ChevronRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { LLMModelDescriptor } from "@/app/admin/configuration/llm/interfaces";
-import { ModelSelector } from "./ModelSelector";
 import { useChatContext } from "@/components/context/ChatContext";
 import { getDisplayNameForModel } from "@/lib/hooks";
 
@@ -19,13 +17,11 @@ export function ContextLimitPanel({
 }: ContextLimitPanelProps) {
   const { llmProviders } = useChatContext();
   const modelDescriptors = llmProviders.flatMap((provider) =>
-    Object.entries(provider.model_token_limits ?? {}).map(
-      ([modelName, maxTokens]) => ({
-        modelName,
-        provider: provider.provider,
-        maxTokens,
-      })
-    )
+    provider.model_configurations.map((modelConfiguration) => ({
+      modelName: modelConfiguration.name,
+      provider: provider.provider,
+      maxTokens: modelConfiguration.max_input_tokens!,
+    }))
   );
 
   return (

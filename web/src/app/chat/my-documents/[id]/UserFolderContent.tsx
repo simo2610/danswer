@@ -5,11 +5,8 @@ import {
   MessageSquare,
   ArrowUp,
   ArrowDown,
-  Plus,
   Trash,
   Upload,
-  AlertCircle,
-  X,
 } from "lucide-react";
 import { useDocumentsContext } from "../DocumentsContext";
 import { useChatContext } from "@/components/context/ChatContext";
@@ -23,13 +20,7 @@ import { MoveFolderModal } from "@/components/MoveFolderModal";
 import { FolderResponse } from "../DocumentsContext";
 import { getDisplayNameForModel } from "@/lib/hooks";
 import { TokenDisplay } from "@/components/TokenDisplay";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import CreateEntityModal from "@/components/modals/CreateEntityModal";
+
 import { CleanupModal, CleanupPeriod } from "@/components/CleanupModal";
 import { bulkCleanupFiles } from "../api";
 
@@ -176,13 +167,11 @@ export default function UserFolderContent({ folderId }: { folderId: number }) {
   const pageContainerRef = useRef<HTMLDivElement>(null);
 
   const modelDescriptors = llmProviders.flatMap((provider) =>
-    Object.entries(provider.model_token_limits ?? {}).map(
-      ([modelName, maxTokens]) => ({
-        modelName,
-        provider: provider.provider,
-        maxTokens,
-      })
-    )
+    provider.model_configurations.map((modelConfiguration) => ({
+      modelName: modelConfiguration.name,
+      provider: provider.provider,
+      maxTokens: modelConfiguration.max_input_tokens!,
+    }))
   );
 
   const { popup: folderCreatedPopup } = usePopupFromQuery({

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from typing import Any
 from typing import cast
+from typing import TYPE_CHECKING
 
 import litellm  # type: ignore
 import tiktoken
@@ -50,6 +51,11 @@ from onyx.utils.b64 import get_image_type_from_bytes
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import LOG_LEVEL
 
+
+if TYPE_CHECKING:
+    from onyx.server.manage.llm.models import LLMProviderView
+
+
 logger = setup_logger()
 
 MAX_CONTEXT_TOKENS = 100
@@ -61,8 +67,9 @@ def litellm_exception_to_error_msg(
     e: Exception,
     llm: LLM,
     fallback_to_error_msg: bool = False,
-    custom_error_msg_mappings: dict[str, str]
-    | None = LITELLM_CUSTOM_ERROR_MESSAGE_MAPPINGS,
+    custom_error_msg_mappings: (
+        dict[str, str] | None
+    ) = LITELLM_CUSTOM_ERROR_MESSAGE_MAPPINGS,
 ) -> str:
     error_msg = str(e)
 
@@ -252,7 +259,7 @@ def message_to_prompt_and_imgs(message: BaseMessage) -> tuple[str, list[str]]:
 
 
 def dict_based_prompt_to_langchain_prompt(
-    messages: list[dict[str, str]]
+    messages: list[dict[str, str]],
 ) -> list[BaseMessage]:
     prompt: list[BaseMessage] = []
     for message in messages:
@@ -498,11 +505,20 @@ def get_llm_contextual_cost(
     num_input_tokens += num_tokens + num_docs * DOCUMENT_SUMMARY_TOKEN_ESTIMATE
     num_output_tokens += num_docs * MAX_CONTEXT_TOKENS
 
-    usd_per_prompt, usd_per_completion = litellm.cost_per_token(
-        model=llm.config.model_name,
-        prompt_tokens=num_input_tokens,
-        completion_tokens=num_output_tokens,
-    )
+    try:
+        usd_per_prompt, usd_per_completion = litellm.cost_per_token(
+            model=llm.config.model_name,
+            prompt_tokens=num_input_tokens,
+            completion_tokens=num_output_tokens,
+        )
+    except Exception:
+        logger.exception(
+            "An unexpected error occurred while calculating cost for model "
+            f"{llm.config.model_name} (potentially due to malformed name). "
+            "Assuming cost is 0."
+        )
+        return 0
+
     # Costs are in USD dollars per million tokens
     return usd_per_prompt + usd_per_completion
 
@@ -605,6 +621,24 @@ def get_max_input_tokens(
         return GEN_AI_MODEL_FALLBACK_MAX_TOKENS
 
     return input_toks
+
+
+def get_max_input_tokens_from_llm_provider(
+    llm_provider: "LLMProviderView",
+    model_name: str,
+) -> int:
+    max_input_tokens = None
+    for model_configuration in llm_provider.model_configurations:
+        if model_configuration.name == model_name:
+            max_input_tokens = model_configuration.max_input_tokens
+    return (
+        max_input_tokens
+        if max_input_tokens
+        else get_max_input_tokens(
+            model_provider=llm_provider.name,
+            model_name=model_name,
+        )
+    )
 
 
 def model_supports_image_input(model_name: str, model_provider: str) -> bool:

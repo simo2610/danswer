@@ -74,7 +74,6 @@ from onyx.llm.factory import get_default_llm_with_vision
 from onyx.llm.factory import get_default_llms
 from onyx.llm.factory import get_llm_for_contextual_rag
 from onyx.llm.interfaces import LLM
-from onyx.llm.utils import get_max_input_tokens
 from onyx.llm.utils import MAX_CONTEXT_TOKENS
 from onyx.llm.utils import message_to_string
 from onyx.natural_language_processing.search_nlp_models import (
@@ -122,8 +121,7 @@ class IndexingPipelineProtocol(Protocol):
         self,
         document_batch: list[Document],
         index_attempt_metadata: IndexAttemptMetadata,
-    ) -> IndexingPipelineResult:
-        ...
+    ) -> IndexingPipelineResult: ...
 
 
 def _upsert_documents_in_db(
@@ -414,9 +412,11 @@ def filter_documents(document_batch: list[Document]) -> list[Document]:
             continue
 
         section_chars = sum(
-            len(section.text)
-            if isinstance(section, TextSection) and section.text is not None
-            else 0
+            (
+                len(section.text)
+                if isinstance(section, TextSection) and section.text is not None
+                else 0
+            )
             for section in document.sections
         )
         if (
@@ -467,9 +467,11 @@ def process_image_sections(documents: list[Document]) -> list[IndexingDocument]:
                     Section(
                         text=section.text if isinstance(section, TextSection) else "",
                         link=section.link,
-                        image_file_name=section.image_file_name
-                        if isinstance(section, ImageSection)
-                        else None,
+                        image_file_name=(
+                            section.image_file_name
+                            if isinstance(section, ImageSection)
+                            else None
+                        ),
                     )
                     for section in document.sections
                 ],
@@ -661,17 +663,12 @@ def add_contextual_summaries(
     Adds Document summary and chunk-within-document context to the chunks
     based on which environment variables are set.
     """
-    max_context = get_max_input_tokens(
-        model_name=llm.config.model_name,
-        model_provider=llm.config.model_provider,
-        output_tokens=MAX_CONTEXT_TOKENS,
-    )
     doc2chunks = defaultdict(list)
     for chunk in chunks:
         doc2chunks[chunk.source_document.id].append(chunk)
 
     # The number of tokens allowed for the document when computing a document summary
-    trunc_doc_summary_tokens = max_context - len(
+    trunc_doc_summary_tokens = llm.config.max_input_tokens - len(
         tokenizer.encode(DOCUMENT_SUMMARY_PROMPT)
     )
 
@@ -680,7 +677,9 @@ def add_contextual_summaries(
     )
     # The number of tokens allowed for the document when computing a
     # "chunk in context of document" summary
-    trunc_doc_chunk_tokens = max_context - prompt_tokens - chunk_token_limit
+    trunc_doc_chunk_tokens = (
+        llm.config.max_input_tokens - prompt_tokens - chunk_token_limit
+    )
     for chunks_by_doc in doc2chunks.values():
         doc_tokens = None
         if USE_DOCUMENT_SUMMARY:
@@ -783,7 +782,10 @@ def index_doc_batch(
         # Because the chunker's tokens are different from the LLM's tokens,
         # We add a fudge factor to ensure we truncate prompts to the LLM's token limit
         chunks = add_contextual_summaries(
-            chunks, llm, llm_tokenizer, chunker.chunk_token_limit * 2
+            chunks=chunks,
+            llm=llm,
+            tokenizer=llm_tokenizer,
+            chunk_token_limit=chunker.chunk_token_limit * 2,
         )
 
     logger.debug("Starting embedding")
@@ -791,6 +793,8 @@ def index_doc_batch(
         embed_chunks_with_failure_handling(
             chunks=chunks,
             embedder=embedder,
+            tenant_id=tenant_id,
+            request_id=index_attempt_metadata.request_id,
         )
         if chunks
         else ([], [])
@@ -831,10 +835,10 @@ def index_doc_batch(
         doc_id_to_user_file_id: dict[str, int | None] = fetch_user_files_for_documents(
             document_ids=updatable_ids, db_session=db_session
         )
-        doc_id_to_user_folder_id: dict[
-            str, int | None
-        ] = fetch_user_folders_for_documents(
-            document_ids=updatable_ids, db_session=db_session
+        doc_id_to_user_folder_id: dict[str, int | None] = (
+            fetch_user_folders_for_documents(
+                document_ids=updatable_ids, db_session=db_session
+            )
         )
 
         doc_id_to_previous_chunk_cnt: dict[str, int | None] = {

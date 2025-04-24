@@ -6,7 +6,6 @@ import {
   DiscourseIcon,
   Document360Icon,
   DropboxIcon,
-  FileIcon,
   GithubIcon,
   GitlabIcon,
   GlobeIcon,
@@ -48,11 +47,7 @@ import {
   HighspotIcon,
 } from "@/components/icons/icons";
 import { ValidSources } from "./types";
-import {
-  OnyxDocument,
-  SourceCategory,
-  SourceMetadata,
-} from "./search/interfaces";
+import { SourceCategory, SourceMetadata } from "./search/interfaces";
 import { Persona } from "@/app/admin/assistants/interfaces";
 
 interface PartialSourceMetadata {

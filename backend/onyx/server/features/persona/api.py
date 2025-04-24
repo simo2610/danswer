@@ -92,7 +92,7 @@ def patch_persona_visibility(
 
 
 @basic_router.patch("/{persona_id}/public")
-def patch_user_presona_public_status(
+def patch_user_persona_public_status(
     persona_id: int,
     is_public_request: IsPublicRequest,
     user: User | None = Depends(current_user),
@@ -381,8 +381,9 @@ def delete_persona(
 
 @basic_router.get("/image-generation-tool")
 def get_image_generation_tool(
-    _: User
-    | None = Depends(current_user),  # User param not used but kept for consistency
+    _: User | None = Depends(
+        current_user
+    ),  # User param not used but kept for consistency
     db_session: Session = Depends(get_session),
 ) -> ImageGenerationToolStatus:  # Use bool instead of str for boolean values
     is_available = is_image_generation_available(db_session=db_session)

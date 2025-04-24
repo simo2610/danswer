@@ -1,5 +1,4 @@
 import * as Yup from "yup";
-import { IsPublicGroupSelectorFormType } from "@/components/IsPublicGroupSelector";
 import { ConfigurableSources, ValidInputTypes, ValidSources } from "../types";
 import { AccessTypeGroupSelectorFormType } from "@/components/admin/connectors/AccessTypeGroupSelector";
 import { Credential } from "@/lib/connectors/credentials"; // Import Credential type
@@ -1536,6 +1535,7 @@ export interface LoopioConfig {
 
 export interface FileConfig {
   file_locations: string[];
+  zip_metadata: Record<string, any>;
 }
 
 export interface ZulipConfig {

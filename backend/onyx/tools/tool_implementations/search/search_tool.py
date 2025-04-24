@@ -1,3 +1,4 @@
+import copy
 import json
 import time
 from collections.abc import Callable
@@ -144,8 +145,11 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
 
         # For small context models, don't include additional surrounding context
         # The 3 here for at least minimum 1 above, 1 below and 1 for the middle chunk
-        max_llm_tokens = compute_max_llm_input_tokens(self.llm.config)
-        if max_llm_tokens < 3 * GEN_AI_MODEL_FALLBACK_MAX_TOKENS:
+
+        max_input_tokens = compute_max_llm_input_tokens(
+            llm_config=llm.config,
+        )
+        if max_input_tokens < 3 * GEN_AI_MODEL_FALLBACK_MAX_TOKENS:
             self.chunks_above = 0
             self.chunks_below = 0
 
@@ -294,6 +298,7 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         ordering_only = False
         document_sources = None
         time_cutoff = None
+        expanded_queries = None
         if override_kwargs:
             force_no_rerank = use_alt_not_None(override_kwargs.force_no_rerank, False)
             alternate_db_session = override_kwargs.alternate_db_session
@@ -306,6 +311,7 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
             ordering_only = use_alt_not_None(override_kwargs.ordering_only, False)
             document_sources = override_kwargs.document_sources
             time_cutoff = override_kwargs.time_cutoff
+            expanded_queries = override_kwargs.expanded_queries
 
         # Fast path for ordering-only search
         if ordering_only:
@@ -319,7 +325,7 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
             return
 
         # Create a copy of the retrieval options with user_file_ids if provided
-        retrieval_options = self.retrieval_options
+        retrieval_options = copy.deepcopy(self.retrieval_options)
         if (user_file_ids or user_folder_ids) and retrieval_options:
             # Create a copy to avoid modifying the original
             filters = (
@@ -358,25 +364,27 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         search_pipeline = SearchPipeline(
             search_request=SearchRequest(
                 query=query,
-                evaluation_type=LLMEvaluationType.SKIP
-                if force_no_rerank
-                else self.evaluation_type,
+                evaluation_type=(
+                    LLMEvaluationType.SKIP if force_no_rerank else self.evaluation_type
+                ),
                 human_selected_filters=(
                     retrieval_options.filters if retrieval_options else None
                 ),
                 persona=self.persona,
                 offset=(retrieval_options.offset if retrieval_options else None),
                 limit=retrieval_options.limit if retrieval_options else None,
-                rerank_settings=RerankingDetails(
-                    rerank_model_name=None,
-                    rerank_api_url=None,
-                    rerank_provider_type=None,
-                    rerank_api_key=None,
-                    num_rerank=0,
-                    disable_rerank_for_streaming=True,
-                )
-                if force_no_rerank
-                else self.rerank_settings,
+                rerank_settings=(
+                    RerankingDetails(
+                        rerank_model_name=None,
+                        rerank_api_url=None,
+                        rerank_provider_type=None,
+                        rerank_api_key=None,
+                        num_rerank=0,
+                        disable_rerank_for_streaming=True,
+                    )
+                    if force_no_rerank
+                    else self.rerank_settings
+                ),
                 chunks_above=self.chunks_above,
                 chunks_below=self.chunks_below,
                 full_doc=self.full_doc,
@@ -388,6 +396,8 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
                 precomputed_query_embedding=precomputed_query_embedding,
                 precomputed_is_keyword=precomputed_is_keyword,
                 precomputed_keywords=precomputed_keywords,
+                # add expanded queries
+                expanded_queries=expanded_queries,
             ),
             user=self.user,
             llm=self.llm,
