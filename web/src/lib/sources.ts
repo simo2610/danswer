@@ -176,7 +176,7 @@ export const SOURCE_METADATA_MAP: SourceMap = {
   hubspot: {
     icon: HubSpotIcon,
     displayName: "HubSpot",
-    category: SourceCategory.CustomerSupport,
+    category: SourceCategory.CustomerRelationshipManagement,
     docs: "https://docs.onyx.app/connectors/hubspot",
   },
   document360: {
@@ -211,7 +211,7 @@ export const SOURCE_METADATA_MAP: SourceMap = {
   salesforce: {
     icon: SalesforceIcon,
     displayName: "Salesforce",
-    category: SourceCategory.CustomerSupport,
+    category: SourceCategory.CustomerRelationshipManagement,
     docs: "https://docs.onyx.app/connectors/salesforce",
   },
   sharepoint: {
@@ -375,7 +375,7 @@ export function getSourceMetadata(sourceType: ValidSources): SourceMetadata {
 }
 
 export function listSourceMetadata(): SourceMetadata[] {
-  /* This gives back all the viewable / common sources, primarily for 
+  /* This gives back all the viewable / common sources, primarily for
   display in the Add Connector page */
   const entries = Object.entries(SOURCE_METADATA_MAP)
     .filter(
