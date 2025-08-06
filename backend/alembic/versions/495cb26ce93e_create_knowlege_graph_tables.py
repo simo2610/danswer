@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from onyx.configs.app_configs import DB_READONLY_USER
 from onyx.configs.app_configs import DB_READONLY_PASSWORD
 from shared_configs.configs import MULTI_TENANT
-from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA_STANDARD_VALUE
+from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
 
 
 # revision identifiers, used by Alembic.
@@ -80,6 +80,7 @@ def upgrade() -> None:
         )
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_config CASCADE")
     op.create_table(
         "kg_config",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False, index=True),
@@ -123,6 +124,7 @@ def upgrade() -> None:
         ],
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_entity_type CASCADE")
     op.create_table(
         "kg_entity_type",
         sa.Column("id_name", sa.String(), primary_key=True, nullable=False, index=True),
@@ -156,6 +158,7 @@ def upgrade() -> None:
         ),
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_relationship_type CASCADE")
     # Create KGRelationshipType table
     op.create_table(
         "kg_relationship_type",
@@ -194,6 +197,7 @@ def upgrade() -> None:
         ),
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_relationship_type_extraction_staging CASCADE")
     # Create KGRelationshipTypeExtractionStaging table
     op.create_table(
         "kg_relationship_type_extraction_staging",
@@ -226,6 +230,8 @@ def upgrade() -> None:
             ["target_entity_type_id_name"], ["kg_entity_type.id_name"]
         ),
     )
+
+    op.execute("DROP TABLE IF EXISTS kg_entity CASCADE")
 
     # Create KGEntity table
     op.create_table(
@@ -281,6 +287,7 @@ def upgrade() -> None:
         "ix_entity_name_search", "kg_entity", ["name", "entity_type_id_name"]
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_entity_extraction_staging CASCADE")
     # Create KGEntityExtractionStaging table
     op.create_table(
         "kg_entity_extraction_staging",
@@ -330,6 +337,7 @@ def upgrade() -> None:
         ["name", "entity_type_id_name"],
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_relationship CASCADE")
     # Create KGRelationship table
     op.create_table(
         "kg_relationship",
@@ -371,6 +379,7 @@ def upgrade() -> None:
         "ix_kg_relationship_nodes", "kg_relationship", ["source_node", "target_node"]
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_relationship_extraction_staging CASCADE")
     # Create KGRelationshipExtractionStaging table
     op.create_table(
         "kg_relationship_extraction_staging",
@@ -414,6 +423,7 @@ def upgrade() -> None:
         ["source_node", "target_node"],
     )
 
+    op.execute("DROP TABLE IF EXISTS kg_term CASCADE")
     # Create KGTerm table
     op.create_table(
         "kg_term",
@@ -468,7 +478,7 @@ def upgrade() -> None:
     # Create GIN index for clustering and normalization
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_kg_entity_clustering_trigrams "
-        f"ON kg_entity USING GIN (name {POSTGRES_DEFAULT_SCHEMA_STANDARD_VALUE}.gin_trgm_ops)"
+        f"ON kg_entity USING GIN (name {POSTGRES_DEFAULT_SCHEMA}.gin_trgm_ops)"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_kg_entity_normalization_trigrams "
@@ -508,7 +518,7 @@ def upgrade() -> None:
 
                 -- Set name and name trigrams
                 NEW.name = name;
-                NEW.name_trigrams = {POSTGRES_DEFAULT_SCHEMA_STANDARD_VALUE}.show_trgm(cleaned_name);
+                NEW.name_trigrams = {POSTGRES_DEFAULT_SCHEMA}.show_trgm(cleaned_name);
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
@@ -553,7 +563,7 @@ def upgrade() -> None:
                 UPDATE kg_entity
                 SET
                     name = doc_name,
-                    name_trigrams = {POSTGRES_DEFAULT_SCHEMA_STANDARD_VALUE}.show_trgm(cleaned_name)
+                    name_trigrams = {POSTGRES_DEFAULT_SCHEMA}.show_trgm(cleaned_name)
                 WHERE document_id = NEW.id;
                 RETURN NEW;
             END;
