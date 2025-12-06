@@ -1,43 +1,32 @@
-import { AuthType } from "@/lib/constants";
-import { FaGoogle } from "react-icons/fa";
+"use client";
 
-export function SignInButton({
-  authorizeUrl,
-  authType,
-}: {
+import Button from "@/refresh-components/buttons/Button";
+import { AuthType } from "@/lib/constants";
+import { FcGoogle } from "react-icons/fc";
+import { IconProps } from "@/icons";
+
+interface SignInButtonProps {
   authorizeUrl: string;
   authType: AuthType;
-}) {
-  let button;
-  if (authType === "google_oauth" || authType === "cloud") {
-    button = (
-      <div className="mx-auto flex">
-        <div className="my-auto mr-2">
-          <FaGoogle />
-        </div>
-        <p className="text-sm font-medium select-none">Continue with Google</p>
-      </div>
-    );
-  } else if (authType === "oidc") {
-    button = (
-      <div className="mx-auto flex">
-        <p className="text-sm font-medium select-none">
-          Continue with OIDC SSO
-        </p>
-      </div>
-    );
-  } else if (authType === "saml") {
-    button = (
-      <div className="mx-auto flex">
-        <p className="text-sm font-medium select-none">
-          Continue with SAML SSO
-        </p>
-      </div>
-    );
+}
+
+export default function SignInButton({
+  authorizeUrl,
+  authType,
+}: SignInButtonProps) {
+  let button: React.ReactNode;
+  let icon: React.FunctionComponent<IconProps> | undefined;
+
+  if (authType === AuthType.GOOGLE_OAUTH || authType === AuthType.CLOUD) {
+    button = "Continue with Google";
+    icon = FcGoogle;
+  } else if (authType === AuthType.OIDC) {
+    button = "Continue with OIDC SSO";
+  } else if (authType === AuthType.SAML) {
+    button = "Continue with SAML SSO";
   }
 
   const url = new URL(authorizeUrl);
-
   const finalAuthorizeUrl = url.toString();
 
   if (!button) {
@@ -45,11 +34,15 @@ export function SignInButton({
   }
 
   return (
-    <a
-      className="mx-auto mb-4 mt-6 py-3 w-full dark:text-neutral-300 text-neutral-600 border border-neutral-300 flex rounded cursor-pointer hover:border-neutral-400 transition-colors"
+    <Button
+      secondary={
+        authType === AuthType.GOOGLE_OAUTH || authType === AuthType.CLOUD
+      }
+      className="!w-full"
+      leftIcon={icon}
       href={finalAuthorizeUrl}
     >
       {button}
-    </a>
+    </Button>
   );
 }

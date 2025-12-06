@@ -6,7 +6,7 @@ from fastapi import Depends
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from onyx.auth.users import api_key_dep
+from onyx.auth.users import current_curator_or_admin_user
 from onyx.configs.constants import DEFAULT_CC_PAIR_ID
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.models import Document
@@ -20,6 +20,9 @@ from onyx.db.search_settings import get_active_search_settings
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.search_settings import get_secondary_search_settings
 from onyx.document_index.factory import get_default_document_index
+from onyx.indexing.adapters.document_indexing_adapter import (
+    DocumentIndexingBatchAdapter,
+)
 from onyx.indexing.embedder import DefaultIndexingEmbedder
 from onyx.indexing.indexing_pipeline import run_indexing_pipeline
 from onyx.natural_language_processing.search_nlp_models import (
@@ -40,7 +43,7 @@ router = APIRouter(prefix="/onyx-api")
 @router.get("/connector-docs/{cc_pair_id}")
 def get_docs_by_connector_credential_pair(
     cc_pair_id: int,
-    _: User | None = Depends(api_key_dep),
+    _: User | None = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> list[DocMinimalInfo]:
     db_docs = get_documents_by_cc_pair(cc_pair_id=cc_pair_id, db_session=db_session)
@@ -56,7 +59,7 @@ def get_docs_by_connector_credential_pair(
 
 @router.get("/ingestion")
 def get_ingestion_docs(
-    _: User | None = Depends(api_key_dep),
+    _: User | None = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> list[DocMinimalInfo]:
     db_docs = get_ingestion_documents(db_session)
@@ -73,7 +76,7 @@ def get_ingestion_docs(
 @router.post("/ingestion")
 def upsert_ingestion_doc(
     doc_info: IngestionDocument,
-    _: User | None = Depends(api_key_dep),
+    _: User | None = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> IngestionResult:
     tenant_id = get_current_tenant_id()
@@ -113,6 +116,18 @@ def upsert_ingestion_doc(
 
     information_content_classification_model = InformationContentClassificationModel()
 
+    # Build adapter for primary indexing
+    adapter = DocumentIndexingBatchAdapter(
+        db_session=db_session,
+        connector_id=cc_pair.connector_id,
+        credential_id=cc_pair.credential_id,
+        tenant_id=tenant_id,
+        index_attempt_metadata=IndexAttemptMetadata(
+            connector_id=cc_pair.connector_id,
+            credential_id=cc_pair.credential_id,
+        ),
+    )
+
     indexing_pipeline_result = run_indexing_pipeline(
         embedder=index_embedding_model,
         information_content_classification_model=information_content_classification_model,
@@ -121,10 +136,8 @@ def upsert_ingestion_doc(
         db_session=db_session,
         tenant_id=tenant_id,
         document_batch=[document],
-        index_attempt_metadata=IndexAttemptMetadata(
-            connector_id=cc_pair.connector_id,
-            credential_id=cc_pair.credential_id,
-        ),
+        request_id=None,
+        adapter=adapter,
     )
 
     # If there's a secondary index being built, index the doc but don't use it for return here
@@ -153,10 +166,8 @@ def upsert_ingestion_doc(
             db_session=db_session,
             tenant_id=tenant_id,
             document_batch=[document],
-            index_attempt_metadata=IndexAttemptMetadata(
-                connector_id=cc_pair.connector_id,
-                credential_id=cc_pair.credential_id,
-            ),
+            request_id=None,
+            adapter=adapter,
         )
 
     return IngestionResult(

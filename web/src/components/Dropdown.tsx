@@ -6,17 +6,23 @@ import {
   useEffect,
   useRef,
   useState,
+  JSX,
 } from "react";
-import { ChevronDownIcon, PlusIcon } from "./icons/icons";
-import { FiCheck, FiChevronDown } from "react-icons/fi";
+import { ChevronDownIcon } from "./icons/icons";
+import { FiCheck, FiChevronDown, FiInfo } from "react-icons/fi";
 import { Popover } from "./popover/Popover";
+import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import Button from "@/refresh-components/buttons/Button";
+import SvgPlus from "@/icons/plus";
 
 export interface Option<T> {
   name: string;
   value: T;
   description?: string;
-  metadata?: { [key: string]: any };
-  icon?: React.FC<{ size?: number; className?: string }>;
+  icon?: (props: { size?: number; className?: string }) => JSX.Element;
+  // Domain-specific flag: when false, render as disabled (used by AccessTypeForm)
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export type StringOrNumberOption = Option<string | number>;
@@ -33,14 +39,18 @@ function StandardDropdownOption<T>({
   return (
     <button
       onClick={() => handleSelect(option)}
-      className={`w-full text-left block px-4 py-2.5 text-sm bg-white dark:bg-neutral-800 hover:bg-background-50 ${
-        index !== 0 ? "border-t border-background-200" : ""
+      className={`w-full text-left block px-4 py-2.5 text-sm bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 ${
+        index !== 0 ? "border-t border-neutral-200 dark:border-neutral-700" : ""
       }`}
       role="menuitem"
     >
-      <p className="font-medium  text-xs text-text-900">{option.name}</p>
+      <p className="font-medium text-xs text-neutral-900 dark:text-neutral-100">
+        {option.name}
+      </p>
       {option.description && (
-        <p className="text-xs text-text-500">{option.description}</p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          {option.description}
+        </p>
       )}
     </button>
   );
@@ -58,7 +68,7 @@ export function SearchMultiSelectDropdown({
 }: {
   options: StringOrNumberOption[];
   onSelect: (selected: StringOrNumberOption) => void;
-  itemComponent?: FC<{ option: StringOrNumberOption }>;
+  itemComponent?: (props: { option: StringOrNumberOption }) => JSX.Element;
   onCreate?: (name: string) => void;
   onDelete?: (name: string) => void;
   onSearchTermChange?: (term: string) => void;
@@ -148,21 +158,21 @@ export function SearchMultiSelectDropdown({
               handleCustomValueSelect();
             }
           }}
-          className="inline-flex justify-between w-full px-4 py-2 text-sm bg-white dark:bg-transparent text-text-800 border border-background-300 rounded-md shadow-sm"
+          className="inline-flex justify-between w-full px-4 py-2 text-sm bg-white dark:bg-transparent text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 rounded-md shadow-sm"
         />
         <button
           type="button"
-          className="absolute top-0 right-0 text-sm h-full px-2 border-l border-background-300"
+          className="absolute top-0 right-0 text-sm h-full px-2 border-l border-neutral-200 dark:border-neutral-700"
           aria-expanded={isOpen}
           aria-haspopup="true"
           onClick={() => setIsOpen(!isOpen)}
         >
-          <ChevronDownIcon className="my-auto w-4 h-4 text-text-600" />
+          <ChevronDownIcon className="my-auto w-4 h-4 text-neutral-600 dark:text-neutral-400" />
         </button>
       </div>
 
       {isOpen && (
-        <div className="absolute z-10 mt-1 w-full rounded-md shadow-lg bg-white border border-background-300 max-h-60 overflow-y-auto">
+        <div className="absolute z-10 mt-1 w-full rounded-md shadow-lg bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 max-h-60 overflow-y-auto">
           <div
             role="menu"
             aria-orientation="vertical"
@@ -194,14 +204,14 @@ export function SearchMultiSelectDropdown({
                 (option) =>
                   option.name.toLowerCase() === searchTerm.toLowerCase()
               ) && (
-                <button
-                  className="w-full text-left flex items-center px-4 py-2 text-sm text-text-800 hover:bg-background-100"
+                <Button
+                  className="w-full"
                   role="menuitem"
                   onClick={handleCustomValueSelect}
+                  leftIcon={SvgPlus}
                 >
-                  <PlusIcon className="w-4 h-4 mr-2 text-text-600" />
                   Use &quot;{searchTerm}&quot; as custom value
-                </button>
+                </Button>
               )}
 
             {onCreate &&
@@ -212,18 +222,18 @@ export function SearchMultiSelectDropdown({
               ) && (
                 <>
                   <div className="border-t border-background-300"></div>
-                  <button
-                    className="w-full text-left flex items-center px-4 py-2 text-sm text-text-800 hover:bg-background-100"
+                  <Button
+                    className="w-full"
                     role="menuitem"
                     onClick={() => {
                       onCreate(searchTerm);
                       setIsOpen(false);
                       setSearchTerm("");
                     }}
+                    leftIcon={SvgPlus}
                   >
-                    <PlusIcon className="w-4 h-4 mr-2 text-text-600" />
                     Create label &quot;{searchTerm}&quot;
-                  </button>
+                  </Button>
                 </>
               )}
 
@@ -294,13 +304,17 @@ export function DefaultDropdownElement({
   onSelect,
   isSelected,
   includeCheckbox = false,
+  disabled = false,
+  disabledReason,
 }: {
   name: string | JSX.Element;
-  icon?: React.FC<{ size?: number; className?: string }>;
+  icon?: (props: { size?: number; className?: string }) => JSX.Element;
   description?: string;
   onSelect?: () => void;
   isSelected?: boolean;
   includeCheckbox?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   return (
     <div
@@ -308,17 +322,17 @@ export function DefaultDropdownElement({
         flex
         mx-1
         px-2
-        text-sm 
-        py-1.5 
+        text-sm
+        py-1.5
         my-1
-        select-none 
-        cursor-pointer 
-        bg-transparent 
+        select-none
+        ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}
+        bg-transparent
         rounded
         text-text-dark
-        hover:bg-accent-background-hovered
+        ${disabled ? "" : "hover:bg-accent-background-hovered"}
       `}
-      onClick={onSelect}
+      onClick={disabled ? undefined : onSelect}
     >
       <div>
         <div className="flex">
@@ -332,6 +346,13 @@ export function DefaultDropdownElement({
           )}
           {icon && icon({ size: 16, className: "mr-2 h-4 w-4 my-auto" })}
           {name}
+          {disabled && disabledReason && (
+            <SimpleTooltip tooltip={disabledReason}>
+              <span className="ml-2 my-auto p-1 rounded hover:bg-background-100 text-warning transition-colors cursor-default">
+                <FiInfo size={14} className="text-warning" />
+              </span>
+            </SimpleTooltip>
+          )}
         </div>
         {description && <div className="text-xs">{description}</div>}
       </div>
@@ -378,14 +399,14 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
     const Content = (
       <div
         className={`
-          flex 
-          text-sm 
-          bg-background 
+          flex
+          text-sm
+          bg-background
           px-3
-          py-1.5 
-          rounded-lg 
-          border 
-          border-border 
+          py-1.5
+          rounded-lg
+          border
+          border-border
           cursor-pointer`}
       >
         <p className="line-clamp-1">
@@ -402,14 +423,12 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
       <div
         ref={ref}
         className={`
-        border 
-        border 
-        rounded-lg 
-        flex 
-        flex-col 
+        rounded-lg
+        flex
+        flex-col
         bg-background
         ${maxHeight || "max-h-96"}
-        overflow-y-auto 
+        overflow-y-auto
         overscroll-contain`}
       >
         {includeDefault && (
@@ -430,6 +449,8 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
               onSelect={() => handleSelect(option.value)}
               isSelected={isSelected}
               icon={option.icon}
+              disabled={option.disabled}
+              disabledReason={option.disabledReason}
             />
           );
         })}
@@ -453,61 +474,3 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
     );
   }
 );
-
-export function ControlledPopup({
-  children,
-  popupContent,
-  isOpen,
-  setIsOpen,
-}: {
-  children: JSX.Element | string;
-  popupContent: JSX.Element | string;
-  isOpen: boolean;
-  setIsOpen: (value: boolean) => void;
-}) {
-  const filtersRef = useRef<HTMLDivElement>(null);
-  // hides logout popup on any click outside
-  const handleClickOutside = useCallback(
-    (event: MouseEvent) => {
-      if (
-        filtersRef.current &&
-        !filtersRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    },
-    [filtersRef, setIsOpen]
-  );
-
-  useEffect(() => {
-    document.addEventListener("mousedown", handleClickOutside);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [handleClickOutside]);
-
-  return (
-    <div ref={filtersRef} className="relative">
-      {children}
-      {isOpen && (
-        <div
-          className={`
-            absolute 
-            top-0 
-            bg-background 
-            border 
-            border-border 
-            z-30 
-            rounded 
-            text-text-darker 
-            shadow-lg`}
-          style={{ transform: "translateY(calc(-100% - 5px))" }}
-        >
-          {popupContent}
-        </div>
-      )}
-    </div>
-  );
-}
-DefaultDropdown.displayName = "DefaultDropdown";

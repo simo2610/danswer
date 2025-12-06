@@ -16,7 +16,7 @@ from onyx.connectors.interfaces import GenerateSlimDocumentOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.interfaces import SlimConnector
+from onyx.connectors.interfaces import SlimConnectorWithPermSync
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import ConnectorCheckpoint
 from onyx.connectors.models import ConnectorMissingCredentialError
@@ -32,6 +32,7 @@ from onyx.connectors.salesforce.sqlite_functions import OnyxSalesforceSQLite
 from onyx.connectors.salesforce.utils import ACCOUNT_OBJECT_TYPE
 from onyx.connectors.salesforce.utils import BASE_DATA_PATH
 from onyx.connectors.salesforce.utils import get_sqlite_db_path
+from onyx.connectors.salesforce.utils import ID_FIELD
 from onyx.connectors.salesforce.utils import MODIFIED_FIELD
 from onyx.connectors.salesforce.utils import NAME_FIELD
 from onyx.connectors.salesforce.utils import USER_OBJECT_TYPE
@@ -150,7 +151,7 @@ def _validate_custom_query_config(config: dict[str, Any]) -> None:
                         )
 
 
-class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
+class SalesforceConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     """Approach outline
 
     Goal
@@ -438,7 +439,7 @@ class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
     ) -> GenerateDocumentsOutput:
         type_to_processed: dict[str, int] = {}
 
-        logger.info("_fetch_from_salesforce starting.")
+        logger.info("_fetch_from_salesforce starting (full sync).")
         if not self._sf_client:
             raise RuntimeError("self._sf_client is None!")
 
@@ -622,7 +623,7 @@ class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
     ) -> GenerateDocumentsOutput:
         type_to_processed: dict[str, int] = {}
 
-        logger.info("_fetch_from_salesforce starting.")
+        logger.info("_fetch_from_salesforce starting (delta sync).")
         if not self._sf_client:
             raise RuntimeError("self._sf_client is None!")
 
@@ -920,8 +921,9 @@ class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
 
                 # Get custom fields for parent type
                 field_set = set(custom_fields)
-                # these are expected and used during doc conversion
-                field_set.add(NAME_FIELD)
+                # used during doc conversion
+                # field_set.add(NAME_FIELD) # does not always exist
+                field_set.add(ID_FIELD)
                 field_set.add(MODIFIED_FIELD)
 
                 # Use only the specified fields
@@ -936,12 +938,28 @@ class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
 
             child_types_all = sf_client.get_children_of_sf_type(parent_type)
             logger.debug(f"Found {len(child_types_all)} child types for {parent_type}")
+            logger.debug(f"child types: {child_types_all}")
 
             child_types_working = child_types_all.copy()
             if associations_config is not None:
                 child_types_working = {
                     k: v for k, v in child_types_all.items() if k in associations_config
                 }
+                any_not_found = False
+                for k in associations_config:
+                    if k not in child_types_working:
+                        any_not_found = True
+                        logger.warning(f"Association {k} not found in {parent_type}")
+                if any_not_found:
+                    queryable_fields = sf_client.get_queryable_fields_by_type(
+                        parent_type
+                    )
+                    raise RuntimeError(
+                        f"Associations {associations_config} not found in {parent_type} "
+                        "make sure your parent-child associations are in the right order"
+                        # f"with child objects {child_types_all}"
+                        # f" and fields {queryable_fields}"
+                    )
 
             parent_to_child_relationships[parent_type] = set()
             parent_to_child_types[parent_type] = set()
@@ -969,7 +987,8 @@ class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
                 ):
                     field_set = set(config_fields)
                     # these are expected and used during doc conversion
-                    field_set.add(NAME_FIELD)
+                    # field_set.add(NAME_FIELD) # does not always exist
+                    field_set.add(ID_FIELD)
                     field_set.add(MODIFIED_FIELD)
                     queryable_fields = field_set
                 else:
@@ -1100,7 +1119,7 @@ class SalesforceConnector(LoadConnector, PollConnector, SlimConnector):
         with tempfile.TemporaryDirectory() as temp_dir:
             return self._delta_sync(temp_dir, start, end)
 
-    def retrieve_all_slim_documents(
+    def retrieve_all_slim_docs_perm_sync(
         self,
         start: SecondsSinceUnixEpoch | None = None,
         end: SecondsSinceUnixEpoch | None = None,

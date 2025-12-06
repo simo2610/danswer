@@ -22,13 +22,11 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import null
 
-from onyx.agents.agent_search.kb_search.models import KGEntityDocInfo
 from onyx.configs.constants import DEFAULT_BOOST
 from onyx.configs.constants import DocumentSource
 from onyx.configs.kg_configs import KG_SIMPLE_ANSWER_MAX_DISPLAYED_SOURCES
 from onyx.db.chunk import delete_chunk_stats_by_connector_credential_pair__no_commit
 from onyx.db.connector_credential_pair import get_connector_credential_pair_from_id
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.entities import delete_from_kg_entities__no_commit
 from onyx.db.entities import delete_from_kg_entities_extraction_staging__no_commit
 from onyx.db.enums import AccessType
@@ -37,7 +35,6 @@ from onyx.db.feedback import delete_document_feedback_for_documents__no_commit
 from onyx.db.models import Connector
 from onyx.db.models import ConnectorCredentialPair
 from onyx.db.models import Credential
-from onyx.db.models import Document
 from onyx.db.models import Document as DbDocument
 from onyx.db.models import DocumentByConnectorCredentialPair
 from onyx.db.models import KGEntity
@@ -198,7 +195,7 @@ def get_documents_for_connector_credential_pair_limited_columns(
         doc_row = DocumentRow(
             id=row.id,
             doc_metadata=row.doc_metadata,
-            external_user_group_ids=row.external_user_group_ids,
+            external_user_group_ids=row.external_user_group_ids or [],
         )
         doc_rows.append(doc_row)
     return doc_rows
@@ -259,41 +256,71 @@ def get_document_counts_for_cc_pairs(
 ) -> Sequence[tuple[int, int, int]]:
     """Returns a sequence of tuples of (connector_id, credential_id, document count)"""
 
+    if not cc_pairs:
+        return []
+
     # Prepare a list of (connector_id, credential_id) tuples
     cc_ids = [(x.connector_id, x.credential_id) for x in cc_pairs]
 
+    # Batch to avoid generating extremely large IN clauses that can blow Postgres stack depth
+    batch_size = 1000
+    aggregated_counts: dict[tuple[int, int], int] = {}
+
+    for start_idx in range(0, len(cc_ids), batch_size):
+        batch = cc_ids[start_idx : start_idx + batch_size]
+
+        stmt = (
+            select(
+                DocumentByConnectorCredentialPair.connector_id,
+                DocumentByConnectorCredentialPair.credential_id,
+                func.count(),
+            )
+            .where(
+                and_(
+                    tuple_(
+                        DocumentByConnectorCredentialPair.connector_id,
+                        DocumentByConnectorCredentialPair.credential_id,
+                    ).in_(batch),
+                    DocumentByConnectorCredentialPair.has_been_indexed.is_(True),
+                )
+            )
+            .group_by(
+                DocumentByConnectorCredentialPair.connector_id,
+                DocumentByConnectorCredentialPair.credential_id,
+            )
+        )
+
+        for connector_id, credential_id, cnt in db_session.execute(stmt).all():  # type: ignore
+            aggregated_counts[(connector_id, credential_id)] = cnt
+
+    # Convert aggregated results back to the expected sequence of tuples
+    return [
+        (connector_id, credential_id, cnt)
+        for (connector_id, credential_id), cnt in aggregated_counts.items()
+    ]
+
+
+def get_document_counts_for_all_cc_pairs(
+    db_session: Session,
+) -> Sequence[tuple[int, int, int]]:
+    """Return (connector_id, credential_id, count) for ALL CC pairs with indexed docs.
+
+    Executes a single grouped query so Postgres can fully leverage indexes,
+    avoiding large batched IN-lists.
+    """
     stmt = (
         select(
             DocumentByConnectorCredentialPair.connector_id,
             DocumentByConnectorCredentialPair.credential_id,
             func.count(),
         )
-        .where(
-            and_(
-                tuple_(
-                    DocumentByConnectorCredentialPair.connector_id,
-                    DocumentByConnectorCredentialPair.credential_id,
-                ).in_(cc_ids),
-                DocumentByConnectorCredentialPair.has_been_indexed.is_(True),
-            )
-        )
+        .where(DocumentByConnectorCredentialPair.has_been_indexed.is_(True))
         .group_by(
             DocumentByConnectorCredentialPair.connector_id,
             DocumentByConnectorCredentialPair.credential_id,
         )
     )
-
     return db_session.execute(stmt).all()  # type: ignore
-
-
-# For use with our thread-level parallelism utils. Note that any relationships
-# you wish to use MUST be eagerly loaded, as the session will not be available
-# after this function to allow lazy loading.
-def get_document_counts_for_cc_pairs_parallel(
-    cc_pairs: list[ConnectorCredentialPairIdentifier],
-) -> Sequence[tuple[int, int, int]]:
-    with get_session_with_current_tenant() as db_session:
-        return get_document_counts_for_cc_pairs(db_session, cc_pairs)
 
 
 def get_access_info_for_document(
@@ -652,11 +679,6 @@ def delete_documents_complete__no_commit(
     )
 
     # Continue with deleting the chunk stats for the documents
-    delete_chunk_stats_by_connector_credential_pair__no_commit(
-        db_session=db_session,
-        document_ids=document_ids,
-    )
-
     delete_chunk_stats_by_connector_credential_pair__no_commit(
         db_session=db_session,
         document_ids=document_ids,
@@ -1115,35 +1137,35 @@ def get_skipped_kg_documents(db_session: Session) -> list[str]:
     return list(db_session.scalars(stmt).all())
 
 
-def get_kg_doc_info_for_entity_name(
-    db_session: Session, document_id: str, entity_type: str
-) -> KGEntityDocInfo:
-    """
-    Get the semantic ID and the link for an entity name.
-    """
+# def get_kg_doc_info_for_entity_name(
+#     db_session: Session, document_id: str, entity_type: str
+# ) -> KGEntityDocInfo:
+#     """
+#     Get the semantic ID and the link for an entity name.
+#     """
 
-    result = (
-        db_session.query(Document.semantic_id, Document.link)
-        .filter(Document.id == document_id)
-        .first()
-    )
+#     result = (
+#         db_session.query(Document.semantic_id, Document.link)
+#         .filter(Document.id == document_id)
+#         .first()
+#     )
 
-    if result is None:
-        return KGEntityDocInfo(
-            doc_id=None,
-            doc_semantic_id=None,
-            doc_link=None,
-            semantic_entity_name=f"{entity_type}:{document_id}",
-            semantic_linked_entity_name=f"{entity_type}:{document_id}",
-        )
+#     if result is None:
+#         return KGEntityDocInfo(
+#             doc_id=None,
+#             doc_semantic_id=None,
+#             doc_link=None,
+#             semantic_entity_name=f"{entity_type}:{document_id}",
+#             semantic_linked_entity_name=f"{entity_type}:{document_id}",
+#         )
 
-    return KGEntityDocInfo(
-        doc_id=document_id,
-        doc_semantic_id=result[0],
-        doc_link=result[1],
-        semantic_entity_name=f"{entity_type.upper()}:{result[0]}",
-        semantic_linked_entity_name=f"[{entity_type.upper()}:{result[0]}]({result[1]})",
-    )
+#     return KGEntityDocInfo(
+#         doc_id=document_id,
+#         doc_semantic_id=result[0],
+#         doc_link=result[1],
+#         semantic_entity_name=f"{entity_type.upper()}:{result[0]}",
+#         semantic_linked_entity_name=f"[{entity_type.upper()}:{result[0]}]({result[1]})",
+#     )
 
 
 def check_for_documents_needing_kg_processing(

@@ -9,6 +9,7 @@ export interface AuthTypeMetadata {
   autoRedirect: boolean;
   requiresVerification: boolean;
   anonymousUserEnabled: boolean | null;
+  passwordMinLength: number;
 }
 
 export const getAuthTypeMetadataSS = async (): Promise<AuthTypeMetadata> => {
@@ -21,25 +22,27 @@ export const getAuthTypeMetadataSS = async (): Promise<AuthTypeMetadata> => {
     auth_type: string;
     requires_verification: boolean;
     anonymous_user_enabled: boolean | null;
+    password_min_length: number;
   } = await res.json();
 
   let authType: AuthType;
 
   // Override fastapi users auth so we can use both
   if (NEXT_PUBLIC_CLOUD_ENABLED) {
-    authType = "cloud";
+    authType = AuthType.CLOUD;
   } else {
     authType = data.auth_type as AuthType;
   }
 
   // for SAML / OIDC, we auto-redirect the user to the IdP when the user visits
   // Onyx in an un-authenticated state
-  if (authType === "oidc" || authType === "saml") {
+  if (authType === AuthType.OIDC || authType === AuthType.SAML) {
     return {
       authType,
       autoRedirect: true,
       requiresVerification: data.requires_verification,
       anonymousUserEnabled: data.anonymous_user_enabled,
+      passwordMinLength: data.password_min_length,
     };
   }
   return {
@@ -47,11 +50,12 @@ export const getAuthTypeMetadataSS = async (): Promise<AuthTypeMetadata> => {
     autoRedirect: false,
     requiresVerification: data.requires_verification,
     anonymousUserEnabled: data.anonymous_user_enabled,
+    passwordMinLength: data.password_min_length,
   };
 };
 
 export const getAuthDisabledSS = async (): Promise<boolean> => {
-  return (await getAuthTypeMetadataSS()).authType === "disabled";
+  return (await getAuthTypeMetadataSS()).authType === AuthType.DISABLED;
 };
 
 const getOIDCAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
@@ -110,20 +114,20 @@ export const getAuthUrlSS = async (
   // Returns the auth url for the given auth type
 
   switch (authType) {
-    case "disabled":
+    case AuthType.DISABLED:
       return "";
-    case "basic":
+    case AuthType.BASIC:
       return "";
-    case "google_oauth": {
+    case AuthType.GOOGLE_OAUTH: {
       return await getGoogleOAuthUrlSS(nextUrl);
     }
-    case "cloud": {
+    case AuthType.CLOUD: {
       return await getGoogleOAuthUrlSS(nextUrl);
     }
-    case "saml": {
+    case AuthType.SAML: {
       return await getSAMLAuthUrlSS(nextUrl);
     }
-    case "oidc": {
+    case AuthType.OIDC: {
       return await getOIDCAuthUrlSS(nextUrl);
     }
   }
@@ -148,9 +152,9 @@ export const logoutSS = async (
   headers: Headers
 ): Promise<Response | null> => {
   switch (authType) {
-    case "disabled":
+    case AuthType.DISABLED:
       return null;
-    case "saml": {
+    case AuthType.SAML: {
       return await logoutSAMLSS(headers);
     }
     default: {

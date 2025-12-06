@@ -11,7 +11,6 @@ from onyx.auth.users import current_limited_user
 from onyx.auth.users import current_user
 from onyx.auth.users import current_user_with_expired_token
 from onyx.configs.app_configs import APP_API_PREFIX
-from onyx.server.onyx_api.ingestion import api_key_dep
 from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
 
 
@@ -30,6 +29,8 @@ PUBLIC_ENDPOINT_SPECS = [
     ("/auth/type", {"GET"}),
     # just gets the version of Onyx (e.g. 0.3.11)
     ("/version", {"GET"}),
+    # Gets stable and beta versions for Onyx docker images
+    ("/versions", {"GET"}),
     # stuff related to basic auth
     ("/auth/refresh", {"POST"}),
     ("/auth/register", {"POST"}),
@@ -47,6 +48,14 @@ PUBLIC_ENDPOINT_SPECS = [
     # oauth
     ("/auth/oauth/authorize", {"GET"}),
     ("/auth/oauth/callback", {"GET"}),
+    # oidc
+    ("/auth/oidc/authorize", {"GET"}),
+    ("/auth/oidc/callback", {"GET"}),
+    # saml
+    ("/auth/saml/authorize", {"GET"}),
+    ("/auth/saml/callback", {"POST"}),
+    ("/auth/saml/callback", {"GET"}),
+    ("/auth/saml/logout", {"POST"}),
     # anonymous user on cloud
     ("/tenants/anonymous-user", {"POST"}),
     ("/metrics", {"GET"}),  # added by prometheus_fastapi_instrumentator
@@ -112,7 +121,6 @@ def check_router_auth(
                     or depends_fn == current_user
                     or depends_fn == current_admin_user
                     or depends_fn == current_curator_or_admin_user
-                    or depends_fn == api_key_dep
                     or depends_fn == current_user_with_expired_token
                     or depends_fn == current_chat_accessible_user
                     or depends_fn == control_plane_dep

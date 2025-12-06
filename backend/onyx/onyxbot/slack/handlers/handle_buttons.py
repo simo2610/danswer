@@ -8,14 +8,14 @@ from slack_sdk.models.views import View
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.webhook import WebhookClient
 
-from onyx.chat.models import ChatOnyxBotResponse
-from onyx.chat.models import CitationInfo
-from onyx.chat.models import QADocsResponse
+from onyx.chat.models import ChatBasicResponse
+from onyx.chat.process_message import remove_answer_citations
 from onyx.configs.constants import MessageType
 from onyx.configs.constants import SearchFeedbackType
-from onyx.configs.onyxbot_configs import DANSWER_FOLLOWUP_EMOJI
+from onyx.configs.onyxbot_configs import ONYX_BOT_FOLLOWUP_EMOJI
 from onyx.connectors.slack.utils import expert_info_from_slack_id
 from onyx.context.search.models import SavedSearchDoc
+from onyx.context.search.models import SearchDoc
 from onyx.db.chat import get_chat_message
 from onyx.db.chat import translate_db_message_to_chat_message_detail
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
@@ -50,27 +50,28 @@ from onyx.onyxbot.slack.utils import respond_in_thread_or_channel
 from onyx.onyxbot.slack.utils import TenantSocketModeClient
 from onyx.onyxbot.slack.utils import update_emote_react
 from onyx.server.query_and_chat.models import ChatMessageDetail
+from onyx.server.query_and_chat.streaming_models import CitationInfo
 from onyx.utils.logger import setup_logger
 
 
 logger = setup_logger()
 
 
-def _convert_db_doc_id_to_document_ids(
-    citation_dict: dict[int, int], top_documents: list[SavedSearchDoc]
+def _convert_document_ids_to_citation_info(
+    citation_dict: dict[int, str], top_documents: list[SavedSearchDoc]
 ) -> list[CitationInfo]:
     citation_list_with_document_id = []
-    for citation_num, db_doc_id in citation_dict.items():
-        if db_doc_id is not None:
-            matching_doc = next(
-                (d for d in top_documents if d.db_doc_id == db_doc_id), None
-            )
-            if matching_doc:
-                citation_list_with_document_id.append(
-                    CitationInfo(
-                        citation_num=citation_num, document_id=matching_doc.document_id
-                    )
+    # Build a set of valid document_ids from top_documents for validation
+    valid_document_ids = {doc.document_id for doc in top_documents}
+
+    for citation_num, document_id in citation_dict.items():
+        if document_id is not None and document_id in valid_document_ids:
+            citation_list_with_document_id.append(
+                CitationInfo(
+                    citation_number=citation_num,
+                    document_id=document_id,
                 )
+            )
     return citation_list_with_document_id
 
 
@@ -80,11 +81,11 @@ def _build_citation_list(chat_message_detail: ChatMessageDetail) -> list[Citatio
         return []
     else:
         top_documents = (
-            chat_message_detail.context_docs.top_documents
-            if chat_message_detail.context_docs
-            else []
+            chat_message_detail.context_docs if chat_message_detail.context_docs else []
         )
-        citation_list = _convert_db_doc_id_to_document_ids(citation_dict, top_documents)
+        citation_list = _convert_document_ids_to_citation_info(
+            citation_dict, top_documents
+        )
         return citation_list
 
 
@@ -249,24 +250,21 @@ def handle_publish_ephemeral_message_button(
         # we need to construct the blocks.
         citation_list = _build_citation_list(chat_message_detail)
 
-        onyx_bot_answer = ChatOnyxBotResponse(
+        if chat_message_detail.context_docs:
+            top_documents: list[SearchDoc] = [
+                SearchDoc.from_saved_search_doc(doc)
+                for doc in chat_message_detail.context_docs
+            ]
+        else:
+            top_documents = []
+
+        onyx_bot_answer = ChatBasicResponse(
             answer=chat_message_detail.message,
-            citations=citation_list,
-            chat_message_id=chat_message_id,
-            docs=QADocsResponse(
-                top_documents=(
-                    chat_message_detail.context_docs.top_documents
-                    if chat_message_detail.context_docs
-                    else []
-                ),
-                predicted_flow=None,
-                predicted_search=None,
-                applied_source_filters=None,
-                applied_time_cutoff=None,
-                recency_bias_multiplier=1.0,
-            ),
-            llm_selected_doc_indices=None,
+            answer_citationless=remove_answer_citations(chat_message_detail.message),
+            top_documents=top_documents,
+            message_id=chat_message_id,
             error_msg=None,
+            citation_info=citation_list,
         )
 
     # Note: we need to use the webhook and the respond_url to update/delete ephemeral messages
@@ -288,7 +286,6 @@ def handle_publish_ephemeral_message_button(
             answer=onyx_bot_answer,
             message_info=slack_message_info,
             channel_conf=channel_conf,
-            use_citations=True,
             feedback_reminder_id=feedback_reminder_id,
             skip_ai_feedback=False,
             offer_ephemeral_publication=False,
@@ -318,7 +315,6 @@ def handle_publish_ephemeral_message_button(
             answer=onyx_bot_answer,
             message_info=slack_message_info,
             channel_conf=channel_conf,
-            use_citations=True,
             feedback_reminder_id=feedback_reminder_id,
             skip_ai_feedback=False,
             offer_ephemeral_publication=False,
@@ -463,7 +459,7 @@ def handle_followup_button(
     thread_ts = req.payload["container"].get("thread_ts", None)
 
     update_emote_react(
-        emoji=DANSWER_FOLLOWUP_EMOJI,
+        emoji=ONYX_BOT_FOLLOWUP_EMOJI,
         channel=channel_id,
         message_ts=thread_ts,
         remove=False,
@@ -548,7 +544,7 @@ def handle_followup_resolved_button(
     clicker_name = get_clicker_name(req, client)
 
     update_emote_react(
-        emoji=DANSWER_FOLLOWUP_EMOJI,
+        emoji=ONYX_BOT_FOLLOWUP_EMOJI,
         channel=channel_id,
         message_ts=thread_ts,
         remove=True,

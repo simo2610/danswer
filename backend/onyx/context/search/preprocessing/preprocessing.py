@@ -166,9 +166,6 @@ def retrieval_preprocessing(
     )
     user_file_filters = search_request.user_file_filters
     user_file_ids = (user_file_filters.user_file_ids or []) if user_file_filters else []
-    user_folder_ids = (
-        (user_file_filters.user_folder_ids or []) if user_file_filters else []
-    )
     if persona and persona.user_files:
         user_file_ids = list(
             set(user_file_ids) | set([file.id for file in persona.user_files])
@@ -176,18 +173,18 @@ def retrieval_preprocessing(
 
     final_filters = IndexFilters(
         user_file_ids=user_file_ids,
-        user_folder_ids=user_folder_ids,
+        project_id=user_file_filters.project_id if user_file_filters else None,
         source_type=preset_filters.source_type or predicted_source_filters,
         document_set=preset_filters.document_set,
         time_cutoff=time_filter or predicted_time_cutoff,
         tags=preset_filters.tags,  # Tags are never auto-extracted
         access_control_list=user_acl_filters,
         tenant_id=get_current_tenant_id() if MULTI_TENANT else None,
-        kg_entities=preset_filters.kg_entities,
-        kg_relationships=preset_filters.kg_relationships,
-        kg_terms=preset_filters.kg_terms,
-        kg_sources=preset_filters.kg_sources,
-        kg_chunk_id_zero_only=preset_filters.kg_chunk_id_zero_only,
+        # kg_entities=preset_filters.kg_entities,
+        # kg_relationships=preset_filters.kg_relationships,
+        # kg_terms=preset_filters.kg_terms,
+        # kg_sources=preset_filters.kg_sources,
+        # kg_chunk_id_zero_only=preset_filters.kg_chunk_id_zero_only,
     )
 
     llm_evaluation_type = LLMEvaluationType.BASIC

@@ -5,15 +5,21 @@ import { AdminPageTitle } from "@/components/admin/Title";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 import Text from "@/components/ui/text";
 import Title from "@/components/ui/title";
-import { Button } from "@/components/ui/button";
+import Button from "@/refresh-components/buttons/Button";
 import useSWR from "swr";
-import { ModelPreview } from "../../../../components/embedding/ModelSelector";
+import { ModelPreview } from "@/components/embedding/ModelSelector";
 import {
   HostedEmbeddingModel,
   CloudEmbeddingModel,
 } from "@/components/embedding/interfaces";
-
+import { SavedSearchSettings } from "@/app/admin/embeddings/interfaces";
+import UpgradingPage from "./UpgradingPage";
+import { useContext } from "react";
+import { SettingsContext } from "@/components/settings/SettingsProvider";
+import CardSection from "@/components/admin/CardSection";
 import { ErrorCallout } from "@/components/ErrorCallout";
+import { usePopupFromQuery } from "@/components/popup/PopupFromQuery";
+import SvgSearch from "@/icons/search";
 
 export interface EmbeddingDetails {
   api_key: string;
@@ -21,16 +27,6 @@ export interface EmbeddingDetails {
   default_model_id?: number;
   name: string;
 }
-
-import { EmbeddingIcon } from "@/components/icons/icons";
-import { usePopupFromQuery } from "@/components/popup/PopupFromQuery";
-
-import Link from "next/link";
-import { SavedSearchSettings } from "../../embeddings/interfaces";
-import UpgradingPage from "./UpgradingPage";
-import { useContext } from "react";
-import { SettingsContext } from "@/components/settings/SettingsProvider";
-import CardSection from "@/components/admin/CardSection";
 
 function Main() {
   const settings = useContext(SettingsContext);
@@ -104,7 +100,7 @@ function Main() {
 
           <Title className="mb-2 mt-8 !text-2xl">Post-processing</Title>
 
-          <CardSection className="!mr-auto mt-8 !w-96">
+          <CardSection className="!mr-auto mt-8 !w-96 shadow-lg bg-background-tint-00 rounded-16">
             {searchSettings && (
               <>
                 <div className="px-1 w-full rounded-lg">
@@ -168,11 +164,11 @@ function Main() {
             )}
           </CardSection>
 
-          <Link href="/admin/embeddings">
-            <Button variant="navigate" className="mt-8">
+          <div className="mt-4">
+            <Button action href="/admin/embeddings">
               Update Search Settings
             </Button>
-          </Link>
+          </div>
         </>
       ) : (
         <UpgradingPage futureEmbeddingModel={futureEmbeddingModel} />
@@ -181,16 +177,11 @@ function Main() {
   );
 }
 
-function Page() {
+export default function Page() {
   return (
     <div className="mx-auto container">
-      <AdminPageTitle
-        title="Search Settings"
-        icon={<EmbeddingIcon size={32} className="my-auto" />}
-      />
+      <AdminPageTitle title="Search Settings" icon={SvgSearch} />
       <Main />
     </div>
   );
 }
-
-export default Page;

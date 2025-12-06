@@ -3,18 +3,19 @@
 import { Label, SubLabel } from "@/components/Field";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import Title from "@/components/ui/title";
-import { Button } from "@/components/ui/button";
+import Button from "@/refresh-components/buttons/Button";
 import { Settings } from "./interfaces";
 import { useRouter } from "next/navigation";
-import { DefaultDropdown, Option } from "@/components/Dropdown";
 import React, { useContext, useState, useEffect } from "react";
 import { SettingsContext } from "@/components/settings/SettingsProvider";
 import { usePaidEnterpriseFeaturesEnabled } from "@/components/settings/usePaidEnterpriseFeaturesEnabled";
-import { Modal } from "@/components/Modal";
+import Modal from "@/refresh-components/Modal";
+import SvgAlertTriangle from "@/icons/alert-triangle";
 import { NEXT_PUBLIC_CLOUD_ENABLED } from "@/lib/constants";
 import { AnonymousUserPath } from "./AnonymousUserPath";
-import { LLMSelector } from "@/components/llm/LLMSelector";
+import LLMSelector from "@/components/llm/LLMSelector";
 import { useVisionProviders } from "./hooks/useVisionProviders";
+import InputTextArea from "@/refresh-components/inputs/InputTextArea";
 
 export function Checkbox({
   label,
@@ -36,39 +37,12 @@ export function Checkbox({
         className="mr-2 w-3.5 h-3.5 my-auto"
       />
       <div>
-        <Label small>{label}</Label>
+        <span className="block font-medium text-text-700 dark:text-neutral-100 text-sm">
+          {label}
+        </span>
         {sublabel && <SubLabel>{sublabel}</SubLabel>}
       </div>
     </label>
-  );
-}
-
-function Selector({
-  label,
-  subtext,
-  options,
-  selected,
-  onSelect,
-}: {
-  label: string;
-  subtext: string;
-  options: Option<string>[];
-  selected: string;
-  onSelect: (value: string | number | null) => void;
-}) {
-  return (
-    <div className="mb-8">
-      {label && <Label>{label}</Label>}
-      {subtext && <SubLabel>{subtext}</SubLabel>}
-
-      <div className="mt-2 w-full max-w-96">
-        <DefaultDropdown
-          options={options}
-          selected={selected}
-          onSelect={onSelect}
-        />
-      </div>
-    </div>
   );
 }
 
@@ -110,6 +84,8 @@ export function SettingsForm() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [chatRetention, setChatRetention] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [companyDescription, setCompanyDescription] = useState("");
   const { popup, setPopup } = usePopup();
   const isEnterpriseEnabled = usePaidEnterpriseFeaturesEnabled();
 
@@ -128,6 +104,10 @@ export function SettingsForm() {
       setSettings(combinedSettings.settings);
       setChatRetention(
         combinedSettings.settings.maximum_chat_retention_days?.toString() || ""
+      );
+      setCompanyName(combinedSettings.settings.company_name || "");
+      setCompanyDescription(
+        combinedSettings.settings.company_description || ""
       );
     }
     // We don't need to fetch vision providers here anymore as the hook handles it
@@ -218,10 +198,62 @@ export function SettingsForm() {
     ]);
   }
 
+  function handleCompanyNameBlur() {
+    const originalValue = settings?.company_name || "";
+    if (companyName !== originalValue) {
+      updateSettingField([
+        { fieldName: "company_name", newValue: companyName || null },
+      ]);
+    }
+  }
+
+  function handleCompanyDescriptionBlur() {
+    const originalValue = settings?.company_description || "";
+    if (companyDescription !== originalValue) {
+      updateSettingField([
+        {
+          fieldName: "company_description",
+          newValue: companyDescription || null,
+        },
+      ]);
+    }
+  }
+
   return (
     <div className="flex flex-col pb-8">
       {popup}
       <Title className="mb-4">Workspace Settings</Title>
+      <label className="flex flex-col text-sm mb-4">
+        <Label>Company Name</Label>
+        <SubLabel>
+          Set the company name used for search and chat context.
+        </SubLabel>
+        <input
+          type="text"
+          className="mt-1 p-2 border rounded w-full max-w-xl"
+          value={companyName}
+          onChange={(e) => setCompanyName(e.target.value)}
+          onBlur={handleCompanyNameBlur}
+          placeholder="Enter company name"
+        />
+      </label>
+
+      <label className="flex flex-col text-sm mb-4">
+        <Label>Company Description</Label>
+        <SubLabel>
+          Provide a short description of the company for search and chat
+          context.
+        </SubLabel>
+        <InputTextArea
+          className="mt-1 w-full max-w-xl"
+          value={companyDescription}
+          onChange={(event) => setCompanyDescription(event.target.value)}
+          onBlur={handleCompanyDescriptionBlur}
+          placeholder="Enter company description"
+          rows={4}
+        />
+      </label>
+
       <Checkbox
         label="Auto-scroll"
         sublabel="If set, the chat window will automatically scroll to the bottom as new lines of text are generated by the AI model. This can be overridden by individual user settings."
@@ -251,11 +283,23 @@ export function SettingsForm() {
       />
 
       <Checkbox
-        label="Agent Search"
-        sublabel="If set, users will be able to use Agent Search."
-        checked={settings.pro_search_enabled ?? true}
+        label="Deep Research"
+        sublabel="If set, users will be able to use Deep Research."
+        checked={settings.deep_research_enabled ?? true}
         onChange={(e) =>
-          handleToggleSettingsField("pro_search_enabled", e.target.checked)
+          handleToggleSettingsField("deep_research_enabled", e.target.checked)
+        }
+      />
+
+      <Checkbox
+        label="Disable Default Assistant"
+        sublabel="When enabled, the 'New Session' button will start a new chat with the current agent instead of the default assistant. The default assistant will be hidden from all users."
+        checked={settings.disable_default_assistant ?? false}
+        onChange={(e) =>
+          handleToggleSettingsField(
+            "disable_default_assistant",
+            e.target.checked
+          )
         }
       />
 
@@ -263,26 +307,26 @@ export function SettingsForm() {
         <AnonymousUserPath setPopup={setPopup} />
       )}
       {showConfirmModal && (
-        <Modal
-          width="max-w-3xl w-full"
-          onOutsideClick={() => setShowConfirmModal(false)}
-        >
-          <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-bold">Enable Anonymous Users</h2>
-            <p>
-              Are you sure you want to enable anonymous users? This will allow
-              anyone to use Onyx without signing in.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setShowConfirmModal(false)}
-              >
+        <Modal open onOpenChange={() => setShowConfirmModal(false)}>
+          <Modal.Content medium>
+            <Modal.Header
+              icon={SvgAlertTriangle}
+              title="Enable Anonymous Users"
+              onClose={() => setShowConfirmModal(false)}
+            />
+            <Modal.Body>
+              <p>
+                Are you sure you want to enable anonymous users? This will allow
+                anyone to use Onyx without signing in.
+              </p>
+            </Modal.Body>
+            <Modal.Footer className="p-4 flex justify-end gap-2">
+              <Button secondary onClick={() => setShowConfirmModal(false)}>
                 Cancel
               </Button>
               <Button onClick={handleConfirmAnonymousUsers}>Confirm</Button>
-            </div>
-          </div>
+            </Modal.Footer>
+          </Modal.Content>
         </Modal>
       )}
       {isEnterpriseEnabled && (
@@ -302,20 +346,10 @@ export function SettingsForm() {
             placeholder="Infinite Retention"
           />
           <div className="mr-auto flex gap-2">
-            <Button
-              onClick={handleSetChatRetention}
-              variant="submit"
-              size="sm"
-              className="mr-auto"
-            >
+            <Button onClick={handleSetChatRetention} className="mr-auto">
               Set Retention Limit
             </Button>
-            <Button
-              onClick={handleClearChatRetention}
-              variant="default"
-              size="sm"
-              className="mr-auto"
-            >
+            <Button onClick={handleClearChatRetention} className="mr-auto">
               Retain All
             </Button>
           </div>
@@ -394,8 +428,6 @@ export function SettingsForm() {
                 <Button
                   onClick={() => updateDefaultVisionProvider(visionLLM)}
                   className="mt-2"
-                  variant="default"
-                  size="sm"
                 >
                   Set Default Vision LLM
                 </Button>

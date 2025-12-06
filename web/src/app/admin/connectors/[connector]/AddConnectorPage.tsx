@@ -2,8 +2,6 @@
 
 import { errorHandlingFetcher } from "@/lib/fetcher";
 import useSWR, { mutate } from "swr";
-
-import Title from "@/components/ui/title";
 import { AdminPageTitle } from "@/components/admin/Title";
 import { buildSimilarCredentialInfoURL } from "@/app/admin/connector/[ccPairId]/lib";
 import { usePopup } from "@/components/admin/connectors/Popup";
@@ -12,10 +10,10 @@ import { getSourceDisplayName, getSourceMetadata } from "@/lib/sources";
 import { SourceIcon } from "@/components/SourceIcon";
 import { useEffect, useRef, useState } from "react";
 import { deleteCredential, linkCredential } from "@/lib/credential";
-import { submitFiles } from "./pages/utils/files";
-import { submitGoogleSite } from "./pages/utils/google_site";
-import AdvancedFormPage from "./pages/Advanced";
-import DynamicConnectionForm from "./pages/DynamicConnectorCreationForm";
+import { submitFiles } from "@/app/admin/connectors/[connector]/pages/utils/files";
+import { submitGoogleSite } from "@/app/admin/connectors/[connector]/pages/utils/google_site";
+import AdvancedFormPage from "@/app/admin/connectors/[connector]/pages/Advanced";
+import DynamicConnectionForm from "@/app/admin/connectors/[connector]/pages/DynamicConnectorCreationForm";
 import CreateCredential from "@/components/credentials/actions/CreateCredential";
 import ModifyCredential from "@/components/credentials/actions/ModifyCredential";
 import {
@@ -35,14 +33,15 @@ import {
   Connector,
   ConnectorBase,
 } from "@/lib/connectors/connectors";
-import { Modal } from "@/components/Modal";
-import { GmailMain } from "./pages/gmail/GmailPage";
+import Modal from "@/refresh-components/Modal";
+import SvgKey from "@/icons/key";
+import { GmailMain } from "@/app/admin/connectors/[connector]/pages/gmail/GmailPage";
 import {
   useGmailCredentials,
   useGoogleDriveCredentials,
-} from "./pages/utils/hooks";
+} from "@/app/admin/connectors/[connector]/pages/utils/hooks";
 import { Formik } from "formik";
-import NavigationRow from "./NavigationRow";
+import NavigationRow from "@/app/admin/connectors/[connector]/NavigationRow";
 import { useRouter } from "next/navigation";
 import CardSection from "@/components/admin/CardSection";
 import { prepareOAuthAuthorizationRequest } from "@/lib/oauth_utils";
@@ -57,8 +56,10 @@ import {
 } from "@/lib/connectors/oauth";
 import { CreateStdOAuthCredential } from "@/components/credentials/actions/CreateStdOAuthCredential";
 import { Spinner } from "@/components/Spinner";
-import { Button } from "@/components/ui/button";
+import Button from "@/refresh-components/buttons/Button";
 import { deleteConnector } from "@/lib/connector";
+import ConnectorDocsLink from "@/components/admin/connectors/ConnectorDocsLink";
+import Text from "@/refresh-components/texts/Text";
 
 export interface AdvancedConfig {
   refreshFreq: number;
@@ -291,15 +292,7 @@ export default function AddConnector({
 
   return (
     <Formik
-      initialValues={{
-        ...createConnectorInitialValues(connector),
-        ...Object.fromEntries(
-          connectorConfigs[connector].advanced_values.map((field) => [
-            field.name,
-            field.default || "",
-          ])
-        ),
-      }}
+      initialValues={createConnectorInitialValues(connector)}
       validationSchema={createConnectorValidationSchema(connector)}
       onSubmit={async (values) => {
         const {
@@ -483,7 +476,9 @@ export default function AddConnector({
           if (result.isTimeout) {
             timeoutErrorHappenedRef.current = true;
             setPopup({
-              message: `Operation timed out after ${CONNECTOR_CREATION_TIMEOUT_MS / 1000} seconds. Check your configuration for errors?`,
+              message: `Operation timed out after ${
+                CONNECTOR_CREATION_TIMEOUT_MS / 1000
+              } seconds. Check your configuration for errors?`,
               type: "error",
             });
 
@@ -515,7 +510,9 @@ export default function AddConnector({
 
           {formStep == 0 && (
             <CardSection>
-              <Title className="mb-2 text-lg">Select a credential</Title>
+              <Text headingH3 className="pb-2">
+                Select a credential
+              </Text>
 
               {connector == ValidSources.Gmail ? (
                 <GmailMain />
@@ -531,11 +528,9 @@ export default function AddConnector({
                     onSwitch={onSwap}
                   />
                   {!createCredentialFormToggle && (
-                    <div className="mt-6 flex space-x-4">
+                    <div className="mt-6 flex gap-4">
                       {/* Button to pop up a form to manually enter credentials */}
                       <Button
-                        variant="secondary"
-                        className="mt-6 text-sm mr-4"
                         onClick={async () => {
                           if (oauthDetails && oauthDetails.oauth_enabled) {
                             if (oauthDetails.additional_kwargs.length > 0) {
@@ -569,9 +564,8 @@ export default function AddConnector({
                       {oauthSupportedSources.includes(connector) &&
                         (NEXT_PUBLIC_CLOUD_ENABLED || NEXT_PUBLIC_TEST_ENV) && (
                           <Button
-                            variant="navigate"
+                            action
                             onClick={handleAuthorize}
-                            className="mt-6 "
                             disabled={isAuthorizing}
                             hidden={!isAuthorizeVisible}
                           >
@@ -587,39 +581,46 @@ export default function AddConnector({
 
                   {createCredentialFormToggle && (
                     <Modal
-                      className="max-w-3xl rounded-lg"
-                      onOutsideClick={() =>
-                        setCreateCredentialFormToggle(false)
-                      }
+                      open
+                      onOpenChange={() => setCreateCredentialFormToggle(false)}
                     >
-                      {oauthDetailsLoading ? (
-                        <Spinner />
-                      ) : (
-                        <>
-                          <Title className="mb-2 text-lg">
-                            Create a {getSourceDisplayName(connector)}{" "}
-                            credential
-                          </Title>
-                          {oauthDetails && oauthDetails.oauth_enabled ? (
-                            <CreateStdOAuthCredential
-                              sourceType={connector}
-                              additionalFields={oauthDetails.additional_kwargs}
-                            />
+                      <Modal.Content medium>
+                        <Modal.Header
+                          icon={SvgKey}
+                          title={`Create a ${getSourceDisplayName(
+                            connector
+                          )} credential`}
+                          onClose={() => setCreateCredentialFormToggle(false)}
+                        />
+                        <Modal.Body>
+                          {oauthDetailsLoading ? (
+                            <Spinner />
                           ) : (
-                            <CreateCredential
-                              close
-                              refresh={refresh}
-                              sourceType={connector}
-                              accessType={formikProps.values.access_type}
-                              setPopup={setPopup}
-                              onSwitch={onSwap}
-                              onClose={() =>
-                                setCreateCredentialFormToggle(false)
-                              }
-                            />
+                            <>
+                              {oauthDetails && oauthDetails.oauth_enabled ? (
+                                <CreateStdOAuthCredential
+                                  sourceType={connector}
+                                  additionalFields={
+                                    oauthDetails.additional_kwargs
+                                  }
+                                />
+                              ) : (
+                                <CreateCredential
+                                  close
+                                  refresh={refresh}
+                                  sourceType={connector}
+                                  accessType={formikProps.values.access_type}
+                                  setPopup={setPopup}
+                                  onSwitch={onSwap}
+                                  onClose={() =>
+                                    setCreateCredentialFormToggle(false)
+                                  }
+                                />
+                              )}
+                            </>
                           )}
-                        </>
-                      )}
+                        </Modal.Body>
+                      </Modal.Content>
                     </Modal>
                   )}
                 </>
@@ -640,6 +641,7 @@ export default function AddConnector({
                   null
                 }
               />
+              <ConnectorDocsLink sourceType={connector} />
             </CardSection>
           )}
 

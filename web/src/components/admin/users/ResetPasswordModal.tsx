@@ -1,24 +1,27 @@
 import { useState } from "react";
-import { Modal } from "@/components/Modal";
-import { Button } from "@/components/ui/button";
+import Modal from "@/refresh-components/Modal";
+import Button from "@/refresh-components/buttons/Button";
 import { User } from "@/lib/types";
 import { PopupSpec } from "@/components/admin/connectors/Popup";
-import { RefreshCcw, Copy, Check } from "lucide-react";
+import SvgRefreshCw from "@/icons/refresh-cw";
+import SvgKey from "@/icons/key";
+import Text from "@/refresh-components/texts/Text";
+import { LoadingAnimation } from "@/components/Loading";
+import CopyIconButton from "@/refresh-components/buttons/CopyIconButton";
 
-interface ResetPasswordModalProps {
+export interface ResetPasswordModalProps {
   user: User;
   onClose: () => void;
   setPopup: (spec: PopupSpec) => void;
 }
 
-const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
+export default function ResetPasswordModal({
   user,
   onClose,
   setPopup,
-}) => {
+}: ResetPasswordModalProps) {
   const [newPassword, setNewPassword] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isCopied, setIsCopied] = useState(false);
 
   const handleResetPassword = async () => {
     setIsLoading(true);
@@ -52,65 +55,50 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
     }
   };
 
-  const handleCopyPassword = () => {
-    if (newPassword) {
-      navigator.clipboard.writeText(newPassword);
-      setPopup({ message: "Password copied to clipboard", type: "success" });
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
-    }
-  };
-
   return (
-    <Modal onOutsideClick={onClose} width="rounded-lg w-full max-w-md">
-      <div className="p- text-neutral-900 dark:text-neutral-100">
-        <h2 className="text-2xl font-bold mb-4">Reset Password</h2>
-        <p className="mb-4">
-          Are you sure you want to reset the password for {user.email}?
-        </p>
-        {newPassword ? (
-          <div className="mb-4">
-            <p className="font-semibold">New Password:</p>
-            <div className="flex items-center bg-neutral-200 dark:bg-neutral-700 p-2 rounded">
-              <p data-testid="new-password" className="flex-grow">
-                {newPassword}
-              </p>
-              <Button
-                onClick={handleCopyPassword}
-                variant="ghost"
-                size="sm"
-                className="ml-2"
-              >
-                {isCopied ? (
-                  <Check className="w-4 h-4" />
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-              </Button>
+    <Modal open onOpenChange={onClose}>
+      <Modal.Content small>
+        <Modal.Header
+          icon={SvgKey}
+          title="Reset Password"
+          onClose={onClose}
+          description={
+            newPassword
+              ? undefined
+              : `Are you sure you want to reset the password for ${user.email}?`
+          }
+        />
+        <Modal.Body>
+          {newPassword ? (
+            <div>
+              <Text>New Password:</Text>
+              <div className="flex items-center bg-background-tint-03 p-2 rounded gap-2">
+                <Text data-testid="new-password" className="flex-grow">
+                  {newPassword}
+                </Text>
+                <CopyIconButton getCopyText={() => newPassword} />
+              </div>
+              <Text text02>
+                Please securely communicate this password to the user.
+              </Text>
             </div>
-            <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-2">
-              Please securely communicate this password to the user.
-            </p>
-          </div>
-        ) : (
-          <Button
-            onClick={handleResetPassword}
-            disabled={isLoading}
-            className="w-full bg-neutral-700 hover:bg-neutral-600 dark:bg-neutral-200 dark:hover:bg-neutral-300 dark:text-neutral-900"
-          >
-            {isLoading ? (
-              "Resetting..."
-            ) : (
-              <>
-                <RefreshCcw className="w-4 h-4 mr-2" />
-                Reset Password
-              </>
-            )}
-          </Button>
-        )}
-      </div>
+          ) : (
+            <Button
+              onClick={handleResetPassword}
+              disabled={isLoading}
+              leftIcon={SvgRefreshCw}
+            >
+              {isLoading ? (
+                <Text>
+                  <LoadingAnimation text="Resetting" />
+                </Text>
+              ) : (
+                "Reset Password"
+              )}
+            </Button>
+          )}
+        </Modal.Body>
+      </Modal.Content>
     </Modal>
   );
-};
-
-export default ResetPasswordModal;
+}

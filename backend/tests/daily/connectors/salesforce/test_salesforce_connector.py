@@ -128,6 +128,12 @@ def test_salesforce_connector_basic(salesforce_connector: SalesforceConnector) -
     assert target_test_doc.title == test_data["title"]
 
 
+@pytest.mark.skip(
+    reason=(
+        "All Salesforce tests need to be re-thought + made less flakey. "
+        "We need to handle credential resets + the rate limits (move to a smaller dataset)"
+    )
+)
 def test_salesforce_connector_poll_source(
     salesforce_connector: SalesforceConnector,
 ) -> None:
@@ -184,7 +190,7 @@ def test_salesforce_connector_slim(salesforce_connector: SalesforceConnector) ->
 
     # Get all doc IDs from the slim connector
     all_slim_doc_ids = set()
-    for slim_doc_batch in salesforce_connector.retrieve_all_slim_documents():
+    for slim_doc_batch in salesforce_connector.retrieve_all_slim_docs_perm_sync():
         all_slim_doc_ids.update([doc.id for doc in slim_doc_batch])
 
     # The set of full doc IDs should be always be a subset of the slim doc IDs

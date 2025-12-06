@@ -3,18 +3,16 @@ from typing import Any
 from typing import cast
 from typing import List
 
-from litellm import get_supported_openai_params
 from sqlalchemy.orm import Session
 
 from onyx.configs.chat_configs import NUM_PERSONA_PROMPT_GENERATION_CHUNKS
 from onyx.context.search.models import IndexFilters
 from onyx.context.search.models import InferenceChunk
-from onyx.context.search.postprocessing.postprocessing import cleanup_chunks
 from onyx.context.search.preprocessing.access_filters import (
     build_access_filters_for_user,
 )
 from onyx.db.document_set import get_document_sets_by_ids
-from onyx.db.models import StarterMessageModel as StarterMessage
+from onyx.db.models import StarterMessage
 from onyx.db.models import User
 from onyx.db.search_settings import get_active_search_settings
 from onyx.document_index.factory import get_default_document_index
@@ -46,7 +44,7 @@ def get_random_chunks_from_doc_sets(
     chunks = document_index.random_retrieval(
         filters=filters, num_to_retrieve=NUM_PERSONA_PROMPT_GENERATION_CHUNKS
     )
-    return cleanup_chunks(chunks)
+    return chunks
 
 
 def parse_categories(content: str) -> List[str | None]:
@@ -123,6 +121,8 @@ def generate_starter_messages(
     """
     _, fast_llm = get_default_llms(temperature=0.5)
 
+    from litellm.utils import get_supported_openai_params
+
     provider = fast_llm.config.model_provider
     model = fast_llm.config.model_name
 
@@ -142,7 +142,7 @@ def generate_starter_messages(
             num_categories=generation_count,
         )
 
-        category_response = fast_llm.invoke(category_generation_prompt)
+        category_response = fast_llm.invoke_langchain(category_generation_prompt)
         categories = parse_categories(cast(str, category_response.content))
 
         if not categories:

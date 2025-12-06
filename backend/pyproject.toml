@@ -1,6 +1,17 @@
+[project]
+name = "onyx-backend"
+version = "0.0.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "onyx[backend,dev,ee]",
+]
+
+[tool.uv.sources]
+onyx = { workspace = true }
+
 [tool.mypy]
 plugins = "sqlalchemy.ext.mypy.plugin"
-mypy_path = "$MYPY_CONFIG_FILE_DIR"
+mypy_path = "backend"
 explicit_package_bases = true
 disallow_untyped_defs = true
 enable_error_code = ["possibly-undefined"]
@@ -24,6 +35,7 @@ ignore_errors = true
 
 [tool.ruff]
 line-length = 130
+target-version = "py311"
 
 [tool.ruff.lint]
 ignore = []

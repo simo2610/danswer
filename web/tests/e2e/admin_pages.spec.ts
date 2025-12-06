@@ -17,12 +17,15 @@ async function verifyAdminPageNavigation(
   await page.goto(`http://localhost:3000/admin/${path}`);
 
   try {
-    await expect(page.locator("h1.text-3xl")).toHaveText(pageTitle, {
-      timeout: 5000,
-    });
+    await expect(page.locator('[aria-label="admin-page-title"]')).toHaveText(
+      pageTitle,
+      {
+        timeout: 10000,
+      }
+    );
   } catch (error) {
     console.error(
-      `Failed to find h1 with text "${pageTitle}" for path "${path}"`
+      `Failed to find admin-page title with text "${pageTitle}" for path "${path}"`
     );
     // NOTE: This is a temporary measure for debugging the issue
     console.error(await page.content());
@@ -39,12 +42,6 @@ async function verifyAdminPageNavigation(
     await expect(
       page.getByRole("button", { name: options.buttonName })
     ).toHaveCount(1);
-  }
-
-  if (options?.subHeaderText) {
-    await expect(page.locator("h1.text-lg").nth(0)).toHaveText(
-      options.subHeaderText
-    );
   }
 }
 

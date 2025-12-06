@@ -3,7 +3,6 @@ import json
 from typing import Any
 from typing import Literal
 from typing import NotRequired
-from typing import Optional
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -31,6 +30,7 @@ from sqlalchemy import Integer
 from sqlalchemy import Sequence
 from sqlalchemy import String
 from sqlalchemy import Text
+from sqlalchemy import text
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine.interfaces import Dialect
@@ -58,6 +58,13 @@ from onyx.db.enums import (
     IndexingMode,
     SyncType,
     SyncStatus,
+    MCPAuthenticationType,
+    UserFileStatus,
+    MCPAuthenticationPerformer,
+    MCPTransport,
+    MCPServerStatus,
+    ThemePreference,
+    SwitchoverType,
 )
 from onyx.configs.constants import NotificationType
 from onyx.configs.constants import SearchFeedbackType
@@ -67,8 +74,9 @@ from onyx.db.enums import ChatSessionSharedStatus
 from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.enums import IndexingStatus
 from onyx.db.enums import IndexModelStatus
+from onyx.db.enums import PermissionSyncStatus
 from onyx.db.enums import TaskStatus
-from onyx.db.pydantic_type import PydanticType
+from onyx.db.pydantic_type import PydanticListType, PydanticType
 from onyx.kg.models import KGEntityTypeAttributes
 from onyx.utils.logger import setup_logger
 from onyx.utils.special_types import JSON_ro
@@ -77,6 +85,7 @@ from onyx.llm.override_models import LLMOverride
 from onyx.llm.override_models import PromptOverride
 from onyx.context.search.enums import RecencyBiasSetting
 from onyx.kg.models import KGStage
+from onyx.server.features.mcp.models import MCPConnectionData
 from onyx.utils.encryption import decrypt_bytes_to_string
 from onyx.utils.encryption import encrypt_string_to_bytes
 from onyx.utils.headers import HeaderItemDict
@@ -84,6 +93,8 @@ from shared_configs.enums import EmbeddingProvider
 from shared_configs.enums import RerankerProvider
 
 logger = setup_logger()
+
+PROMPT_LENGTH = 5_000_000
 
 
 class Base(DeclarativeBase):
@@ -170,6 +181,15 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     )
     auto_scroll: Mapped[bool | None] = mapped_column(Boolean, default=None)
     shortcut_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    theme_preference: Mapped[ThemePreference | None] = mapped_column(
+        Enum(ThemePreference, native_enum=False),
+        nullable=True,
+        default=None,
+    )
+    # personalization fields are exposed via the chat user settings "Personalization" tab
+    personal_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    personal_role: Mapped[str | None] = mapped_column(String, nullable=True)
+    use_memories: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     chosen_assistants: Mapped[list[int] | None] = mapped_column(
         postgresql.JSONB(), nullable=True, default=None
@@ -200,11 +220,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     chat_sessions: Mapped[list["ChatSession"]] = relationship(
         "ChatSession", back_populates="user"
     )
-    chat_folders: Mapped[list["ChatFolder"]] = relationship(
-        "ChatFolder", back_populates="user"
-    )
 
-    prompts: Mapped[list["Prompt"]] = relationship("Prompt", back_populates="user")
     input_prompts: Mapped[list["InputPrompt"]] = relationship(
         "InputPrompt", back_populates="user"
     )
@@ -221,10 +237,25 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         back_populates="creator",
         primaryjoin="User.id == foreign(ConnectorCredentialPair.creator_id)",
     )
-    folders: Mapped[list["UserFolder"]] = relationship(
-        "UserFolder", back_populates="user"
+    projects: Mapped[list["UserProject"]] = relationship(
+        "UserProject", back_populates="user"
     )
     files: Mapped[list["UserFile"]] = relationship("UserFile", back_populates="user")
+    # MCP servers accessible to this user
+    accessible_mcp_servers: Mapped[list["MCPServer"]] = relationship(
+        "MCPServer", secondary="mcp_server__user", back_populates="users"
+    )
+    memories: Mapped[list["Memory"]] = relationship(
+        "Memory",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    oauth_user_tokens: Mapped[list["OAuthUserToken"]] = relationship(
+        "OAuthUserToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     @validates("email")
     def validate_email(self, key: str, value: str) -> str:
@@ -240,6 +271,31 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
 
 class AccessToken(SQLAlchemyBaseAccessTokenTableUUID, Base):
     pass
+
+
+class Memory(Base):
+    __tablename__ = "memory"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    memory_text: Mapped[str] = mapped_column(Text, nullable=False)
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="memories")
 
 
 class ApiKey(Base):
@@ -259,6 +315,45 @@ class ApiKey(Base):
 
     # Add this relationship to access the User object via user_id
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+
+
+class PersonalAccessToken(Base):
+    __tablename__ = "personal_access_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)  # User-provided label
+    hashed_token: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False
+    )  # SHA256 = 64 hex chars
+    token_display: Mapped[str] = mapped_column(String, nullable=False)
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+
+    expires_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )  # NULL = no expiration. Revocation sets this to NOW() for immediate expiry.
+
+    # Audit fields
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_used_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_revoked: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )  # True if user explicitly revoked (vs naturally expired)
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+
+    # Indexes for performance
+    __table_args__ = (
+        Index(
+            "ix_pat_user_created", user_id, created_at.desc()
+        ),  # Fast user token listing
+    )
 
 
 class Notification(Base):
@@ -294,13 +389,6 @@ class Persona__DocumentSet(Base):
     document_set_id: Mapped[int] = mapped_column(
         ForeignKey("document_set.id"), primary_key=True
     )
-
-
-class Persona__Prompt(Base):
-    __tablename__ = "persona__prompt"
-
-    persona_id: Mapped[int] = mapped_column(ForeignKey("persona.id"), primary_key=True)
-    prompt_id: Mapped[int] = mapped_column(ForeignKey("prompt.id"), primary_key=True)
 
 
 class Persona__User(Base):
@@ -351,21 +439,21 @@ class ChatMessage__SearchDoc(Base):
     __tablename__ = "chat_message__search_doc"
 
     chat_message_id: Mapped[int] = mapped_column(
-        ForeignKey("chat_message.id"), primary_key=True
+        ForeignKey("chat_message.id", ondelete="CASCADE"), primary_key=True
     )
     search_doc_id: Mapped[int] = mapped_column(
-        ForeignKey("search_doc.id"), primary_key=True
+        ForeignKey("search_doc.id", ondelete="CASCADE"), primary_key=True
     )
 
 
-class AgentSubQuery__SearchDoc(Base):
-    __tablename__ = "agent__sub_query__search_doc"
+class ToolCall__SearchDoc(Base):
+    __tablename__ = "tool_call__search_doc"
 
-    sub_query_id: Mapped[int] = mapped_column(
-        ForeignKey("agent__sub_query.id", ondelete="CASCADE"), primary_key=True
+    tool_call_id: Mapped[int] = mapped_column(
+        ForeignKey("tool_call.id", ondelete="CASCADE"), primary_key=True
     )
     search_doc_id: Mapped[int] = mapped_column(
-        ForeignKey("search_doc.id"), primary_key=True
+        ForeignKey("search_doc.id", ondelete="CASCADE"), primary_key=True
     )
 
 
@@ -381,10 +469,22 @@ class Document__Tag(Base):
 
 
 class Persona__Tool(Base):
+    """An entry in this table represents a tool that is **available** to a persona.
+    It does NOT necessarily mean that the tool is actually usable to the persona.
+
+    For example, a persona may have the image generation tool attached to it, even though
+    the image generation tool is not set up / enabled. In this case, the tool should not
+    show up in the UI for the persona + it should not be usable by the persona in chat.
+    """
+
     __tablename__ = "persona__tool"
 
-    persona_id: Mapped[int] = mapped_column(ForeignKey("persona.id"), primary_key=True)
-    tool_id: Mapped[int] = mapped_column(ForeignKey("tool.id"), primary_key=True)
+    persona_id: Mapped[int] = mapped_column(
+        ForeignKey("persona.id", ondelete="CASCADE"), primary_key=True
+    )
+    tool_id: Mapped[int] = mapped_column(
+        ForeignKey("tool.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class StandardAnswer__StandardAnswerCategory(Base):
@@ -520,10 +620,6 @@ class ConnectorCredentialPair(Base):
         "User",
         back_populates="cc_pairs",
         primaryjoin="foreign(ConnectorCredentialPair.creator_id) == remote(User.id)",
-    )
-
-    user_file: Mapped["UserFile"] = relationship(
-        "UserFile", back_populates="cc_pair", uselist=False
     )
 
     background_errors: Mapped[list["BackgroundError"]] = relationship(
@@ -677,8 +773,8 @@ class KGEntityType(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    grounded_source_name: Mapped[str] = mapped_column(
-        NullFilteredString, nullable=False, index=False
+    grounded_source_name: Mapped[str | None] = mapped_column(
+        NullFilteredString, nullable=True, index=False
     )
 
     entity_values: Mapped[list[str]] = mapped_column(
@@ -1293,6 +1389,7 @@ class Tag(Base):
     source: Mapped[DocumentSource] = mapped_column(
         Enum(DocumentSource, native_enum=False)
     )
+    is_list: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     documents = relationship(
         "Document",
@@ -1302,7 +1399,11 @@ class Tag(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "tag_key", "tag_value", "source", name="_tag_key_value_source_uc"
+            "tag_key",
+            "tag_value",
+            "source",
+            "is_list",
+            name="_tag_key_value_source_list_uc",
         ),
     )
 
@@ -1423,6 +1524,9 @@ class FederatedConnector(Base):
         Enum(FederatedConnectorSource, native_enum=False)
     )
     credentials: Mapped[dict[str, str]] = mapped_column(EncryptedJson(), nullable=False)
+    config: Mapped[dict[str, Any]] = mapped_column(
+        postgresql.JSONB(), default=dict, nullable=False, server_default="{}"
+    )
 
     oauth_tokens: Mapped[list["FederatedConnectorOAuthToken"]] = relationship(
         "FederatedConnectorOAuthToken",
@@ -1437,9 +1541,6 @@ class FederatedConnector(Base):
 
 
 class FederatedConnectorOAuthToken(Base):
-    """NOTE: in the future, can be made more general to support OAuth tokens
-    for actions."""
-
     __tablename__ = "federated_connector_oauth_token"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1507,9 +1608,13 @@ class SearchSettings(Base):
         ForeignKey("embedding_provider.provider_type"), nullable=True
     )
 
-    # Whether switching to this model should re-index all connectors in the background
-    # if no re-index is needed, will be ignored. Only used during the switch-over process.
-    background_reindex_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Type of switchover to perform when switching embedding models
+    # REINDEX: waits for all connectors to complete
+    # ACTIVE_ONLY: waits for only non-paused connectors to complete
+    # INSTANT: swaps immediately without waiting
+    switchover_type: Mapped[SwitchoverType] = mapped_column(
+        Enum(SwitchoverType, native_enum=False), default=SwitchoverType.REINDEX
+    )
 
     # allows for quantization -> less memory usage for a small performance hit
     embedding_precision: Mapped[EmbeddingPrecision] = mapped_column(
@@ -1685,12 +1790,14 @@ class IndexAttempt(Base):
     # can be taken to the FileStore to grab the actual checkpoint value
     checkpoint_pointer: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # NEW: Database-based coordination fields (replacing Redis fencing)
+    # Database-based coordination fields (replacing Redis fencing)
     celery_task_id: Mapped[str | None] = mapped_column(String, nullable=True)
     cancellation_requested: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # NEW: Batch coordination fields (replacing FileStore state)
+    # Batch coordination fields
+    # Once this is set, docfetching has completed
     total_batches: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # batches that are fully indexed (i.e. have completed docfetching and docprocessing)
     completed_batches: Mapped[int] = mapped_column(Integer, default=0)
     # TODO: unused, remove this column
     total_failures_batch_level: Mapped[int] = mapped_column(Integer, default=0)
@@ -1702,7 +1809,7 @@ class IndexAttempt(Base):
     )
     last_batches_completed_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    # NEW: Heartbeat tracking for worker liveness detection
+    # Heartbeat tracking for worker liveness detection
     heartbeat_counter: Mapped[int] = mapped_column(Integer, default=0)
     last_heartbeat_value: Mapped[int] = mapped_column(Integer, default=0)
     last_heartbeat_time: Mapped[datetime.datetime | None] = mapped_column(
@@ -1915,6 +2022,248 @@ Messages Tables
 """
 
 
+class ChatSession(Base):
+    __tablename__ = "chat_session"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
+    )
+    persona_id: Mapped[int | None] = mapped_column(
+        ForeignKey("persona.id"), nullable=True
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # This chat created by OnyxBot
+    onyxbot_flow: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Only ever set to True if system is set to not hard-delete chats
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # controls whether or not this conversation is viewable by others
+    shared_status: Mapped[ChatSessionSharedStatus] = mapped_column(
+        Enum(ChatSessionSharedStatus, native_enum=False),
+        default=ChatSessionSharedStatus.PRIVATE,
+    )
+
+    current_alternate_model: Mapped[str | None] = mapped_column(String, default=None)
+
+    slack_thread_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None
+    )
+
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_project.id"), nullable=True
+    )
+
+    project: Mapped["UserProject"] = relationship(
+        "UserProject", back_populates="chat_sessions", foreign_keys=[project_id]
+    )
+
+    # the latest "overrides" specified by the user. These take precedence over
+    # the attached persona. However, overrides specified directly in the
+    # `send-message` call will take precedence over these.
+    # NOTE: currently only used by the chat seeding flow, will be used in the
+    # future once we allow users to override default values via the Chat UI
+    # itself
+    llm_override: Mapped[LLMOverride | None] = mapped_column(
+        PydanticType(LLMOverride), nullable=True
+    )
+
+    # The latest temperature override specified by the user
+    temperature_override: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    prompt_override: Mapped[PromptOverride | None] = mapped_column(
+        PydanticType(PromptOverride), nullable=True
+    )
+    time_updated: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    time_created: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    user: Mapped[User] = relationship("User", back_populates="chat_sessions")
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        "ChatMessage", back_populates="chat_session", cascade="all, delete-orphan"
+    )
+    persona: Mapped["Persona"] = relationship("Persona")
+
+
+class ChatMessage(Base):
+    """Note, the first message in a chain has no contents, it's a workaround to allow edits
+    on the first message of a session, an empty root node basically
+
+    Since every user message is followed by a LLM response, chat messages generally come in pairs.
+    Keeping them as separate messages however for future Agentification extensions
+    Fields will be largely duplicated in the pair.
+    """
+
+    __tablename__ = "chat_message"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Where is this message located
+    chat_session_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("chat_session.id")
+    )
+
+    # Parent message pointer for the tree structure, nullable because the first message is
+    # an empty root node to allow edits on the first message of a session.
+    parent_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_message.id"), nullable=True
+    )
+    # This only maps to the latest because only that message chain is needed.
+    # It can be updated as needed to trace other branches.
+    latest_child_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_message.id"), nullable=True
+    )
+
+    # What does this message contain
+    reasoning_tokens: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message: Mapped[str] = mapped_column(Text)
+    token_count: Mapped[int] = mapped_column(Integer)
+    message_type: Mapped[MessageType] = mapped_column(
+        Enum(MessageType, native_enum=False)
+    )
+    # Files attached to the message, when parsed into history, it becomes a separate message
+    files: Mapped[list[FileDescriptor] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+
+    # Maps the citation numbers to a SearchDoc id
+    citations: Mapped[dict[int, int] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+
+    # Metadata
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    time_sent: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    chat_session: Mapped[ChatSession] = relationship("ChatSession")
+
+    chat_message_feedbacks: Mapped[list["ChatMessageFeedback"]] = relationship(
+        "ChatMessageFeedback",
+        back_populates="chat_message",
+    )
+
+    document_feedbacks: Mapped[list["DocumentRetrievalFeedback"]] = relationship(
+        "DocumentRetrievalFeedback",
+        back_populates="chat_message",
+    )
+
+    # Even though search docs come from tool calls, the answer has a final set of saved search docs that we will show
+    search_docs: Mapped[list["SearchDoc"]] = relationship(
+        "SearchDoc",
+        secondary=ChatMessage__SearchDoc.__table__,
+        back_populates="chat_messages",
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
+
+    parent_message: Mapped["ChatMessage | None"] = relationship(
+        "ChatMessage",
+        foreign_keys=[parent_message_id],
+        remote_side="ChatMessage.id",
+    )
+
+    latest_child_message: Mapped["ChatMessage | None"] = relationship(
+        "ChatMessage",
+        foreign_keys=[latest_child_message_id],
+        remote_side="ChatMessage.id",
+    )
+
+    # Chat messages only need to know their immediate tool call children
+    # If there are nested tool calls, they are stored in the tool_call_children relationship.
+    tool_calls: Mapped[list["ToolCall"] | None] = relationship(
+        "ToolCall",
+        back_populates="chat_message",
+    )
+
+    standard_answers: Mapped[list["StandardAnswer"]] = relationship(
+        "StandardAnswer",
+        secondary=ChatMessage__StandardAnswer.__table__,
+        back_populates="chat_messages",
+    )
+
+
+class ToolCall(Base):
+    """Represents a Tool Call and Tool Response"""
+
+    __tablename__ = "tool_call"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    chat_session_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("chat_session.id", ondelete="CASCADE")
+    )
+
+    # If this is not None, it's a top level tool call from the user message
+    # If this is None, it's a lower level call from another tool/agent
+    parent_chat_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_message.id", ondelete="CASCADE"), nullable=True
+    )
+    # If this is not None, this tool call is a child of another tool call
+    parent_tool_call_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tool_call.id", ondelete="CASCADE"), nullable=True
+    )
+    # The tools with the same turn number (and parent) were called in parallel
+    # Ones with different turn numbers (and same parent) were called sequentially
+    turn_number: Mapped[int] = mapped_column(Integer)
+
+    # Not a FK because we want to be able to delete the tool without deleting
+    # this entry
+    tool_id: Mapped[int] = mapped_column(Integer())
+    # This is needed because LLMs expect the tool call and the response to have matching IDs
+    # This is better than just regenerating one randomly
+    tool_call_id: Mapped[str] = mapped_column(String())
+    # Preceeding reasoning tokens for this tool call, not included in the history
+    reasoning_tokens: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # For "Agents" like the Research Agent for Deep Research -
+    # the argument and final report are stored as the argument and response.
+    tool_call_arguments: Mapped[dict[str, JSON_ro]] = mapped_column(postgresql.JSONB())
+    tool_call_response: Mapped[str] = mapped_column(Text)
+    # This just counts the number of tokens in the arg because it's all that's kept for the history
+    # Only the top level tools (the ones with a parent_chat_message_id) have token counts that are counted
+    # towards the session total.
+    tool_call_tokens: Mapped[int] = mapped_column(Integer())
+    # For image generation tool - stores GeneratedImage objects for replay
+    generated_images: Mapped[list[dict] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+
+    # Relationships
+    chat_session: Mapped[ChatSession] = relationship("ChatSession")
+
+    chat_message: Mapped["ChatMessage | None"] = relationship(
+        "ChatMessage",
+        foreign_keys=[parent_chat_message_id],
+        back_populates="tool_calls",
+    )
+    parent_tool_call: Mapped["ToolCall | None"] = relationship(
+        "ToolCall",
+        foreign_keys=[parent_tool_call_id],
+        remote_side="ToolCall.id",
+    )
+    tool_call_children: Mapped[list["ToolCall"]] = relationship(
+        "ToolCall",
+        foreign_keys=[parent_tool_call_id],
+        back_populates="parent_tool_call",
+    )
+    # Other tools may need to save other things, might need to figure out a more generic way to store
+    # rich tool returns
+    search_docs: Mapped[list["SearchDoc"]] = relationship(
+        "SearchDoc",
+        secondary=ToolCall__SearchDoc.__table__,
+        back_populates="tool_calls",
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
+
+
 class SearchDoc(Base):
     """Different from Document table. This one stores the state of a document from a retrieval.
     This allows chat sessions to be replayed with the searched docs
@@ -1954,289 +2303,16 @@ class SearchDoc(Base):
     is_relevant: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     relevance_explanation: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    chat_messages = relationship(
+    chat_messages: Mapped[list["ChatMessage"]] = relationship(
         "ChatMessage",
         secondary=ChatMessage__SearchDoc.__table__,
         back_populates="search_docs",
     )
-    sub_queries = relationship(
-        "AgentSubQuery",
-        secondary=AgentSubQuery__SearchDoc.__table__,
-        back_populates="search_docs",
-    )
 
-
-class ToolCall(Base):
-    """Represents a single tool call"""
-
-    __tablename__ = "tool_call"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # not a FK because we want to be able to delete the tool without deleting
-    # this entry
-    tool_id: Mapped[int] = mapped_column(Integer())
-    tool_name: Mapped[str] = mapped_column(String())
-    tool_arguments: Mapped[dict[str, JSON_ro]] = mapped_column(postgresql.JSONB())
-    tool_result: Mapped[JSON_ro] = mapped_column(postgresql.JSONB())
-
-    message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("chat_message.id"), nullable=False
-    )
-
-    # Update the relationship
-    message: Mapped["ChatMessage"] = relationship(
-        "ChatMessage",
-        back_populates="tool_call",
-        uselist=False,
-    )
-
-
-class ChatSession(Base):
-    __tablename__ = "chat_session"
-
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
-    user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
-    )
-    persona_id: Mapped[int | None] = mapped_column(
-        ForeignKey("persona.id"), nullable=True
-    )
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # This chat created by OnyxBot
-    onyxbot_flow: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Only ever set to True if system is set to not hard-delete chats
-    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
-    # controls whether or not this conversation is viewable by others
-    shared_status: Mapped[ChatSessionSharedStatus] = mapped_column(
-        Enum(ChatSessionSharedStatus, native_enum=False),
-        default=ChatSessionSharedStatus.PRIVATE,
-    )
-    folder_id: Mapped[int | None] = mapped_column(
-        ForeignKey("chat_folder.id"), nullable=True
-    )
-
-    current_alternate_model: Mapped[str | None] = mapped_column(String, default=None)
-
-    slack_thread_id: Mapped[str | None] = mapped_column(
-        String, nullable=True, default=None
-    )
-
-    # the latest "overrides" specified by the user. These take precedence over
-    # the attached persona. However, overrides specified directly in the
-    # `send-message` call will take precedence over these.
-    # NOTE: currently only used by the chat seeding flow, will be used in the
-    # future once we allow users to override default values via the Chat UI
-    # itself
-    llm_override: Mapped[LLMOverride | None] = mapped_column(
-        PydanticType(LLMOverride), nullable=True
-    )
-
-    # The latest temperature override specified by the user
-    temperature_override: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    prompt_override: Mapped[PromptOverride | None] = mapped_column(
-        PydanticType(PromptOverride), nullable=True
-    )
-    time_updated: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-    time_created: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    user: Mapped[User] = relationship("User", back_populates="chat_sessions")
-    folder: Mapped["ChatFolder"] = relationship(
-        "ChatFolder", back_populates="chat_sessions"
-    )
-    messages: Mapped[list["ChatMessage"]] = relationship(
-        "ChatMessage", back_populates="chat_session", cascade="all, delete-orphan"
-    )
-    persona: Mapped["Persona"] = relationship("Persona")
-
-
-class ChatMessage(Base):
-    """Note, the first message in a chain has no contents, it's a workaround to allow edits
-    on the first message of a session, an empty root node basically
-
-    Since every user message is followed by a LLM response, chat messages generally come in pairs.
-    Keeping them as separate messages however for future Agentification extensions
-    Fields will be largely duplicated in the pair.
-    """
-
-    __tablename__ = "chat_message"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    chat_session_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("chat_session.id")
-    )
-
-    alternate_assistant_id = mapped_column(
-        Integer, ForeignKey("persona.id"), nullable=True
-    )
-
-    overridden_model: Mapped[str | None] = mapped_column(String, nullable=True)
-    parent_message: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_child_message: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    message: Mapped[str] = mapped_column(Text)
-    rephrased_query: Mapped[str] = mapped_column(Text, nullable=True)
-    # If None, then there is no answer generation, it's the special case of only
-    # showing the user the retrieved docs
-    prompt_id: Mapped[int | None] = mapped_column(ForeignKey("prompt.id"))
-    # If prompt is None, then token_count is 0 as this message won't be passed into
-    # the LLM's context (not included in the history of messages)
-    token_count: Mapped[int] = mapped_column(Integer)
-    message_type: Mapped[MessageType] = mapped_column(
-        Enum(MessageType, native_enum=False)
-    )
-    # Maps the citation numbers to a SearchDoc id
-    citations: Mapped[dict[int, int]] = mapped_column(postgresql.JSONB(), nullable=True)
-    # files associated with this message (e.g. images uploaded by the user that the
-    # user is asking a question of)
-    files: Mapped[list[FileDescriptor] | None] = mapped_column(
-        postgresql.JSONB(), nullable=True
-    )
-    # Only applies for LLM
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    time_sent: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-    is_agentic: Mapped[bool] = mapped_column(Boolean, default=False)
-    refined_answer_improvement: Mapped[bool] = mapped_column(Boolean, nullable=True)
-
-    chat_session: Mapped[ChatSession] = relationship("ChatSession")
-    prompt: Mapped[Optional["Prompt"]] = relationship("Prompt")
-
-    chat_message_feedbacks: Mapped[list["ChatMessageFeedback"]] = relationship(
-        "ChatMessageFeedback",
-        back_populates="chat_message",
-    )
-
-    document_feedbacks: Mapped[list["DocumentRetrievalFeedback"]] = relationship(
-        "DocumentRetrievalFeedback",
-        back_populates="chat_message",
-    )
-    search_docs: Mapped[list["SearchDoc"]] = relationship(
-        "SearchDoc",
-        secondary=ChatMessage__SearchDoc.__table__,
-        back_populates="chat_messages",
-        cascade="all, delete-orphan",
-        single_parent=True,
-    )
-
-    tool_call: Mapped["ToolCall"] = relationship(
+    tool_calls: Mapped[list["ToolCall"]] = relationship(
         "ToolCall",
-        back_populates="message",
-        uselist=False,
-    )
-
-    sub_questions: Mapped[list["AgentSubQuestion"]] = relationship(
-        "AgentSubQuestion",
-        back_populates="primary_message",
-        order_by="(AgentSubQuestion.level, AgentSubQuestion.level_question_num)",
-    )
-
-    standard_answers: Mapped[list["StandardAnswer"]] = relationship(
-        "StandardAnswer",
-        secondary=ChatMessage__StandardAnswer.__table__,
-        back_populates="chat_messages",
-    )
-
-
-class ChatFolder(Base):
-    """For organizing chat sessions"""
-
-    __tablename__ = "chat_folder"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # Only null if auth is off
-    user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
-    )
-    name: Mapped[str | None] = mapped_column(String, nullable=True)
-    display_priority: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
-
-    user: Mapped[User] = relationship("User", back_populates="chat_folders")
-    chat_sessions: Mapped[list["ChatSession"]] = relationship(
-        "ChatSession", back_populates="folder"
-    )
-
-    def __lt__(self, other: Any) -> bool:
-        if not isinstance(other, ChatFolder):
-            return NotImplemented
-        if self.display_priority == other.display_priority:
-            # Bigger ID (created later) show earlier
-            return self.id > other.id
-        return self.display_priority < other.display_priority
-
-
-class AgentSubQuestion(Base):
-    """
-    A sub-question is a question that is asked of the LLM to gather supporting
-    information to answer a primary question.
-    """
-
-    __tablename__ = "agent__sub_question"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    primary_question_id: Mapped[int] = mapped_column(
-        ForeignKey("chat_message.id", ondelete="CASCADE")
-    )
-    chat_session_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("chat_session.id")
-    )
-    sub_question: Mapped[str] = mapped_column(Text)
-    level: Mapped[int] = mapped_column(Integer)
-    level_question_num: Mapped[int] = mapped_column(Integer)
-    time_created: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    sub_answer: Mapped[str] = mapped_column(Text)
-    sub_question_doc_results: Mapped[JSON_ro] = mapped_column(postgresql.JSONB())
-
-    # Relationships
-    primary_message: Mapped["ChatMessage"] = relationship(
-        "ChatMessage",
-        foreign_keys=[primary_question_id],
-        back_populates="sub_questions",
-    )
-    chat_session: Mapped["ChatSession"] = relationship("ChatSession")
-    sub_queries: Mapped[list["AgentSubQuery"]] = relationship(
-        "AgentSubQuery", back_populates="parent_question"
-    )
-
-
-class AgentSubQuery(Base):
-    """
-    A sub-query is a vector DB query that gathers supporting information to answer a sub-question.
-    """
-
-    __tablename__ = "agent__sub_query"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    parent_question_id: Mapped[int] = mapped_column(
-        ForeignKey("agent__sub_question.id", ondelete="CASCADE")
-    )
-    chat_session_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("chat_session.id")
-    )
-    sub_query: Mapped[str] = mapped_column(Text)
-    time_created: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-    # Relationships
-    parent_question: Mapped["AgentSubQuestion"] = relationship(
-        "AgentSubQuestion", back_populates="sub_queries"
-    )
-    chat_session: Mapped["ChatSession"] = relationship("ChatSession")
-    search_docs: Mapped[list["SearchDoc"]] = relationship(
-        "SearchDoc",
-        secondary=AgentSubQuery__SearchDoc.__table__,
-        back_populates="sub_queries",
+        secondary=ToolCall__SearchDoc.__table__,
+        back_populates="search_docs",
     )
 
 
@@ -2319,6 +2395,12 @@ class LLMProvider(Base):
         secondary="llm_provider__user_group",
         viewonly=True,
     )
+    personas: Mapped[list["Persona"]] = relationship(
+        "Persona",
+        secondary="llm_provider__persona",
+        back_populates="allowed_by_llm_providers",
+        viewonly=True,
+    )
     model_configurations: Mapped[list["ModelConfiguration"]] = relationship(
         "ModelConfiguration",
         back_populates="llm_provider",
@@ -2353,6 +2435,13 @@ class ModelConfiguration(Base):
     # - The end-user is configuring a model and chooses not to set a max-input-tokens limit.
     max_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    supports_image_input: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # Human-readable display name for the model.
+    # For dynamic providers (OpenRouter, Bedrock, Ollama), this comes from the source API.
+    # For static providers (OpenAI, Anthropic), this may be null and will fall back to LiteLLM.
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
     llm_provider: Mapped["LLMProvider"] = relationship(
         "LLMProvider",
         back_populates="model_configurations",
@@ -2377,6 +2466,50 @@ class CloudEmbeddingProvider(Base):
 
     def __repr__(self) -> str:
         return f"<EmbeddingProvider(type='{self.provider_type}')>"
+
+
+class InternetSearchProvider(Base):
+    __tablename__ = "internet_search_provider"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    provider_type: Mapped[str] = mapped_column(String, nullable=False)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(), nullable=True)
+    config: Mapped[dict[str, str] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    time_created: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    time_updated: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<InternetSearchProvider(name='{self.name}', provider_type='{self.provider_type}')>"
+
+
+class InternetContentProvider(Base):
+    __tablename__ = "internet_content_provider"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    provider_type: Mapped[str] = mapped_column(String, nullable=False)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(), nullable=True)
+    config: Mapped[dict[str, str] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    time_created: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    time_updated: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<InternetContentProvider(name='{self.name}', provider_type='{self.provider_type}')>"
 
 
 class DocumentSet(Base):
@@ -2439,32 +2572,6 @@ class DocumentSet(Base):
     )
 
 
-class Prompt(Base):
-    __tablename__ = "prompt"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
-    )
-    name: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(String)
-    system_prompt: Mapped[str] = mapped_column(String(length=8000))
-    task_prompt: Mapped[str] = mapped_column(String(length=8000))
-    include_citations: Mapped[bool] = mapped_column(Boolean, default=True)
-    datetime_aware: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Default prompts are configured via backend during deployment
-    # Treated specially (cannot be user edited etc.)
-    default_prompt: Mapped[bool] = mapped_column(Boolean, default=False)
-    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    user: Mapped[User] = relationship("User", back_populates="prompts")
-    personas: Mapped[list["Persona"]] = relationship(
-        "Persona",
-        secondary=Persona__Prompt.__table__,
-        back_populates="prompts",
-    )
-
-
 class Tool(Base):
     __tablename__ = "tool"
 
@@ -2480,6 +2587,10 @@ class Tool(Base):
     openapi_schema: Mapped[dict[str, Any] | None] = mapped_column(
         postgresql.JSONB(), nullable=True
     )
+    # MCP tool input schema. Only applies to MCP tools.
+    mcp_input_schema: Mapped[dict[str, Any] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
     custom_headers: Mapped[list[HeaderItemDict] | None] = mapped_column(
         postgresql.JSONB(), nullable=True
     )
@@ -2489,27 +2600,123 @@ class Tool(Base):
     )
     # whether to pass through the user's OAuth token as Authorization header
     passthrough_auth: Mapped[bool] = mapped_column(Boolean, default=False)
+    # MCP server this tool is associated with (null for non-MCP tools)
+    mcp_server_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("mcp_server.id", ondelete="CASCADE"), nullable=True
+    )
+    # OAuth configuration for this tool (null for tools without OAuth)
+    oauth_config_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("oauth_config.id", ondelete="SET NULL"), nullable=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     user: Mapped[User | None] = relationship("User", back_populates="custom_tools")
+    oauth_config: Mapped["OAuthConfig | None"] = relationship(
+        "OAuthConfig", back_populates="tools"
+    )
     # Relationship to Persona through the association table
     personas: Mapped[list["Persona"]] = relationship(
         "Persona",
         secondary=Persona__Tool.__table__,
         back_populates="tools",
     )
+    # MCP server relationship
+    mcp_server: Mapped["MCPServer | None"] = relationship(
+        "MCPServer", back_populates="current_actions"
+    )
 
 
-class StarterMessage(TypedDict):
-    """NOTE: is a `TypedDict` so it can be used as a type hint for a JSONB column
-    in Postgres"""
+class OAuthConfig(Base):
+    """OAuth provider configuration that can be shared across multiple tools"""
+
+    __tablename__ = "oauth_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
+    # OAuth provider endpoints
+    authorization_url: Mapped[str] = mapped_column(Text, nullable=False)
+    token_url: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Client credentials (encrypted)
+    client_id: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+    client_secret: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+
+    # Optional configurations
+    scopes: Mapped[list[str] | None] = mapped_column(postgresql.JSONB(), nullable=True)
+    additional_params: Mapped[dict[str, Any] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+
+    # Metadata
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    tools: Mapped[list["Tool"]] = relationship("Tool", back_populates="oauth_config")
+    user_tokens: Mapped[list["OAuthUserToken"]] = relationship(
+        "OAuthUserToken", back_populates="oauth_config", cascade="all, delete-orphan"
+    )
+
+
+class OAuthUserToken(Base):
+    """Per-user OAuth tokens for a specific OAuth configuration"""
+
+    __tablename__ = "oauth_user_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    oauth_config_id: Mapped[int] = mapped_column(
+        ForeignKey("oauth_config.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Token data (encrypted)
+    # Structure: {
+    #   "access_token": "...",
+    #   "refresh_token": "...",  # Optional
+    #   "token_type": "Bearer",
+    #   "expires_at": 1234567890,  # Unix timestamp, optional
+    #   "scope": "repo user"  # Optional
+    # }
+    token_data: Mapped[dict[str, Any]] = mapped_column(EncryptedJson(), nullable=False)
+
+    # Metadata
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    oauth_config: Mapped["OAuthConfig"] = relationship(
+        "OAuthConfig", back_populates="user_tokens"
+    )
+    user: Mapped["User"] = relationship("User")
+
+    # Unique constraint: One token per user per OAuth config
+    __table_args__ = (
+        UniqueConstraint("oauth_config_id", "user_id", name="uq_oauth_user_token"),
+    )
+
+
+class StarterMessage(BaseModel):
+    """Starter message for a persona."""
 
     name: str
     message: str
-
-
-class StarterMessageModel(BaseModel):
-    message: str
-    name: str
 
 
 class Persona__PersonaLabel(Base):
@@ -2555,7 +2762,7 @@ class Persona(Base):
         String, nullable=True
     )
     starter_messages: Mapped[list[StarterMessage] | None] = mapped_column(
-        postgresql.JSONB(), nullable=True
+        PydanticListType(StarterMessage), nullable=True
     )
     search_start_date: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
@@ -2579,16 +2786,19 @@ class Persona(Base):
     )
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    uploaded_image_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    icon_color: Mapped[str | None] = mapped_column(String, nullable=True)
-    icon_shape: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    # These are only defaults, users can select from all if desired
-    prompts: Mapped[list[Prompt]] = relationship(
-        "Prompt",
-        secondary=Persona__Prompt.__table__,
-        back_populates="personas",
+    # Custom Agent Prompt
+    system_prompt: Mapped[str | None] = mapped_column(
+        String(length=PROMPT_LENGTH), nullable=True
     )
+    replace_base_system_prompt: Mapped[bool] = mapped_column(Boolean, default=False)
+    task_prompt: Mapped[str | None] = mapped_column(
+        String(length=PROMPT_LENGTH), nullable=True
+    )
+    datetime_aware: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    uploaded_image_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    icon_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # These are only defaults, users can select from all if desired
     document_sets: Mapped[list[DocumentSet]] = relationship(
         "DocumentSet",
@@ -2615,15 +2825,16 @@ class Persona(Base):
         secondary="persona__user_group",
         viewonly=True,
     )
+    allowed_by_llm_providers: Mapped[list["LLMProvider"]] = relationship(
+        "LLMProvider",
+        secondary="llm_provider__persona",
+        back_populates="personas",
+        viewonly=True,
+    )
     # Relationship to UserFile
     user_files: Mapped[list["UserFile"]] = relationship(
         "UserFile",
         secondary="persona__user_file",
-        back_populates="assistants",
-    )
-    user_folders: Mapped[list["UserFolder"]] = relationship(
-        "UserFolder",
-        secondary="persona__user_folder",
         back_populates="assistants",
     )
     labels: Mapped[list["PersonaLabel"]] = relationship(
@@ -2631,6 +2842,7 @@ class Persona(Base):
         secondary=Persona__PersonaLabel.__table__,
         back_populates="personas",
     )
+
     # Default personas loaded via yaml cannot have the same name
     __table_args__ = (
         Index(
@@ -2642,20 +2854,11 @@ class Persona(Base):
     )
 
 
-class Persona__UserFolder(Base):
-    __tablename__ = "persona__user_folder"
-
-    persona_id: Mapped[int] = mapped_column(ForeignKey("persona.id"), primary_key=True)
-    user_folder_id: Mapped[int] = mapped_column(
-        ForeignKey("user_folder.id"), primary_key=True
-    )
-
-
 class Persona__UserFile(Base):
     __tablename__ = "persona__user_file"
 
     persona_id: Mapped[int] = mapped_column(ForeignKey("persona.id"), primary_key=True)
-    user_file_id: Mapped[int] = mapped_column(
+    user_file_id: Mapped[UUID] = mapped_column(
         ForeignKey("user_file.id"), primary_key=True
     )
 
@@ -2671,6 +2874,20 @@ class PersonaLabel(Base):
         back_populates="labels",
         cascade="all, delete-orphan",
         single_parent=True,
+    )
+
+
+class Assistant__UserSpecificConfig(Base):
+    __tablename__ = "assistant__user_specific_config"
+
+    assistant_id: Mapped[int] = mapped_column(
+        ForeignKey("persona.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    disabled_tool_ids: Mapped[list[int]] = mapped_column(
+        postgresql.ARRAY(Integer), nullable=False
     )
 
 
@@ -2753,6 +2970,7 @@ class SlackBot(Base):
 
     bot_token: Mapped[str] = mapped_column(EncryptedString(), unique=True)
     app_token: Mapped[str] = mapped_column(EncryptedString(), unique=True)
+    user_token: Mapped[str | None] = mapped_column(EncryptedString(), nullable=True)
 
     slack_channel_configs: Mapped[list[SlackChannelConfig]] = relationship(
         "SlackChannelConfig",
@@ -2933,6 +3151,22 @@ class Persona__UserGroup(Base):
     )
 
 
+class LLMProvider__Persona(Base):
+    """Association table restricting LLM providers to specific personas.
+
+    If no such rows exist for a given LLM provider, then it is accessible by all personas.
+    """
+
+    __tablename__ = "llm_provider__persona"
+
+    llm_provider_id: Mapped[int] = mapped_column(
+        ForeignKey("llm_provider.id", ondelete="CASCADE"), primary_key=True
+    )
+    persona_id: Mapped[int] = mapped_column(
+        ForeignKey("persona.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
 class LLMProvider__UserGroup(Base):
     __tablename__ = "llm_provider__user_group"
 
@@ -3015,6 +3249,10 @@ class UserGroup(Base):
     credentials: Mapped[list[Credential]] = relationship(
         "Credential",
         secondary=Credential__UserGroup.__table__,
+    )
+    # MCP servers accessible to this user group
+    accessible_mcp_servers: Mapped[list["MCPServer"]] = relationship(
+        "MCPServer", secondary="mcp_server__user_group", back_populates="user_groups"
     )
 
 
@@ -3242,23 +3480,48 @@ class InputPrompt__User(Base):
     disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
-class UserFolder(Base):
-    __tablename__ = "user_folder"
+class Project__UserFile(Base):
+    __tablename__ = "project__user_file"
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("user_project.id"), primary_key=True
+    )
+    user_file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user_file.id"), primary_key=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_project__user_file_project_id_created_at",
+            project_id,
+            created_at.desc(),
+        ),
+    )
+
+
+class UserProject(Base):
+    __tablename__ = "user_project"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("user.id"), nullable=False)
     name: Mapped[str] = mapped_column(nullable=False)
-    description: Mapped[str] = mapped_column(nullable=False)
+    description: Mapped[str] = mapped_column(nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    user: Mapped["User"] = relationship(back_populates="folders")
-    files: Mapped[list["UserFile"]] = relationship(back_populates="folder")
-    assistants: Mapped[list["Persona"]] = relationship(
-        "Persona",
-        secondary=Persona__UserFolder.__table__,
-        back_populates="user_folders",
+    user: Mapped["User"] = relationship(back_populates="projects")
+    user_files: Mapped[list["UserFile"]] = relationship(
+        "UserFile",
+        secondary=Project__UserFile.__table__,
+        back_populates="projects",
     )
+    chat_sessions: Mapped[list["ChatSession"]] = relationship(
+        "ChatSession", back_populates="project", lazy="selectin"
+    )
+    instructions: Mapped[str] = mapped_column(String)
 
 
 class UserDocument(str, Enum):
@@ -3270,35 +3533,54 @@ class UserDocument(str, Enum):
 class UserFile(Base):
     __tablename__ = "user_file"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("user.id"), nullable=False)
     assistants: Mapped[list["Persona"]] = relationship(
         "Persona",
         secondary=Persona__UserFile.__table__,
         back_populates="user_files",
     )
-    folder_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user_folder.id"), nullable=True
-    )
-
     file_id: Mapped[str] = mapped_column(nullable=False)
-    document_id: Mapped[str] = mapped_column(nullable=False)
+    document_id: Mapped[str] = mapped_column(
+        nullable=False
+    )  # TODO(subash): legacy document_id, will be removed in a future migration
     name: Mapped[str] = mapped_column(nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
         default=datetime.datetime.utcnow
     )
     user: Mapped["User"] = relationship(back_populates="files")
-    folder: Mapped["UserFolder"] = relationship(back_populates="files")
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    cc_pair_id: Mapped[int | None] = mapped_column(
-        ForeignKey("connector_credential_pair.id"), nullable=True, unique=True
+    file_type: Mapped[str] = mapped_column(String, nullable=False)
+
+    status: Mapped[UserFileStatus] = mapped_column(
+        Enum(UserFileStatus, native_enum=False, name="userfilestatus"),
+        nullable=False,
+        default=UserFileStatus.PROCESSING,
     )
-    cc_pair: Mapped["ConnectorCredentialPair"] = relationship(
-        "ConnectorCredentialPair", back_populates="user_file"
+    needs_project_sync: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
     )
+    last_project_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_accessed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     link_url: Mapped[str | None] = mapped_column(String, nullable=True)
     content_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    document_id_migrated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+
+    projects: Mapped[list["UserProject"]] = relationship(
+        "UserProject",
+        secondary=Project__UserFile.__table__,
+        back_populates="user_files",
+        lazy="selectin",
+    )
 
 
 """
@@ -3343,3 +3625,289 @@ class TenantAnonymousUserPath(Base):
     anonymous_user_path: Mapped[str] = mapped_column(
         String, nullable=False, unique=True
     )
+
+
+class MCPServer(Base):
+    """Model for storing MCP server configurations"""
+
+    __tablename__ = "mcp_server"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Owner email of user who configured this server
+    owner: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    server_url: Mapped[str] = mapped_column(String, nullable=False)
+    # Transport type for connecting to the MCP server
+    transport: Mapped[MCPTransport | None] = mapped_column(
+        Enum(MCPTransport, native_enum=False), nullable=True
+    )
+    # Auth type: "none", "api_token", or "oauth"
+    auth_type: Mapped[MCPAuthenticationType | None] = mapped_column(
+        Enum(MCPAuthenticationType, native_enum=False), nullable=True
+    )
+    # Who performs authentication for this server (ADMIN or PER_USER)
+    auth_performer: Mapped[MCPAuthenticationPerformer | None] = mapped_column(
+        Enum(MCPAuthenticationPerformer, native_enum=False), nullable=True
+    )
+    # Status tracking for configuration flow
+    status: Mapped[MCPServerStatus] = mapped_column(
+        Enum(MCPServerStatus, native_enum=False),
+        nullable=False,
+        server_default="CREATED",
+    )
+    # Admin connection config - used for the config page
+    # and (when applicable) admin-managed auth
+    # and (when applicable) per-user auth
+    admin_connection_config_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("mcp_connection_config.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    admin_connection_config: Mapped["MCPConnectionConfig | None"] = relationship(
+        "MCPConnectionConfig",
+        foreign_keys=[admin_connection_config_id],
+        back_populates="admin_servers",
+    )
+
+    user_connection_configs: Mapped[list["MCPConnectionConfig"]] = relationship(
+        "MCPConnectionConfig",
+        foreign_keys="MCPConnectionConfig.mcp_server_id",
+        back_populates="mcp_server",
+    )
+    current_actions: Mapped[list["Tool"]] = relationship(
+        "Tool", back_populates="mcp_server", cascade="all, delete-orphan"
+    )
+    # Many-to-many relationships for access control
+    users: Mapped[list["User"]] = relationship(
+        "User", secondary="mcp_server__user", back_populates="accessible_mcp_servers"
+    )
+    user_groups: Mapped[list["UserGroup"]] = relationship(
+        "UserGroup",
+        secondary="mcp_server__user_group",
+        back_populates="accessible_mcp_servers",
+    )
+
+
+class MCPServer__User(Base):
+    __tablename__ = "mcp_server__user"
+    mcp_server_id: Mapped[int] = mapped_column(
+        ForeignKey("mcp_server.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class MCPServer__UserGroup(Base):
+    __tablename__ = "mcp_server__user_group"
+    mcp_server_id: Mapped[int] = mapped_column(
+        ForeignKey("mcp_server.id"), primary_key=True
+    )
+    user_group_id: Mapped[int] = mapped_column(
+        ForeignKey("user_group.id"), primary_key=True
+    )
+
+
+class MCPConnectionConfig(Base):
+    """Model for storing MCP connection configurations (credentials, auth data)"""
+
+    __tablename__ = "mcp_connection_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Server this config is for (nullable for template configs)
+    mcp_server_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("mcp_server.id", ondelete="CASCADE"), nullable=True
+    )
+    # User email this config is for (empty for admin configs and templates)
+    user_email: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # Config data stored as JSON
+    # Format: {
+    #   "refresh_token": "<token>",  # OAuth only
+    #   "access_token": "<token>",   # OAuth only
+    #   "headers": {"key": "value", "key2": "value2"},
+    #   "header_substitutions": {"<key>": "<value>"}, # stored header template substitutions
+    #   "request_body": ["path/in/body:value", "path2/in2/body2:value2"] # TBD
+    #   "client_id": "<id>",  # For dynamically registered OAuth clients
+    #   "client_secret": "<secret>",  # For confidential clients
+    #   "registration_access_token": "<token>",  # For managing registration
+    #   "registration_client_uri": "<uri>",  # For managing registration
+    # }
+    config: Mapped[MCPConnectionData] = mapped_column(
+        EncryptedJson(), nullable=False, default=dict
+    )
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    mcp_server: Mapped["MCPServer | None"] = relationship(
+        "MCPServer",
+        foreign_keys=[mcp_server_id],
+        back_populates="user_connection_configs",
+    )
+    admin_servers: Mapped[list["MCPServer"]] = relationship(
+        "MCPServer",
+        foreign_keys="MCPServer.admin_connection_config_id",
+        back_populates="admin_connection_config",
+    )
+
+    __table_args__ = (
+        Index("ix_mcp_connection_config_user_email", "user_email"),
+        Index("ix_mcp_connection_config_server_user", "mcp_server_id", "user_email"),
+    )
+
+
+"""
+Permission Sync Tables
+"""
+
+
+class DocPermissionSyncAttempt(Base):
+    """
+    Represents an attempt to sync document permissions for a connector credential pair.
+    Similar to IndexAttempt but specifically for document permission syncing operations.
+    """
+
+    __tablename__ = "doc_permission_sync_attempt"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    connector_credential_pair_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_credential_pair.id"),
+        nullable=False,
+    )
+
+    # Status of the sync attempt
+    status: Mapped[PermissionSyncStatus] = mapped_column(
+        Enum(PermissionSyncStatus, native_enum=False, index=True)
+    )
+
+    # Counts for tracking progress
+    total_docs_synced: Mapped[int | None] = mapped_column(Integer, default=0)
+    docs_with_permission_errors: Mapped[int | None] = mapped_column(Integer, default=0)
+
+    # Error message if sync fails
+    error_message: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # Timestamps
+    time_created: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
+    time_started: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    time_finished: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    # Relationships
+    connector_credential_pair: Mapped[ConnectorCredentialPair] = relationship(
+        "ConnectorCredentialPair"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_permission_sync_attempt_latest_for_cc_pair",
+            "connector_credential_pair_id",
+            "time_created",
+        ),
+        Index(
+            "ix_permission_sync_attempt_status_time",
+            "status",
+            desc("time_finished"),
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DocPermissionSyncAttempt(id={self.id!r}, " f"status={self.status!r})>"
+
+    def is_finished(self) -> bool:
+        return self.status.is_terminal()
+
+
+class ExternalGroupPermissionSyncAttempt(Base):
+    """
+    Represents an attempt to sync external group memberships for users.
+    This tracks the syncing of user-to-external-group mappings across connectors.
+    """
+
+    __tablename__ = "external_group_permission_sync_attempt"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Can be tied to a specific connector or be a global group sync
+    connector_credential_pair_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connector_credential_pair.id"),
+        nullable=True,  # Nullable for global group syncs across all connectors
+    )
+
+    # Status of the group sync attempt
+    status: Mapped[PermissionSyncStatus] = mapped_column(
+        Enum(PermissionSyncStatus, native_enum=False, index=True)
+    )
+
+    # Counts for tracking progress
+    total_users_processed: Mapped[int | None] = mapped_column(Integer, default=0)
+    total_groups_processed: Mapped[int | None] = mapped_column(Integer, default=0)
+    total_group_memberships_synced: Mapped[int | None] = mapped_column(
+        Integer, default=0
+    )
+
+    # Error message if sync fails
+    error_message: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # Timestamps
+    time_created: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
+    time_started: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    time_finished: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    # Relationships
+    connector_credential_pair: Mapped[ConnectorCredentialPair | None] = relationship(
+        "ConnectorCredentialPair"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_group_sync_attempt_cc_pair_time",
+            "connector_credential_pair_id",
+            "time_created",
+        ),
+        Index(
+            "ix_group_sync_attempt_status_time",
+            "status",
+            desc("time_finished"),
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ExternalGroupPermissionSyncAttempt(id={self.id!r}, "
+            f"status={self.status!r})>"
+        )
+
+    def is_finished(self) -> bool:
+        return self.status.is_terminal()

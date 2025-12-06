@@ -64,20 +64,22 @@ from onyx.document_index.factory import get_default_document_index
 from onyx.file_store.document_batch_storage import DocumentBatchStorage
 from onyx.file_store.document_batch_storage import get_document_batch_storage
 from onyx.httpx.httpx_pool import HttpxPool
+from onyx.indexing.adapters.document_indexing_adapter import (
+    DocumentIndexingBatchAdapter,
+)
 from onyx.indexing.embedder import DefaultIndexingEmbedder
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
-from onyx.indexing.indexing_pipeline import run_indexing_pipeline
 from onyx.natural_language_processing.search_nlp_models import (
     InformationContentClassificationModel,
 )
 from onyx.utils.logger import setup_logger
-from onyx.utils.logger import TaskAttemptSingleton
 from onyx.utils.middleware import make_randomized_onyx_request_id
 from onyx.utils.telemetry import create_milestone_and_report
 from onyx.utils.telemetry import optional_telemetry
 from onyx.utils.telemetry import RecordType
 from onyx.utils.variable_functionality import global_version
 from shared_configs.configs import MULTI_TENANT
+from shared_configs.contextvars import INDEX_ATTEMPT_INFO_CONTEXTVAR
 
 logger = setup_logger(propagate=False)
 
@@ -100,6 +102,7 @@ def _get_connector_runner(
     are the complete list of existing documents of the connector. If the task
     of type LOAD_STATE, the list will be considered complete and otherwise incomplete.
     """
+
     task = attempt.connector_credential_pair.connector.input_type
 
     try:
@@ -271,7 +274,7 @@ def _check_failure_threshold(
 
 # NOTE: this is the old run_indexing function that the new decoupled approach
 # is based on. Leaving this for comparison purposes, but if you see this comment
-# has been here for >1 month, please delete this function.
+# has been here for >2 month, please delete this function.
 def _run_indexing(
     db_session: Session,
     index_attempt_id: int,
@@ -283,6 +286,8 @@ def _run_indexing(
     2. Embed and index these documents into the chosen datastore (vespa)
     3. Updates Postgres to record the indexed documents + the outcome of this run
     """
+    from onyx.indexing.indexing_pipeline import run_indexing_pipeline
+
     start_time = time.monotonic()  # jsut used for logging
 
     with get_session_with_current_tenant() as db_session_temp:
@@ -567,6 +572,13 @@ def _run_indexing(
                 index_attempt_md.batch_num = batch_num + 1  # use 1-index for this
 
                 # real work happens here!
+                adapter = DocumentIndexingBatchAdapter(
+                    db_session=db_session,
+                    connector_id=ctx.connector_id,
+                    credential_id=ctx.credential_id,
+                    tenant_id=tenant_id,
+                    index_attempt_metadata=index_attempt_md,
+                )
                 index_pipeline_result = run_indexing_pipeline(
                     embedder=embedding_model,
                     information_content_classification_model=information_content_classification_model,
@@ -578,7 +590,8 @@ def _run_indexing(
                     db_session=db_session,
                     tenant_id=tenant_id,
                     document_batch=doc_batch_cleaned,
-                    index_attempt_metadata=index_attempt_md,
+                    request_id=index_attempt_md.request_id,
+                    adapter=adapter,
                 )
 
                 batch_num += 1
@@ -851,8 +864,8 @@ def run_docfetching_entrypoint(
 
     # set the indexing attempt ID so that all log messages from this process
     # will have it added as a prefix
-    TaskAttemptSingleton.set_cc_and_index_id(
-        index_attempt_id, connector_credential_pair_id
+    token = INDEX_ATTEMPT_INFO_CONTEXTVAR.set(
+        (connector_credential_pair_id, index_attempt_id)
     )
     with get_session_with_current_tenant() as db_session:
         attempt = transition_attempt_to_in_progress(index_attempt_id, db_session)
@@ -889,6 +902,8 @@ def run_docfetching_entrypoint(
         f"config='{connector_config}' "
         f"credentials='{credential_id}'"
     )
+
+    INDEX_ATTEMPT_INFO_CONTEXTVAR.reset(token)
 
 
 def connector_document_extraction(
