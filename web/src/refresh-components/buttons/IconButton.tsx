@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { IconProps } from "@/icons";
+import type { IconProps } from "@opal/types";
 import { cn } from "@/lib/utils";
 import SimpleTooltip from "@/refresh-components/SimpleTooltip";
 
@@ -239,6 +239,9 @@ export interface IconButtonProps
   tertiary?: boolean;
   internal?: boolean;
 
+  // Button size
+  large?: boolean;
+
   // Button states
   transient?: boolean;
   disabled?: boolean;
@@ -301,7 +304,7 @@ export default function IconButton({
   const buttonElement = (
     <button
       className={cn(
-        "flex items-center justify-center h-fit w-fit group/IconButton",
+        "flex items-center justify-center h-fit w-fit group/IconButton z-tooltip",
         internal ? "p-1" : "p-2",
         disabled && "cursor-not-allowed",
         internal ? "rounded-08" : "rounded-12",

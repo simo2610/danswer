@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from collections.abc import Generator
 from collections.abc import Mapping
 from collections.abc import Sequence
@@ -15,16 +16,19 @@ from onyx.context.search.models import SearchDoc
 from onyx.file_store.models import ChatFileType
 from onyx.llm.interfaces import LanguageModelInput
 from onyx.llm.interfaces import LLM
+from onyx.llm.interfaces import LLMUserIdentity
 from onyx.llm.interfaces import ToolChoiceOptions
-from onyx.llm.message_types import AssistantMessage
-from onyx.llm.message_types import ChatCompletionMessage
-from onyx.llm.message_types import ImageContentPart
-from onyx.llm.message_types import SystemMessage
-from onyx.llm.message_types import TextContentPart
-from onyx.llm.message_types import ToolCall
-from onyx.llm.message_types import ToolMessage
-from onyx.llm.message_types import UserMessageWithParts
-from onyx.llm.message_types import UserMessageWithText
+from onyx.llm.model_response import Delta
+from onyx.llm.models import AssistantMessage
+from onyx.llm.models import ChatCompletionMessage
+from onyx.llm.models import FunctionCall
+from onyx.llm.models import ImageContentPart
+from onyx.llm.models import ImageUrlDetail
+from onyx.llm.models import SystemMessage
+from onyx.llm.models import TextContentPart
+from onyx.llm.models import ToolCall
+from onyx.llm.models import ToolMessage
+from onyx.llm.models import UserMessage
 from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
 from onyx.server.query_and_chat.streaming_models import AgentResponseStart
 from onyx.server.query_and_chat.streaming_models import CitationInfo
@@ -32,6 +36,8 @@ from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.query_and_chat.streaming_models import ReasoningDelta
 from onyx.server.query_and_chat.streaming_models import ReasoningDone
 from onyx.server.query_and_chat.streaming_models import ReasoningStart
+from onyx.tools.models import TOOL_CALL_MSG_ARGUMENTS
+from onyx.tools.models import TOOL_CALL_MSG_FUNC_NAME
 from onyx.tools.models import ToolCallKickoff
 from onyx.tracing.framework.create import generation_span
 from onyx.utils.b64 import get_image_type_from_bytes
@@ -39,10 +45,6 @@ from onyx.utils.logger import setup_logger
 
 
 logger = setup_logger()
-
-
-TOOL_CALL_MSG_FUNC_NAME = "function_name"
-TOOL_CALL_MSG_ARGUMENTS = "arguments"
 
 
 def _format_message_history_for_logging(
@@ -65,78 +67,56 @@ def _format_message_history_for_logging(
 
     # Handle sequence of messages
     for i, msg in enumerate(message_history):
-        # Type guard: ensure msg is a dict-like object (TypedDict)
-        if not isinstance(msg, dict):
+        if isinstance(msg, SystemMessage):
+            formatted_lines.append(f"Message {i + 1} [system]:")
+            formatted_lines.append(separator)
+            formatted_lines.append(f"{msg.content}")
+
+        elif isinstance(msg, UserMessage):
+            formatted_lines.append(f"Message {i + 1} [user]:")
+            formatted_lines.append(separator)
+            if isinstance(msg.content, str):
+                formatted_lines.append(f"{msg.content}")
+            elif isinstance(msg.content, list):
+                # Handle multimodal content (text + images)
+                for part in msg.content:
+                    if isinstance(part, TextContentPart):
+                        formatted_lines.append(f"{part.text}")
+                    elif isinstance(part, ImageContentPart):
+                        url = part.image_url.url
+                        formatted_lines.append(f"[Image: {url[:50]}...]")
+
+        elif isinstance(msg, AssistantMessage):
+            formatted_lines.append(f"Message {i + 1} [assistant]:")
+            formatted_lines.append(separator)
+            if msg.content:
+                formatted_lines.append(f"{msg.content}")
+
+            if msg.tool_calls:
+                formatted_lines.append("Tool calls:")
+                for tool_call in msg.tool_calls:
+                    tool_call_dict: dict[str, Any] = {
+                        "id": tool_call.id,
+                        "type": tool_call.type,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                    tool_call_json = json.dumps(tool_call_dict, indent=4)
+                    formatted_lines.append(tool_call_json)
+
+        elif isinstance(msg, ToolMessage):
+            formatted_lines.append(f"Message {i + 1} [tool]:")
+            formatted_lines.append(separator)
+            formatted_lines.append(f"Tool call ID: {msg.tool_call_id}")
+            formatted_lines.append(f"Response: {msg.content}")
+
+        else:
+            # Fallback for unknown message types
             formatted_lines.append(f"Message {i + 1} [unknown]:")
             formatted_lines.append(separator)
             formatted_lines.append(f"{msg}")
-            if i < len(message_history) - 1:
-                formatted_lines.append(separator)
-            continue
-
-        role = msg.get("role", "unknown")
-        formatted_lines.append(f"Message {i + 1} [{role}]:")
-        formatted_lines.append(separator)
-
-        if role == "system":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                formatted_lines.append(f"{content}")
-
-        elif role == "user":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                formatted_lines.append(f"{content}")
-            elif isinstance(content, list):
-                # Handle multimodal content (text + images)
-                for part in content:
-                    if isinstance(part, dict):
-                        part_type = part.get("type")
-                        if part_type == "text":
-                            text = part.get("text", "")
-                            if isinstance(text, str):
-                                formatted_lines.append(f"{text}")
-                        elif part_type == "image_url":
-                            image_url_dict = part.get("image_url")
-                            if isinstance(image_url_dict, dict):
-                                url = image_url_dict.get("url", "")
-                                if isinstance(url, str):
-                                    formatted_lines.append(f"[Image: {url[:50]}...]")
-
-        elif role == "assistant":
-            content = msg.get("content")
-            if content and isinstance(content, str):
-                formatted_lines.append(f"{content}")
-
-            tool_calls = msg.get("tool_calls")
-            if tool_calls and isinstance(tool_calls, list):
-                formatted_lines.append("Tool calls:")
-                for tool_call in tool_calls:
-                    if isinstance(tool_call, dict):
-                        tool_call_dict: dict[str, Any] = {}
-                        tool_call_id = tool_call.get("id")
-                        tool_call_type = tool_call.get("type")
-                        function_dict = tool_call.get("function")
-
-                        if tool_call_id:
-                            tool_call_dict["id"] = tool_call_id
-                        if tool_call_type:
-                            tool_call_dict["type"] = tool_call_type
-                        if isinstance(function_dict, dict):
-                            tool_call_dict["function"] = {
-                                "name": function_dict.get("name", ""),
-                                "arguments": function_dict.get("arguments", ""),
-                            }
-
-                        tool_call_json = json.dumps(tool_call_dict, indent=4)
-                        formatted_lines.append(tool_call_json)
-
-        elif role == "tool":
-            content = msg.get("content", "")
-            tool_call_id = msg.get("tool_call_id", "")
-            if isinstance(content, str) and isinstance(tool_call_id, str):
-                formatted_lines.append(f"Tool call ID: {tool_call_id}")
-                formatted_lines.append(f"Response: {content}")
 
         # Add separator before next message (or at end)
         if i < len(message_history) - 1:
@@ -173,12 +153,15 @@ def _update_tool_call_with_delta(
 
 def _extract_tool_call_kickoffs(
     id_to_tool_call_map: dict[int, dict[str, Any]],
+    turn_index: int,
 ) -> list[ToolCallKickoff]:
     """Extract ToolCallKickoff objects from the tool call map.
 
     Returns a list of ToolCallKickoff objects for valid tool calls (those with both id and name).
+    Each tool call is assigned the given turn_index and a tab_index based on its order.
     """
     tool_calls: list[ToolCallKickoff] = []
+    tab_index = 0
     for tool_call_data in id_to_tool_call_map.values():
         if tool_call_data.get("id") and tool_call_data.get("name"):
             try:
@@ -200,8 +183,11 @@ def _extract_tool_call_kickoffs(
                     tool_call_id=tool_call_data["id"],
                     tool_name=tool_call_data["name"],
                     tool_args=tool_args,
+                    turn_index=turn_index,
+                    tab_index=tab_index,
                 )
             )
+            tab_index += 1
     return tool_calls
 
 
@@ -217,10 +203,10 @@ def translate_history_to_llm_format(
 
     for msg in history:
         if msg.message_type == MessageType.SYSTEM:
-            system_msg: SystemMessage = {
-                "role": "system",
-                "content": msg.message,
-            }
+            system_msg = SystemMessage(
+                role="system",
+                content=msg.message,
+            )
             messages.append(system_msg)
 
         elif msg.message_type == MessageType.USER:
@@ -228,7 +214,10 @@ def translate_history_to_llm_format(
             if msg.image_files:
                 # Build content parts: text + images
                 content_parts: list[TextContentPart | ImageContentPart] = [
-                    {"type": "text", "text": msg.message}
+                    TextContentPart(
+                        type="text",
+                        text=msg.message,
+                    )
                 ]
 
                 # Add image parts
@@ -239,35 +228,38 @@ def translate_history_to_llm_format(
                             base64_data = img_file.to_base64()
                             image_url = f"data:{image_type};base64,{base64_data}"
 
-                            image_part: ImageContentPart = {
-                                "type": "image_url",
-                                "image_url": {"url": image_url},
-                            }
+                            image_part = ImageContentPart(
+                                type="image_url",
+                                image_url=ImageUrlDetail(
+                                    url=image_url,
+                                    detail=None,
+                                ),
+                            )
                             content_parts.append(image_part)
                         except Exception as e:
                             logger.warning(
                                 f"Failed to process image file {img_file.file_id}: {e}. "
                                 "Skipping image."
                             )
-
-                user_msg_with_parts: UserMessageWithParts = {
-                    "role": "user",
-                    "content": content_parts,
-                }
-                messages.append(user_msg_with_parts)
+                user_msg = UserMessage(
+                    role="user",
+                    content=content_parts,
+                )
+                messages.append(user_msg)
             else:
                 # Simple text-only user message
-                user_msg_text: UserMessageWithText = {
-                    "role": "user",
-                    "content": msg.message,
-                }
+                user_msg_text = UserMessage(
+                    role="user",
+                    content=msg.message,
+                )
                 messages.append(user_msg_text)
 
         elif msg.message_type == MessageType.ASSISTANT:
-            assistant_msg: AssistantMessage = {
-                "role": "assistant",
-                "content": msg.message or None,
-            }
+            assistant_msg = AssistantMessage(
+                role="assistant",
+                content=msg.message or None,
+                tool_calls=None,
+            )
             messages.append(assistant_msg)
 
         elif msg.message_type == MessageType.TOOL_CALL:
@@ -295,14 +287,14 @@ def translate_history_to_llm_format(
 
                     # NOTE: if the model is trained on a different tool call format, this may slightly interfere
                     # with the future tool calls, if it doesn't look like this. Almost certainly not a big deal.
-                    tool_call: ToolCall = {
-                        "id": msg.tool_call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function_name,
-                            "arguments": json.dumps(tool_args) if tool_args else "{}",
-                        },
-                    }
+                    tool_call = ToolCall(
+                        id=msg.tool_call_id,
+                        type="function",
+                        function=FunctionCall(
+                            name=function_name,
+                            arguments=json.dumps(tool_args) if tool_args else "{}",
+                        ),
+                    )
                     tool_calls.append(tool_call)
                 except (json.JSONDecodeError, ValueError) as e:
                     logger.warning(
@@ -310,12 +302,11 @@ def translate_history_to_llm_format(
                         "Including as content-only message."
                     )
 
-            assistant_msg_with_tool: AssistantMessage = {
-                "role": "assistant",
-                "content": None,  # The tool call is parsed, doesn't need to be duplicated in the content
-            }
-            if tool_calls:
-                assistant_msg_with_tool["tool_calls"] = tool_calls
+            assistant_msg_with_tool = AssistantMessage(
+                role="assistant",
+                content=None,  # The tool call is parsed, doesn't need to be duplicated in the content
+                tool_calls=tool_calls if tool_calls else None,
+            )
             messages.append(assistant_msg_with_tool)
 
         elif msg.message_type == MessageType.TOOL_CALL_RESPONSE:
@@ -324,11 +315,11 @@ def translate_history_to_llm_format(
                     f"Tool call response message encountered but tool_call_id is not available. Message: {msg}"
                 )
 
-            tool_msg: ToolMessage = {
-                "role": "tool",
-                "content": msg.message,
-                "tool_call_id": msg.tool_call_id,
-            }
+            tool_msg = ToolMessage(
+                role="tool",
+                content=msg.message,
+                tool_call_id=msg.tool_call_id,
+            )
             messages.append(tool_msg)
 
         else:
@@ -348,10 +339,16 @@ def run_llm_step(
     citation_processor: DynamicCitationProcessor,
     state_container: ChatStateContainer,
     final_documents: list[SearchDoc] | None = None,
+    user_identity: LLMUserIdentity | None = None,
+    custom_token_processor: (
+        Callable[[Delta | None, Any], tuple[Delta | None, Any]] | None
+    ) = None,
 ) -> Generator[Packet, None, tuple[LlmStepResult, int]]:
     # The second return value is for the turn index because reasoning counts on the frontend as a turn
     # TODO this is maybe ok but does not align well with the backend logic too well
     llm_msg_history = translate_history_to_llm_format(history)
+
+    has_reasoned = False
 
     # Uncomment the line below to log the entire message history to the console
     if LOG_ONYX_MODEL_INTERACTIONS:
@@ -364,6 +361,8 @@ def run_llm_step(
     answer_start = False
     accumulated_reasoning = ""
     accumulated_answer = ""
+
+    processor_state: Any = None
 
     with generation_span(
         model=llm.config.model_name,
@@ -380,6 +379,8 @@ def run_llm_step(
             tools=tool_definitions,
             tool_choice=tool_choice,
             structured_response_format=None,  # TODO
+            # reasoning_effort=ReasoningEffort.OFF,  # Can set this for dev/testing.
+            user_identity=user_identity,
         ):
             if packet.usage:
                 usage = packet.usage
@@ -390,6 +391,17 @@ def run_llm_step(
                     "cache_creation_input_tokens": usage.cache_creation_input_tokens,
                 }
             delta = packet.choice.delta
+
+            if custom_token_processor:
+                # The custom token processor can modify the deltas for specific custom logic
+                # It can also return a state so that it can handle aggregated delta logic etc.
+                # Loosely typed so the function can be flexible
+                modified_delta, processor_state = custom_token_processor(
+                    delta, processor_state
+                )
+                if modified_delta is None:
+                    continue
+                delta = modified_delta
 
             # Should only happen once, frontend does not expect multiple
             # ReasoningStart or ReasoningDone packets.
@@ -414,7 +426,7 @@ def run_llm_step(
                         turn_index=turn_index,
                         obj=ReasoningDone(),
                     )
-                    turn_index += 1
+                    has_reasoned = True
                     reasoning_start = False
 
                 if not answer_start:
@@ -447,43 +459,53 @@ def run_llm_step(
                         turn_index=turn_index,
                         obj=ReasoningDone(),
                     )
-                    turn_index += 1
+                    has_reasoned = True
                     reasoning_start = False
 
                 for tool_call_delta in delta.tool_calls:
                     _update_tool_call_with_delta(id_to_tool_call_map, tool_call_delta)
 
-        tool_calls = _extract_tool_call_kickoffs(id_to_tool_call_map)
+        # Flush custom token processor to get any final tool calls
+        if custom_token_processor:
+            flush_delta, processor_state = custom_token_processor(None, processor_state)
+            if flush_delta and flush_delta.tool_calls:
+                for tool_call_delta in flush_delta.tool_calls:
+                    _update_tool_call_with_delta(id_to_tool_call_map, tool_call_delta)
+
+        tool_calls = _extract_tool_call_kickoffs(id_to_tool_call_map, turn_index)
         if tool_calls:
             tool_calls_list: list[ToolCall] = [
-                {
-                    "id": kickoff.tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": kickoff.tool_name,
-                        "arguments": json.dumps(kickoff.tool_args),
-                    },
-                }
+                ToolCall(
+                    id=kickoff.tool_call_id,
+                    type="function",
+                    function=FunctionCall(
+                        name=kickoff.tool_name,
+                        arguments=json.dumps(kickoff.tool_args),
+                    ),
+                )
                 for kickoff in tool_calls
             ]
 
-            assistant_msg: AssistantMessage = {
-                "role": "assistant",
-                "content": accumulated_answer if accumulated_answer else None,
-                "tool_calls": tool_calls_list,
-            }
-            span_generation.span_data.output = [assistant_msg]
+            assistant_msg: AssistantMessage = AssistantMessage(
+                role="assistant",
+                content=accumulated_answer if accumulated_answer else None,
+                tool_calls=tool_calls_list,
+            )
+            span_generation.span_data.output = [assistant_msg.model_dump()]
         elif accumulated_answer:
-            span_generation.span_data.output = [
-                {"role": "assistant", "content": accumulated_answer}
-            ]
+            assistant_msg_no_tools = AssistantMessage(
+                role="assistant",
+                content=accumulated_answer,
+                tool_calls=None,
+            )
+            span_generation.span_data.output = [assistant_msg_no_tools.model_dump()]
     # Close reasoning block if still open (stream ended with reasoning content)
     if reasoning_start:
         yield Packet(
             turn_index=turn_index,
             obj=ReasoningDone(),
         )
-        turn_index += 1
+        has_reasoned = True
 
     # Flush any remaining content from citation processor
     if citation_processor:
@@ -523,5 +545,5 @@ def run_llm_step(
             answer=accumulated_answer if accumulated_answer else None,
             tool_calls=tool_calls if tool_calls else None,
         ),
-        turn_index,
+        has_reasoned,
     )
