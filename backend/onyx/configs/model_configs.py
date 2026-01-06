@@ -51,10 +51,9 @@ CROSS_ENCODER_RANGE_MIN = 0
 # Generative AI Model Configs
 #####
 
-# NOTE: the 3 below should only be used for dev.
+# NOTE: the 2 below should only be used for dev.
 GEN_AI_API_KEY = os.environ.get("GEN_AI_API_KEY")
 GEN_AI_MODEL_VERSION = os.environ.get("GEN_AI_MODEL_VERSION")
-FAST_GEN_AI_MODEL_VERSION = os.environ.get("FAST_GEN_AI_MODEL_VERSION")
 
 # Override the auto-detection of LLM max context length
 GEN_AI_MAX_TOKENS = int(os.environ.get("GEN_AI_MAX_TOKENS") or 0) or None
@@ -78,6 +77,10 @@ GEN_AI_MODEL_FALLBACK_MAX_TOKENS = int(
 # error if the total # of tokens exceeds the max input tokens.
 GEN_AI_SINGLE_USER_MESSAGE_EXPECTED_MAX_TOKENS = 512
 GEN_AI_TEMPERATURE = float(os.environ.get("GEN_AI_TEMPERATURE") or 0)
+
+# Reasoning models use effort to control the amount of reasoning
+# before tool calling or answer generation.
+DEFAULT_REASONING_EFFORT = os.environ.get("DEFAULT_REASONING_EFFORT") or "low"
 
 # should be used if you are using a custom LLM inference provider that doesn't support
 # streaming format AND you are still using the langchain/litellm LLM class
@@ -126,9 +129,16 @@ if _LITELLM_EXTRA_BODY_RAW:
     except Exception:
         pass
 
-# Whether and how to lower scores for short chunks w/o relevant context
-# Evaluated via custom ML model
+#####
+# Prompt Caching Configs
+#####
+# Enable prompt caching framework
+ENABLE_PROMPT_CACHING = (
+    os.environ.get("ENABLE_PROMPT_CACHING", "true").lower() != "false"
+)
 
-USE_INFORMATION_CONTENT_CLASSIFICATION = (
-    os.environ.get("USE_INFORMATION_CONTENT_CLASSIFICATION", "false").lower() == "true"
+# Cache TTL multiplier - store caches slightly longer than provider TTL
+# This allows for some clock skew and ensures we don't lose cache metadata prematurely
+PROMPT_CACHE_REDIS_TTL_MULTIPLIER = float(
+    os.environ.get("PROMPT_CACHE_REDIS_TTL_MULTIPLIER") or 1.2
 )

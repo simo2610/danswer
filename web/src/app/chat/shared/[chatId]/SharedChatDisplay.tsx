@@ -69,22 +69,26 @@ export default function SharedChatDisplay({
         />
       )}
 
-      <div className="flex flex-col h-full w-full overflow-hidden overflow-y-scroll">
+      <div className="flex flex-col items-center h-full w-full overflow-hidden overflow-y-scroll">
         <div className="sticky top-0 z-10 flex flex-col w-full bg-background-tint-01 px-8 py-4">
-          <Text headingH2>{chatSession.description || UNNAMED_CHAT}</Text>
-          <Text text03>{humanReadableFormat(chatSession.time_created)}</Text>
+          <Text as="p" headingH2>
+            {chatSession.description || UNNAMED_CHAT}
+          </Text>
+          <Text as="p" text03>
+            {humanReadableFormat(chatSession.time_created)}
+          </Text>
         </div>
 
         {isMounted ? (
-          <div className="w-full px-8">
+          <div className="w-[min(50rem,100%)]">
             {messages.map((message, i) => {
               if (message.type === "user") {
                 return (
                   <HumanMessage
-                    shared
                     key={message.messageId}
                     content={message.message}
                     files={message.files}
+                    nodeId={message.nodeId}
                   />
                 );
               } else if (message.type === "assistant") {

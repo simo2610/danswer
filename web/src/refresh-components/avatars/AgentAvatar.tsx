@@ -33,12 +33,12 @@ export default function AgentAvatar({
           alt="Logo"
           src="/api/enterprise-settings/logo"
           fill
-          className="object-contain object-center"
+          className="object-cover object-center"
           sizes={`${size}px`}
         />
       </div>
     ) : (
-      <OnyxIcon size={size} className="" />
+      <OnyxIcon size={size} className="shrink-0" />
     );
   }
 

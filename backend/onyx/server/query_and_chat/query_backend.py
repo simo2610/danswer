@@ -46,11 +46,12 @@ from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.tag import find_tags
+from onyx.db.usage import increment_usage
+from onyx.db.usage import UsageType
 from onyx.document_index.factory import get_default_document_index
 from onyx.document_index.vespa.index import VespaIndex
-from onyx.llm.factory import get_default_llms
-from onyx.llm.factory import get_llms_for_persona
-from onyx.llm.factory import get_main_llm_from_tuple
+from onyx.llm.factory import get_default_llm
+from onyx.llm.factory import get_llm_for_persona
 from onyx.natural_language_processing.utils import get_tokenizer
 from onyx.server.query_and_chat.models import AdminSearchRequest
 from onyx.server.query_and_chat.models import AdminSearchResponse
@@ -64,6 +65,8 @@ from onyx.server.query_and_chat.models import OneShotQAResponse
 from onyx.server.query_and_chat.models import SearchSessionDetailResponse
 from onyx.server.query_and_chat.models import SourceTag
 from onyx.server.query_and_chat.models import TagResponse
+from onyx.server.usage_limits import check_usage_and_raise
+from onyx.server.usage_limits import is_usage_limits_enabled
 from onyx.server.utils import get_json_line
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
@@ -108,7 +111,7 @@ def handle_search_request(
     query = search_request.message
     logger.notice(f"Received document search query: {query}")
 
-    llm, __name__ = get_default_llms()
+    llm = get_default_llm()
     pagination_limit, pagination_offset = _normalize_pagination(
         limit=search_request.retrieval_options.limit,
         offset=search_request.retrieval_options.offset,
@@ -229,7 +232,7 @@ def get_answer_stream(
             is_for_edit=False,
         )
 
-    llm = get_main_llm_from_tuple(get_llms_for_persona(persona=persona_info, user=user))
+    llm = get_llm_for_persona(persona=persona_info, user=user)
 
     llm_tokenizer = get_tokenizer(
         model_name=llm.config.model_name,
@@ -256,7 +259,6 @@ def get_answer_stream(
         retrieval_details=query_request.retrieval_options,
         rerank_settings=query_request.rerank_settings,
         db_session=db_session,
-        use_agentic_search=query_request.use_agentic_search,
         skip_gen_ai_answer_generation=query_request.skip_gen_ai_answer_generation,
     )
 
@@ -275,6 +277,22 @@ def get_answer_with_citation(
     db_session: Session = Depends(get_session),
     user: User | None = Depends(current_user),
 ) -> OneShotQAResponse:
+    # Check and track non-streaming API usage limits
+    if is_usage_limits_enabled():
+        tenant_id = get_current_tenant_id()
+        check_usage_and_raise(
+            db_session=db_session,
+            usage_type=UsageType.NON_STREAMING_API_CALLS,
+            tenant_id=tenant_id,
+            pending_amount=1,
+        )
+        increment_usage(
+            db_session=db_session,
+            usage_type=UsageType.NON_STREAMING_API_CALLS,
+            amount=1,
+        )
+        db_session.commit()
+
     try:
         packets = get_answer_stream(request, user, db_session)
         answer = gather_stream(packets)

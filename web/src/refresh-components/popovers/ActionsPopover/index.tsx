@@ -25,7 +25,7 @@ import MCPApiKeyModal from "@/components/chat/MCPApiKeyModal";
 import { ValidSources } from "@/lib/types";
 import { SourceMetadata } from "@/lib/search/interfaces";
 import { SourceIcon } from "@/components/SourceIcon";
-import { useAvailableTools } from "@/lib/hooks/useAvailableTools";
+import { useAvailableTools } from "@/hooks/useAvailableTools";
 import { useCCPairs } from "@/lib/hooks/useCCPairs";
 import IconButton from "@/refresh-components/buttons/IconButton";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
@@ -476,6 +476,14 @@ export default function ActionsPopover({
     }
   };
 
+  const handleOpenChange = (newOpen: boolean) => {
+    setOpen(newOpen);
+    if (newOpen) {
+      setSecondaryView(null);
+      setSearchTerm("");
+    }
+  };
+
   const mcpFooter = showActiveReauthRow ? (
     <LineItem
       onClick={handleFooterReauthClick}
@@ -610,7 +618,7 @@ export default function ActionsPopover({
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <div data-testid="action-management-toggle">
             <IconButton

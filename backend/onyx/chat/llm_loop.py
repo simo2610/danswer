@@ -1,11 +1,12 @@
 from collections.abc import Callable
-from typing import cast
 
 from sqlalchemy.orm import Session
 
 from onyx.chat.chat_state import ChatStateContainer
 from onyx.chat.chat_utils import create_tool_call_failure_messages
+from onyx.chat.citation_processor import CitationMapping
 from onyx.chat.citation_processor import DynamicCitationProcessor
+from onyx.chat.citation_utils import update_citation_processor_from_tool_response
 from onyx.chat.emitter import Emitter
 from onyx.chat.llm_step import run_llm_step
 from onyx.chat.models import ChatMessageSimple
@@ -28,18 +29,18 @@ from onyx.llm.interfaces import ToolChoiceOptions
 from onyx.llm.utils import model_needs_formatting_reenabled
 from onyx.prompts.chat_prompts import IMAGE_GEN_REMINDER
 from onyx.prompts.chat_prompts import OPEN_URL_REMINDER
+from onyx.server.query_and_chat.placement import Placement
 from onyx.server.query_and_chat.streaming_models import OverallStop
 from onyx.server.query_and_chat.streaming_models import Packet
+from onyx.server.query_and_chat.streaming_models import TopLevelBranching
+from onyx.tools.built_in_tools import CITEABLE_TOOLS_NAMES
+from onyx.tools.built_in_tools import STOPPING_TOOLS_NAMES
+from onyx.tools.interface import Tool
 from onyx.tools.models import ToolCallInfo
 from onyx.tools.models import ToolResponse
-from onyx.tools.tool import Tool
-from onyx.tools.tool_implementations.images.image_generation_tool import (
-    ImageGenerationTool,
-)
 from onyx.tools.tool_implementations.images.models import (
     FinalImageGenerationResponse,
 )
-from onyx.tools.tool_implementations.open_url.open_url_tool import OpenURLTool
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
 from onyx.tools.tool_implementations.web_search.web_search_tool import WebSearchTool
 from onyx.tools.tool_runner import run_tool_calls
@@ -62,7 +63,7 @@ MAX_LLM_CYCLES = 6
 def _build_project_file_citation_mapping(
     project_file_metadata: list[ProjectFileMetadata],
     starting_citation_num: int = 1,
-) -> dict[int, SearchDoc]:
+) -> CitationMapping:
     """Build citation mapping for project files.
 
     Converts project file metadata into SearchDoc objects that can be cited.
@@ -75,7 +76,7 @@ def _build_project_file_citation_mapping(
     Returns:
         Dictionary mapping citation numbers to SearchDoc objects
     """
-    citation_mapping: dict[int, SearchDoc] = {}
+    citation_mapping: CitationMapping = {}
 
     for idx, file_meta in enumerate(project_file_metadata, start=starting_citation_num):
         # Create a SearchDoc for each project file
@@ -98,7 +99,7 @@ def _build_project_file_citation_mapping(
 
 
 def construct_message_history(
-    system_prompt: ChatMessageSimple,
+    system_prompt: ChatMessageSimple | None,
     custom_agent_prompt: ChatMessageSimple | None,
     simple_chat_history: list[ChatMessageSimple],
     reminder_message: ChatMessageSimple | None,
@@ -113,7 +114,7 @@ def construct_message_history(
             )
 
     history_token_budget = available_tokens
-    history_token_budget -= system_prompt.token_count
+    history_token_budget -= system_prompt.token_count if system_prompt else 0
     history_token_budget -= (
         custom_agent_prompt.token_count if custom_agent_prompt else 0
     )
@@ -124,9 +125,12 @@ def construct_message_history(
     if history_token_budget < 0:
         raise ValueError("Not enough tokens available to construct message history")
 
+    if system_prompt:
+        system_prompt.should_cache = True
+
     # If no history, build minimal context
     if not simple_chat_history:
-        result = [system_prompt]
+        result = [system_prompt] if system_prompt else []
         if custom_agent_prompt:
             result.append(custom_agent_prompt)
         if project_files and project_files.project_file_texts:
@@ -198,6 +202,7 @@ def construct_message_history(
 
     for msg in reversed(history_before_last_user):
         if current_token_count + msg.token_count <= remaining_budget:
+            msg.should_cache = True
             truncated_history_before.insert(0, msg)
             current_token_count += msg.token_count
         else:
@@ -217,7 +222,7 @@ def construct_message_history(
     # Build the final message list according to README ordering:
     # [system], [history_before_last_user], [custom_agent], [project_files],
     # [last_user_message], [messages_after_last_user], [reminder]
-    result = [system_prompt]
+    result = [system_prompt] if system_prompt else []
 
     # 1. Add truncated history before last user message
     result.extend(truncated_history_before)
@@ -291,8 +296,16 @@ def run_llm_loop(
     db_session: Session,
     forced_tool_id: int | None = None,
     user_identity: LLMUserIdentity | None = None,
+    chat_session_id: str | None = None,
 ) -> None:
-    with trace("run_llm_loop", metadata={"tenant_id": get_current_tenant_id()}):
+    with trace(
+        "run_llm_loop",
+        group_id=chat_session_id,
+        metadata={
+            "tenant_id": get_current_tenant_id(),
+            "chat_session_id": chat_session_id,
+        },
+    ):
         # Fix some LiteLLM issues,
         from onyx.llm.litellm_singleton.config import (
             initialize_litellm,
@@ -300,18 +313,11 @@ def run_llm_loop(
 
         initialize_litellm()
 
-        stopping_tools_names: list[str] = [ImageGenerationTool.NAME]
-        citeable_tools_names: list[str] = [
-            SearchTool.NAME,
-            WebSearchTool.NAME,
-            OpenURLTool.NAME,
-        ]
-
         # Initialize citation processor for handling citations dynamically
         citation_processor = DynamicCitationProcessor()
 
         # Add project file citation mappings if project files are present
-        project_citation_mapping: dict[int, SearchDoc] = {}
+        project_citation_mapping: CitationMapping = {}
         if project_files.project_file_metadata:
             project_citation_mapping = _build_project_file_citation_mapping(
                 project_files.project_file_metadata
@@ -339,6 +345,10 @@ def run_llm_loop(
         just_ran_web_search: bool = False
         has_called_search_tool: bool = False
         citation_mapping: dict[int, str] = {}  # Maps citation_num -> document_id/URL
+
+        default_base_system_prompt: str = get_default_base_system_prompt(db_session)
+        system_prompt = None
+        custom_agent_prompt_msg = None
 
         reasoning_cycles = 0
         for llm_cycle_count in range(MAX_LLM_CYCLES):
@@ -368,35 +378,47 @@ def run_llm_loop(
                 )
                 custom_agent_prompt_msg = None
             else:
-                # System message and custom agent message are both included.
-                open_ai_formatting_enabled = model_needs_formatting_reenabled(
-                    llm.config.model_name
-                )
-
-                system_prompt_str = build_system_prompt(
-                    base_system_prompt=get_default_base_system_prompt(db_session),
-                    datetime_aware=persona.datetime_aware if persona else True,
-                    memories=memories,
-                    tools=tools,
-                    should_cite_documents=should_cite_documents
-                    or always_cite_documents,
-                    open_ai_formatting_enabled=open_ai_formatting_enabled,
-                )
-                system_prompt = ChatMessageSimple(
-                    message=system_prompt_str,
-                    token_count=token_counter(system_prompt_str),
-                    message_type=MessageType.SYSTEM,
-                )
-
-                custom_agent_prompt_msg = (
-                    ChatMessageSimple(
-                        message=custom_agent_prompt,
-                        token_count=token_counter(custom_agent_prompt),
-                        message_type=MessageType.USER,
+                # If it's an empty string, we assume the user does not want to include it as an empty System message
+                if default_base_system_prompt:
+                    open_ai_formatting_enabled = model_needs_formatting_reenabled(
+                        llm.config.model_name
                     )
-                    if custom_agent_prompt
-                    else None
-                )
+
+                    system_prompt_str = build_system_prompt(
+                        base_system_prompt=default_base_system_prompt,
+                        datetime_aware=persona.datetime_aware if persona else True,
+                        memories=memories,
+                        tools=tools,
+                        should_cite_documents=should_cite_documents
+                        or always_cite_documents,
+                        open_ai_formatting_enabled=open_ai_formatting_enabled,
+                    )
+                    system_prompt = ChatMessageSimple(
+                        message=system_prompt_str,
+                        token_count=token_counter(system_prompt_str),
+                        message_type=MessageType.SYSTEM,
+                    )
+                    custom_agent_prompt_msg = (
+                        ChatMessageSimple(
+                            message=custom_agent_prompt,
+                            token_count=token_counter(custom_agent_prompt),
+                            message_type=MessageType.USER,
+                        )
+                        if custom_agent_prompt
+                        else None
+                    )
+                else:
+                    # If there is a custom agent prompt, it replaces the system prompt when the default system prompt is empty
+                    system_prompt = (
+                        ChatMessageSimple(
+                            message=custom_agent_prompt,
+                            token_count=token_counter(custom_agent_prompt),
+                            message_type=MessageType.SYSTEM,
+                        )
+                        if custom_agent_prompt
+                        else None
+                    )
+                    custom_agent_prompt_msg = None
 
             reminder_message_text: str | None
             if ran_image_gen:
@@ -438,12 +460,13 @@ def run_llm_loop(
 
             # This calls the LLM, yields packets (reasoning, answers, etc.) and returns the result
             # It also pre-processes the tool calls in preparation for running them
-            step_generator = run_llm_step(
+            llm_step_result, has_reasoned = run_llm_step(
+                emitter=emitter,
                 history=truncated_message_history,
                 tool_definitions=[tool.tool_definition() for tool in final_tools],
                 tool_choice=tool_choice,
                 llm=llm,
-                turn_index=llm_cycle_count + reasoning_cycles,
+                placement=Placement(turn_index=llm_cycle_count + reasoning_cycles),
                 citation_processor=citation_processor,
                 state_container=state_container,
                 # The rich docs representation is passed in so that when yielding the answer, it can also
@@ -452,20 +475,8 @@ def run_llm_loop(
                 final_documents=gathered_documents,
                 user_identity=user_identity,
             )
-
-            # Consume the generator, emitting packets and capturing the final result
-            while True:
-                try:
-                    packet = next(step_generator)
-                    emitter.emit(packet)
-                except StopIteration as e:
-                    llm_step_result, has_reasoned = e.value
-                    if has_reasoned:
-                        reasoning_cycles += 1
-                    break
-
-            # Type narrowing: generator always returns a result, so this can't be None
-            llm_step_result = cast(LlmStepResult, llm_step_result)
+            if has_reasoned:
+                reasoning_cycles += 1
 
             # Save citation mapping after each LLM step for incremental state updates
             state_container.set_citation_mapping(citation_processor.citation_to_doc)
@@ -474,6 +485,16 @@ def run_llm_loop(
             # each tool might have custom logic here
             tool_responses: list[ToolResponse] = []
             tool_calls = llm_step_result.tool_calls or []
+
+            if len(tool_calls) > 1:
+                emitter.emit(
+                    Packet(
+                        placement=Placement(
+                            turn_index=tool_calls[0].placement.turn_index
+                        ),
+                        obj=TopLevelBranching(num_parallel_branches=len(tool_calls)),
+                    )
+                )
 
             # Quick note for why citation_mapping and citation_processors are both needed:
             # 1. Tools return lightweight string mappings, not SearchDoc objects
@@ -489,7 +510,7 @@ def run_llm_loop(
                 memories=memories,
                 user_info=None,  # TODO, this is part of memories right now, might want to separate it out
                 citation_mapping=citation_mapping,
-                citation_processor=citation_processor,
+                next_citation_num=citation_processor.get_next_citation_number(),
                 skip_search_query_expansion=has_called_search_tool,
             )
 
@@ -507,7 +528,7 @@ def run_llm_loop(
                     raise ValueError("Tool response missing tool_call reference")
 
                 tool_call = tool_response.tool_call
-                tab_index = tool_call.tab_index
+                tab_index = tool_call.placement.tab_index
 
                 # Track if search tool was called (for skipping query expansion on subsequent calls)
                 if tool_call.tool_name == SearchTool.NAME:
@@ -516,104 +537,81 @@ def run_llm_loop(
                 # Build a mapping of tool names to tool objects for getting tool_id
                 tools_by_name = {tool.name: tool for tool in final_tools}
 
-                # Add the results to the chat history, note that even if the tools were run in parallel, this isn't supported
-                # as all the LLM APIs require linear history, so these will just be included sequentially
-                for tool_call, tool_response in zip([tool_call], tool_responses):
-                    # Get the tool object to retrieve tool_id
-                    tool = tools_by_name.get(tool_call.tool_name)
-                    if not tool:
-                        raise ValueError(
-                            f"Tool '{tool_call.tool_name}' not found in tools list"
-                        )
-
-                    # Extract search_docs if this is a search tool response
-                    search_docs = None
-                    if isinstance(tool_response.rich_response, SearchDocsResponse):
-                        search_docs = tool_response.rich_response.search_docs
-                        if gathered_documents:
-                            gathered_documents.extend(search_docs)
-                        else:
-                            gathered_documents = search_docs
-
-                        # This is used for the Open URL reminder in the next cycle
-                        # only do this if the web search tool yielded results
-                        if search_docs and tool_call.tool_name == WebSearchTool.NAME:
-                            just_ran_web_search = True
-
-                    # Extract generated_images if this is an image generation tool response
-                    generated_images = None
-                    if isinstance(
-                        tool_response.rich_response, FinalImageGenerationResponse
-                    ):
-                        generated_images = tool_response.rich_response.generated_images
-
-                    tool_call_info = ToolCallInfo(
-                        parent_tool_call_id=None,  # Top-level tool calls are attached to the chat message
-                        turn_index=llm_cycle_count + reasoning_cycles,
-                        tab_index=tab_index,
-                        tool_name=tool_call.tool_name,
-                        tool_call_id=tool_call.tool_call_id,
-                        tool_id=tool.id,
-                        reasoning_tokens=llm_step_result.reasoning,  # All tool calls from this loop share the same reasoning
-                        tool_call_arguments=tool_call.tool_args,
-                        tool_call_response=tool_response.llm_facing_response,
-                        search_docs=search_docs,
-                        generated_images=generated_images,
+                # Add the results to the chat history. Even though tools may run in parallel,
+                # LLM APIs require linear history, so results are added sequentially.
+                # Get the tool object to retrieve tool_id
+                tool = tools_by_name.get(tool_call.tool_name)
+                if not tool:
+                    raise ValueError(
+                        f"Tool '{tool_call.tool_name}' not found in tools list"
                     )
-                    # Add to state container for partial save support
-                    state_container.add_tool_call(tool_call_info)
 
-                    # Store tool call with function name and arguments in separate layers
-                    tool_call_message = tool_call.to_msg_str()
-                    tool_call_token_count = token_counter(tool_call_message)
+                # Extract search_docs if this is a search tool response
+                search_docs = None
+                if isinstance(tool_response.rich_response, SearchDocsResponse):
+                    search_docs = tool_response.rich_response.search_docs
+                    if gathered_documents:
+                        gathered_documents.extend(search_docs)
+                    else:
+                        gathered_documents = search_docs
 
-                    tool_call_msg = ChatMessageSimple(
-                        message=tool_call_message,
-                        token_count=tool_call_token_count,
-                        message_type=MessageType.TOOL_CALL,
-                        tool_call_id=tool_call.tool_call_id,
-                        image_files=None,
-                    )
-                    simple_chat_history.append(tool_call_msg)
+                    # This is used for the Open URL reminder in the next cycle
+                    # only do this if the web search tool yielded results
+                    if search_docs and tool_call.tool_name == WebSearchTool.NAME:
+                        just_ran_web_search = True
 
-                    tool_response_message = tool_response.llm_facing_response
-                    tool_response_token_count = token_counter(tool_response_message)
+                # Extract generated_images if this is an image generation tool response
+                generated_images = None
+                if isinstance(
+                    tool_response.rich_response, FinalImageGenerationResponse
+                ):
+                    generated_images = tool_response.rich_response.generated_images
 
-                    tool_response_msg = ChatMessageSimple(
-                        message=tool_response_message,
-                        token_count=tool_response_token_count,
-                        message_type=MessageType.TOOL_CALL_RESPONSE,
-                        tool_call_id=tool_call.tool_call_id,
-                        image_files=None,
-                    )
-                    simple_chat_history.append(tool_response_msg)
+                tool_call_info = ToolCallInfo(
+                    parent_tool_call_id=None,  # Top-level tool calls are attached to the chat message
+                    turn_index=llm_cycle_count + reasoning_cycles,
+                    tab_index=tab_index,
+                    tool_name=tool_call.tool_name,
+                    tool_call_id=tool_call.tool_call_id,
+                    tool_id=tool.id,
+                    reasoning_tokens=llm_step_result.reasoning,  # All tool calls from this loop share the same reasoning
+                    tool_call_arguments=tool_call.tool_args,
+                    tool_call_response=tool_response.llm_facing_response,
+                    search_docs=search_docs,
+                    generated_images=generated_images,
+                )
+                # Add to state container for partial save support
+                state_container.add_tool_call(tool_call_info)
 
-                    # Update citation processor if this was a search tool
-                    if tool_call.tool_name in citeable_tools_names:
-                        # Check if the rich_response is a SearchDocsResponse
-                        if isinstance(tool_response.rich_response, SearchDocsResponse):
-                            search_response = tool_response.rich_response
+                # Store tool call with function name and arguments in separate layers
+                tool_call_message = tool_call.to_msg_str()
+                tool_call_token_count = token_counter(tool_call_message)
 
-                            # Create mapping from citation number to SearchDoc
-                            citation_to_doc: dict[int, SearchDoc] = {}
-                            for (
-                                citation_num,
-                                doc_id,
-                            ) in search_response.citation_mapping.items():
-                                # Find the SearchDoc with this doc_id
-                                matching_doc = next(
-                                    (
-                                        doc
-                                        for doc in search_response.search_docs
-                                        if doc.document_id == doc_id
-                                    ),
-                                    None,
-                                )
-                                if matching_doc:
-                                    citation_to_doc[citation_num] = matching_doc
+                tool_call_msg = ChatMessageSimple(
+                    message=tool_call_message,
+                    token_count=tool_call_token_count,
+                    message_type=MessageType.TOOL_CALL,
+                    tool_call_id=tool_call.tool_call_id,
+                    image_files=None,
+                )
+                simple_chat_history.append(tool_call_msg)
 
-                            # Update the citation processor
-                            citation_processor.update_citation_mapping(citation_to_doc)
+                tool_response_message = tool_response.llm_facing_response
+                tool_response_token_count = token_counter(tool_response_message)
+
+                tool_response_msg = ChatMessageSimple(
+                    message=tool_response_message,
+                    token_count=tool_response_token_count,
+                    message_type=MessageType.TOOL_CALL_RESPONSE,
+                    tool_call_id=tool_call.tool_call_id,
+                    image_files=None,
+                )
+                simple_chat_history.append(tool_response_msg)
+
+                # Update citation processor if this was a search tool
+                update_citation_processor_from_tool_response(
+                    tool_response, citation_processor
+                )
 
             # If no tool calls, then it must have answered, wrap up
             if not llm_step_result.tool_calls or len(llm_step_result.tool_calls) == 0:
@@ -621,13 +619,13 @@ def run_llm_loop(
 
             # Certain tools do not allow further actions, force the LLM wrap up on the next cycle
             if any(
-                tool.tool_name in stopping_tools_names
+                tool.tool_name in STOPPING_TOOLS_NAMES
                 for tool in llm_step_result.tool_calls
             ):
                 ran_image_gen = True
 
             if llm_step_result.tool_calls and any(
-                tool.tool_name in citeable_tools_names
+                tool.tool_name in CITEABLE_TOOLS_NAMES
                 for tool in llm_step_result.tool_calls
             ):
                 # As long as 1 tool with citeable documents is called at any point, we ask the LLM to try to cite
@@ -638,7 +636,7 @@ def run_llm_loop(
 
         emitter.emit(
             Packet(
-                turn_index=llm_cycle_count + reasoning_cycles,
+                placement=Placement(turn_index=llm_cycle_count + reasoning_cycles),
                 obj=OverallStop(type="stop"),
             )
         )

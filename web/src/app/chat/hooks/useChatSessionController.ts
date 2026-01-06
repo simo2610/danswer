@@ -27,6 +27,7 @@ import { useForcedTools } from "@/lib/hooks/useForcedTools";
 import { ProjectFile } from "../projects/projectsService";
 import { getSessionProjectTokenCount } from "../projects/projectsService";
 import { getProjectFilesForSession } from "../projects/projectsService";
+import { ChatInputBarHandle } from "../components/input/ChatInputBar";
 
 interface UseChatSessionControllerProps {
   existingChatSessionId: string | null;
@@ -44,7 +45,7 @@ interface UseChatSessionControllerProps {
   // Refs
   chatSessionIdRef: React.RefObject<string | null>;
   loadedIdSessionRef: React.RefObject<string | null>;
-  textAreaRef: React.RefObject<HTMLTextAreaElement | null>;
+  chatInputBarRef: React.RefObject<ChatInputBarHandle | null>;
   isInitialLoad: React.RefObject<boolean>;
   submitOnLoadPerformed: React.RefObject<boolean>;
 
@@ -53,7 +54,7 @@ interface UseChatSessionControllerProps {
   onSubmit: (params: {
     message: string;
     currentMessageFiles: ProjectFile[];
-    useAgentSearch: boolean;
+    deepResearch: boolean;
     isSeededChat?: boolean;
   }) => Promise<void>;
 }
@@ -68,7 +69,7 @@ export function useChatSessionController({
   setCurrentMessageFiles,
   chatSessionIdRef,
   loadedIdSessionRef,
-  textAreaRef,
+  chatInputBarRef,
   isInitialLoad,
   submitOnLoadPerformed,
   refreshChatSessions,
@@ -114,13 +115,22 @@ export function useChatSessionController({
     chatSessionIdRef.current = existingChatSessionId;
     loadedIdSessionRef.current = existingChatSessionId;
 
-    textAreaRef.current?.focus();
+    chatInputBarRef.current?.focus();
 
-    // Only clear things if we're going from one chat session to another
-    const isChatSessionSwitch = existingChatSessionId !== priorChatSessionId;
-    if (isChatSessionSwitch) {
-      // De-select documents
-      // Reset all filters
+    const isCreatingNewSession =
+      priorChatSessionId === null && existingChatSessionId !== null;
+    const isSwitchingBetweenSessions =
+      priorChatSessionId !== null &&
+      existingChatSessionId !== priorChatSessionId;
+
+    // Clear uploaded files on any session change (they're already in context)
+    if (isCreatingNewSession || isSwitchingBetweenSessions) {
+      setCurrentMessageFiles([]);
+    }
+
+    // Only reset filters/selections when switching between existing sessions
+    if (isSwitchingBetweenSessions) {
+      setSelectedDocuments([]);
       filterManager.setSelectedDocumentSets([]);
       filterManager.setSelectedSources([]);
       filterManager.setSelectedTags([]);
@@ -157,7 +167,7 @@ export function useChatSessionController({
           await onSubmit({
             message: firstMessage || "",
             currentMessageFiles: [],
-            useAgentSearch: false,
+            deepResearch: false,
           });
         }
         return;
@@ -255,14 +265,14 @@ export function useChatSessionController({
           message: seededMessage,
           isSeededChat: true,
           currentMessageFiles: [],
-          useAgentSearch: false,
+          deepResearch: false,
         });
         // Force re-name if the chat session doesn't have one
         if (!chatSession.description) {
           await nameChatSession(existingChatSessionId);
           refreshChatSessions();
         }
-      } else if (newMessageHistory.length === 2 && !chatSession.description) {
+      } else if (newMessageHistory.length >= 2 && !chatSession.description) {
         await nameChatSession(existingChatSessionId);
         refreshChatSessions();
       }

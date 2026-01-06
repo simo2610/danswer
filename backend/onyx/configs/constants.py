@@ -210,6 +210,7 @@ class DocumentSource(str, Enum):
     EGNYTE = "egnyte"
     AIRTABLE = "airtable"
     HIGHSPOT = "highspot"
+    DRUPAL_WIKI = "drupal_wiki"
 
     IMAP = "imap"
     BITBUCKET = "bitbucket"
@@ -333,7 +334,6 @@ class FileType(str, Enum):
 class MilestoneRecordType(str, Enum):
     TENANT_CREATED = "tenant_created"
     USER_SIGNED_UP = "user_signed_up"
-    MULTIPLE_USERS = "multiple_users"
     VISITED_ADMIN_PAGE = "visited_admin_page"
     CREATED_CONNECTOR = "created_connector"
     CONNECTOR_SUCCEEDED = "connector_succeeded"
@@ -493,7 +493,7 @@ class OnyxCeleryTask:
     CHECK_FOR_PRUNING = "check_for_pruning"
     CHECK_FOR_DOC_PERMISSIONS_SYNC = "check_for_doc_permissions_sync"
     CHECK_FOR_EXTERNAL_GROUP_SYNC = "check_for_external_group_sync"
-    CHECK_FOR_LLM_MODEL_UPDATE = "check_for_llm_model_update"
+    CHECK_FOR_AUTO_LLM_UPDATE = "check_for_auto_llm_update"
 
     # User file processing
     CHECK_FOR_USER_FILE_PROCESSING = "check_for_user_file_processing"
@@ -563,9 +563,9 @@ REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPINTVL] = 15
 REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPCNT] = 3
 
 if platform.system() == "Darwin":
-    REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPALIVE] = 60  # type: ignore
+    REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPALIVE] = 60  # type: ignore[attr-defined,unused-ignore]
 else:
-    REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPIDLE] = 60  # type: ignore
+    REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPIDLE] = 60  # type: ignore[attr-defined,unused-ignore]
 
 
 class OnyxCallTypes(str, Enum):
@@ -630,6 +630,7 @@ project management, and collaboration tools into a single, customizable platform
     DocumentSource.EGNYTE: "egnyte - files",
     DocumentSource.AIRTABLE: "airtable - database",
     DocumentSource.HIGHSPOT: "highspot - CRM data",
+    DocumentSource.DRUPAL_WIKI: "drupal wiki - knowledge base content (pages, spaces, attachments)",
     DocumentSource.IMAP: "imap - email data",
     DocumentSource.TESTRAIL: "testrail - test case management tool for QA processes",
 }

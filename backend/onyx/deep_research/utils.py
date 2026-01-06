@@ -3,10 +3,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from onyx.deep_research.dr_mock_tools import GENERATE_REPORT_TOOL_NAME
 from onyx.deep_research.dr_mock_tools import THINK_TOOL_NAME
+from onyx.deep_research.models import SpecialToolCalls
 from onyx.llm.model_response import ChatCompletionDeltaToolCall
 from onyx.llm.model_response import Delta
 from onyx.llm.model_response import FunctionCall
+from onyx.tools.models import ToolCallKickoff
 
 
 # JSON prefixes to detect in think_tool arguments
@@ -27,6 +30,34 @@ class ThinkToolProcessorState(BaseModel):
     # Buffer holds content that might be the JSON suffix "}
     # We hold back 2 chars to avoid emitting the closing "}
     buffer: str = ""
+
+
+def _unescape_json_string(s: str) -> str:
+    """
+    Unescape JSON string escape sequences.
+
+    JSON strings use backslash escapes like \\n for newlines, \\t for tabs, etc.
+    When we extract content from JSON by string manipulation (without json.loads),
+    we need to manually decode these escape sequences.
+
+    Note: We use a placeholder approach to handle escaped backslashes correctly.
+    For example, "\\\\n" (escaped backslash + n) should become "\\n" (literal backslash + n),
+    not a newline character.
+    """
+    # First, protect escaped backslashes with a placeholder
+    placeholder = "\x00ESCAPED_BACKSLASH\x00"
+    result = s.replace("\\\\", placeholder)
+
+    # Now unescape common JSON escape sequences
+    result = result.replace("\\n", "\n")
+    result = result.replace("\\r", "\r")
+    result = result.replace("\\t", "\t")
+    result = result.replace('\\"', '"')
+
+    # Finally, restore escaped backslashes as single backslashes
+    result = result.replace(placeholder, "\\")
+
+    return result
 
 
 def _extract_reasoning_chunk(state: ThinkToolProcessorState) -> str | None:
@@ -56,13 +87,33 @@ def _extract_reasoning_chunk(state: ThinkToolProcessorState) -> str | None:
         state.buffer += state.accumulated_args
         state.accumulated_args = ""
 
-    # Hold back last 2 chars in case they're the JSON suffix "}
-    if len(state.buffer) <= 2:
+    # Hold back enough chars to avoid splitting escape sequences AND the JSON suffix "}
+    # We need at least 2 for the suffix, but we also need to ensure escape sequences
+    # like \n, \t, \\, \" don't get split. The longest escape is \\ (2 chars).
+    # So we hold back 3 chars to be safe: if the last char is \, we don't want to
+    # emit it without knowing what follows.
+    holdback = 3
+    if len(state.buffer) <= holdback:
         return None
 
-    # Emit everything except last 2 chars
-    to_emit = state.buffer[:-2]
-    state.buffer = state.buffer[-2:]
+    # Check if there's a trailing backslash that could be part of an escape sequence
+    # If so, hold back one more character to avoid splitting the escape
+    to_emit = state.buffer[:-holdback]
+    remaining = state.buffer[-holdback:]
+
+    # If to_emit ends with a backslash, it might be the start of an escape sequence
+    # Move it to the remaining buffer to process with the next chunk
+    # If to_emit ends with a backslash, it might be the start of an escape sequence
+    # Move it to the remaining buffer to process with the next chunk
+    if to_emit and to_emit[-1] == "\\":
+        remaining = to_emit[-1] + remaining
+        to_emit = to_emit[:-1]
+
+    state.buffer = remaining
+
+    # Unescape JSON escape sequences (e.g., \\n -> \n)
+    if to_emit:
+        to_emit = _unescape_json_string(to_emit)
 
     return to_emit if to_emit else None
 
@@ -81,7 +132,7 @@ def create_think_tool_token_processor() -> (
     which gets displayed as reasoning tokens in the UI.
 
     Returns:
-        A function compatible with run_llm_step's custom_token_processor parameter.
+        A function compatible with run_llm_step_pkt_generator's custom_token_processor parameter.
         The function takes (Delta, state) and returns (modified Delta | None, new state).
     """
 
@@ -147,3 +198,19 @@ def create_think_tool_token_processor() -> (
         return delta, state
 
     return process_token
+
+
+def check_special_tool_calls(tool_calls: list[ToolCallKickoff]) -> SpecialToolCalls:
+    think_tool_call: ToolCallKickoff | None = None
+    generate_report_tool_call: ToolCallKickoff | None = None
+
+    for tool_call in tool_calls:
+        if tool_call.tool_name == THINK_TOOL_NAME:
+            think_tool_call = tool_call
+        elif tool_call.tool_name == GENERATE_REPORT_TOOL_NAME:
+            generate_report_tool_call = tool_call
+
+    return SpecialToolCalls(
+        think_tool_call=think_tool_call,
+        generate_report_tool_call=generate_report_tool_call,
+    )
