@@ -63,11 +63,9 @@ def fetch_usage_limit_overrides() -> dict[str, TenantUsageLimitOverrides] | None
         return None
 
 
-def load_usage_limit_overrides() -> dict[str, TenantUsageLimitOverrides] | None:
+def load_usage_limit_overrides() -> None:
     """
     Load tenant usage limit overrides from the control plane.
-
-    Called at server startup to populate the in-memory cache.
     """
     global _tenant_usage_limit_overrides
     global _last_fetch_time
@@ -76,13 +74,15 @@ def load_usage_limit_overrides() -> dict[str, TenantUsageLimitOverrides] | None:
     overrides = fetch_usage_limit_overrides()
 
     _last_fetch_time = time.time()
-    _tenant_usage_limit_overrides = overrides
+
+    # use the new result if it exists, otherwise use the old result
+    # (prevents us from updating to a failed fetch result)
+    _tenant_usage_limit_overrides = overrides or _tenant_usage_limit_overrides
 
     if overrides:
         logger.info(f"Loaded usage limit overrides for {len(overrides)} tenants")
     else:
         logger.info("No tenant-specific usage limit overrides found")
-    return overrides
 
 
 def unlimited(tenant_id: str) -> TenantUsageLimitOverrides:
@@ -119,7 +119,8 @@ def get_tenant_usage_limit_overrides(
         logger.debug(
             f"Last fetch time: {_last_fetch_time}, time since last fetch: {time_since}"
         )
-        _tenant_usage_limit_overrides = load_usage_limit_overrides()
+
+        load_usage_limit_overrides()
 
     # If we have failed to fetch from the control plane, don't usage limit everyone.
     if _tenant_usage_limit_overrides is None:
