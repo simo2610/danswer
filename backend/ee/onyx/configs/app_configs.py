@@ -133,3 +133,9 @@ GATED_TENANTS_KEY = "gated_tenants"
 LICENSE_ENFORCEMENT_ENABLED = (
     os.environ.get("LICENSE_ENFORCEMENT_ENABLED", "").lower() == "true"
 )
+
+# Cloud data plane URL - self-hosted instances call this to reach cloud proxy endpoints
+# Used when MULTI_TENANT=false (self-hosted mode)
+CLOUD_DATA_PLANE_URL = os.environ.get(
+    "CLOUD_DATA_PLANE_URL", "https://cloud.onyx.app/api"
+)
