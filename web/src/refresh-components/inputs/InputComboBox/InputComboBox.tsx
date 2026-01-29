@@ -113,6 +113,7 @@ import { ComboBoxDropdown } from "./components/ComboBoxDropdown";
 // Types
 import { InputComboBoxProps, ComboBoxOption } from "./types";
 import { SvgChevronDown, SvgChevronUp } from "@opal/icons";
+import { WithoutStyles } from "@/types";
 
 const InputComboBox = ({
   value,
@@ -128,9 +129,8 @@ const InputComboBox = ({
   leftSearchIcon = false,
   rightSection,
   separatorLabel = "Other options",
-  className,
   ...rest
-}: InputComboBoxProps) => {
+}: WithoutStyles<InputComboBoxProps>) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fieldContext = useContext(FieldContext);
@@ -363,8 +363,8 @@ const InputComboBox = ({
   }, [isOpen, inputValue, value, options, hasOptions]);
 
   return (
-    <div ref={refs.setReference} className={cn("relative w-full", className)}>
-      <div className="relative">
+    <div ref={refs.setReference} className="relative w-full">
+      <>
         <InputTypeIn
           ref={inputRef}
           placeholder={placeholder}
@@ -372,8 +372,7 @@ const InputComboBox = ({
           onChange={handleInputChange}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
-          disabled={disabled}
-          error={!isValid}
+          variant={disabled ? "disabled" : !isValid ? "error" : undefined}
           leftSearchIcon={leftSearchIcon}
           showClearButton={false}
           rightSection={
@@ -438,7 +437,7 @@ const InputComboBox = ({
           allowCreate={!strict}
           showCreateOption={showCreateOption}
         />
-      </div>
+      </>
 
       {/* Error message - only show internal error messages when not using external isError */}
       {!isValid && errorMessage && externalIsError === undefined && (

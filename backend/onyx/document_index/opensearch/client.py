@@ -1,8 +1,12 @@
 import logging
+import time
 from typing import Any
+from typing import Generic
+from typing import TypeVar
 
 from opensearchpy import OpenSearch
 from opensearchpy.exceptions import TransportError
+from pydantic import BaseModel
 
 from onyx.configs.app_configs import OPENSEARCH_ADMIN_PASSWORD
 from onyx.configs.app_configs import OPENSEARCH_ADMIN_USERNAME
@@ -17,8 +21,34 @@ from onyx.utils.logger import setup_logger
 logger = setup_logger(__name__)
 # Set the logging level to WARNING to ignore INFO and DEBUG logs from
 # opensearch. By default it emits INFO-level logs for every request.
+# TODO(andrei): I don't think this is working as intended, I still see spam in
+# logs. The module name is probably wrong or opensearchpy initializes a logger
+# dynamically along with an instance of a client class. Look at the constructor
+# for OpenSearch.
 opensearch_logger = logging.getLogger("opensearchpy")
 opensearch_logger.setLevel(logging.WARNING)
+
+
+SchemaDocumentModel = TypeVar("SchemaDocumentModel")
+
+
+class SearchHit(BaseModel, Generic[SchemaDocumentModel]):
+    """Represents a hit from OpenSearch in response to a query.
+
+    Templated on the specific document model as defined by a schema.
+    """
+
+    model_config = {"frozen": True}
+
+    # The document chunk source retrieved from OpenSearch.
+    document_chunk: SchemaDocumentModel
+    # The match score for the document chunk as calculated by OpenSearch. Only
+    # relevant for "fuzzy searches"; this will be None for direct queries where
+    # score is not relevant like direct retrieval on ID.
+    score: float | None = None
+    # Maps schema property name to a list of highlighted snippets with match
+    # terms wrapped in tags (e.g. "something <hi>keyword</hi> other thing").
+    match_highlights: dict[str, list[str]] = {}
 
 
 class OpenSearchClient:
@@ -230,9 +260,9 @@ class OpenSearchClient:
             )
         result_string: str = result.get("result", "")
         match result_string:
+            # Sanity check.
             case "created":
                 return
-            # Sanity check.
             case "updated":
                 raise RuntimeError(
                     f'The OpenSearch client returned result "updated" for indexing document chunk "{document_chunk_id}". '
@@ -307,9 +337,49 @@ class OpenSearchClient:
 
         return num_deleted
 
-    def update_document(self) -> None:
-        # TODO(andrei): Implement this.
-        raise NotImplementedError("Not implemented.")
+    def update_document(
+        self, document_chunk_id: str, properties_to_update: dict[str, Any]
+    ) -> None:
+        """Updates a document's properties.
+
+        Args:
+            document_chunk_id: The OpenSearch ID of the document chunk to
+                update.
+            properties_to_update: The properties of the document to update. Each
+                property should exist in the schema.
+
+        Raises:
+            Exception: There was an error updating the document.
+        """
+        update_body: dict[str, Any] = {"doc": properties_to_update}
+        result = self._client.update(
+            index=self._index_name,
+            id=document_chunk_id,
+            body=update_body,
+            _source=False,
+        )
+        result_id = result.get("_id", "")
+        # Sanity check.
+        if result_id != document_chunk_id:
+            raise RuntimeError(
+                f'Upon trying to update a document, OpenSearch responded with ID "{result_id}" '
+                f'instead of "{document_chunk_id}" which is the ID it was given.'
+            )
+        result_string: str = result.get("result", "")
+        match result_string:
+            # Sanity check.
+            case "updated":
+                return
+            case "noop":
+                logger.warning(
+                    f'OpenSearch reported a no-op when trying to update document with ID "{document_chunk_id}".'
+                )
+                return
+            case _:
+                raise RuntimeError(
+                    f'The OpenSearch client returned result "{result_string}" for updating document chunk "{document_chunk_id}". '
+                    "This is unexpected."
+                )
 
     def get_document(self, document_chunk_id: str) -> DocumentChunk:
         """Gets a document.
@@ -378,12 +448,13 @@ class OpenSearchClient:
 
     def search(
         self, body: dict[str, Any], search_pipeline_id: str | None
-    ) -> list[DocumentChunk]:
+    ) -> list[SearchHit[DocumentChunk]]:
         """Searches the index.
 
         TODO(andrei): Ideally we could check that every field in the body is
         present in the index, to avoid a class of runtime bugs that could easily
-        be caught during development.
+        be caught during development. Or change the function signature to accept
+        a predefined pydantic model of allowed fields.
 
         Args:
             body: The body of the search request. See the OpenSearch
@@ -395,7 +466,7 @@ class OpenSearchClient:
             Exception: There was an error searching the index.
 
         Returns:
-            List of document chunks that match the search request.
+            List of search hits that match the search request.
         """
         result: dict[str, Any]
         if search_pipeline_id:
@@ -407,15 +478,22 @@ class OpenSearchClient:
 
         hits = self._get_hits_from_search_result(result)
 
-        result_chunks: list[DocumentChunk] = []
+        search_hits: list[SearchHit[DocumentChunk]] = []
         for hit in hits:
             document_chunk_source: dict[str, Any] | None = hit.get("_source")
             if not document_chunk_source:
                 raise RuntimeError(
                     f"Document chunk with ID \"{hit.get('_id', '')}\" has no data."
                 )
-            result_chunks.append(DocumentChunk.model_validate(document_chunk_source))
-        return result_chunks
+            document_chunk_score = hit.get("_score", None)
+            match_highlights: dict[str, list[str]] = hit.get("highlight", {})
+            search_hit = SearchHit[DocumentChunk](
+                document_chunk=DocumentChunk.model_validate(document_chunk_source),
+                score=document_chunk_score,
+                match_highlights=match_highlights,
+            )
+            search_hits.append(search_hit)
+        return search_hits
 
     def search_for_document_ids(self, body: dict[str, Any]) -> list[str]:
         """Searches the index and returns only document chunk IDs.
@@ -481,6 +559,36 @@ class OpenSearchClient:
         """
         self._client.indices.refresh(index=self._index_name)
 
+    def set_cluster_auto_create_index_setting(self, enabled: bool) -> bool:
+        """Sets the cluster auto create index setting.
+
+        By default, when you index a document to a non-existent index,
+        OpenSearch will automatically create the index. This behavior is
+        undesirable so this function exposes the ability to disable it.
+
+        See
+        https://docs.opensearch.org/latest/install-and-configure/configuring-opensearch/index/#updating-cluster-settings-using-the-api
+
+        Args:
+            enabled: Whether to enable the auto create index setting.
+
+        Returns:
+            True if the setting was updated successfully, False otherwise. Does
+                not raise.
+        """
+        try:
+            body = {"persistent": {"action.auto_create_index": enabled}}
+            response = self._client.cluster.put_settings(body=body)
+            if response.get("acknowledged", False):
+                logger.info(f"Successfully set action.auto_create_index to {enabled}.")
+                return True
+            else:
+                logger.error(f"Failed to update setting: {response}.")
+                return False
+        except Exception:
+            logger.exception("Error setting auto_create_index.")
+            return False
+
     def ping(self) -> bool:
         """Pings the OpenSearch cluster.
 
@@ -491,6 +599,9 @@ class OpenSearchClient:
 
     def close(self) -> None:
         """Closes the client.
+
+        TODO(andrei): Can we have some way to auto close when the client no
+        longer has any references?
 
         Raises:
             Exception: There was an error closing the client.
@@ -519,3 +630,55 @@ class OpenSearchClient:
             )
         hits_second_layer: list[Any] = hits_first_layer.get("hits", [])
         return hits_second_layer
+
+
+def wait_for_opensearch_with_timeout(
+    wait_interval_s: int = 5,
+    wait_limit_s: int = 60,
+    client: OpenSearchClient | None = None,
+) -> bool:
+    """Waits for OpenSearch to become ready subject to a timeout.
+
+    Will create a new dummy client if no client is provided. Will close this
+    client at the end of the function. Will not close the client if it was
+    supplied.
+
+    Args:
+        wait_interval_s: The interval in seconds to wait between checks.
+            Defaults to 5.
+        wait_limit_s: The total timeout in seconds to wait for OpenSearch to
+            become ready. Defaults to 60.
+        client: The OpenSearch client to use for pinging. If None, a new dummy
+            client will be created. Defaults to None.
+
+    Returns:
+        True if OpenSearch is ready, False otherwise.
+    """
+    made_client = False
+    try:
+        if client is None:
+            # NOTE: index_name does not matter because we are only using this object
+            # to ping.
+            # TODO(andrei): Make this better.
+            client = OpenSearchClient(index_name="")
+            made_client = True
+        time_start = time.monotonic()
+        while True:
+            if client.ping():
+                logger.info("[OpenSearch] Readiness probe succeeded. Continuing...")
+                return True
+            time_elapsed = time.monotonic() - time_start
+            if time_elapsed > wait_limit_s:
+                logger.info(
+                    f"[OpenSearch] Readiness probe did not succeed within the timeout "
+                    f"({wait_limit_s} seconds)."
+                )
+                return False
+            logger.info(
+                f"[OpenSearch] Readiness probe ongoing. elapsed={time_elapsed:.1f} timeout={wait_limit_s:.1f}"
+            )
+            time.sleep(wait_interval_s)
+    finally:
+        if made_client:
+            assert client is not None
+            client.close()

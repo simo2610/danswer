@@ -63,6 +63,8 @@ from onyx.server.documents.connector import router as connector_router
 from onyx.server.documents.credential import router as credential_router
 from onyx.server.documents.document import router as document_router
 from onyx.server.documents.standard_oauth import router as standard_oauth_router
+from onyx.server.features.build.api.api import nextjs_assets_router
+from onyx.server.features.build.api.api import router as build_router
 from onyx.server.features.default_assistant.api import (
     router as default_assistant_router,
 )
@@ -96,6 +98,7 @@ from onyx.server.long_term_logs.long_term_logs_api import (
     router as long_term_logs_router,
 )
 from onyx.server.manage.administrative import router as admin_router
+from onyx.server.manage.discord_bot.api import router as discord_bot_router
 from onyx.server.manage.embedding.api import admin_router as embedding_admin_router
 from onyx.server.manage.embedding.api import basic_router as embedding_router
 from onyx.server.manage.get_state import router as state_router
@@ -117,7 +120,6 @@ from onyx.server.middleware.rate_limiting import setup_auth_limiter
 from onyx.server.onyx_api.ingestion import router as onyx_api_router
 from onyx.server.pat.api import router as pat_router
 from onyx.server.query_and_chat.chat_backend import router as chat_router
-from onyx.server.query_and_chat.chat_backend_v0 import router as chat_v0_router
 from onyx.server.query_and_chat.query_backend import (
     admin_router as admin_query_router,
 )
@@ -365,7 +367,6 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
 
     include_router_with_global_prefix_prepended(application, password_router)
     include_router_with_global_prefix_prepended(application, chat_router)
-    include_router_with_global_prefix_prepended(application, chat_v0_router)
     include_router_with_global_prefix_prepended(application, query_router)
     include_router_with_global_prefix_prepended(application, document_router)
     include_router_with_global_prefix_prepended(application, user_router)
@@ -377,11 +378,14 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     include_router_with_global_prefix_prepended(application, admin_input_prompt_router)
     include_router_with_global_prefix_prepended(application, cc_pair_router)
     include_router_with_global_prefix_prepended(application, projects_router)
+    include_router_with_global_prefix_prepended(application, build_router)
+    include_router_with_global_prefix_prepended(application, nextjs_assets_router)
     include_router_with_global_prefix_prepended(application, document_set_router)
     include_router_with_global_prefix_prepended(application, search_settings_router)
     include_router_with_global_prefix_prepended(
         application, slack_bot_management_router
     )
+    include_router_with_global_prefix_prepended(application, discord_bot_router)
     include_router_with_global_prefix_prepended(application, persona_router)
     include_router_with_global_prefix_prepended(application, admin_persona_router)
     include_router_with_global_prefix_prepended(application, agents_router)

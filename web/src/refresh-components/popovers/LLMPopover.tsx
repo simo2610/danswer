@@ -1,12 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  PopoverMenu,
-} from "@/components/ui/popover";
+import Popover, { PopoverMenu } from "@/refresh-components/Popover";
 import { LlmDescriptor, LlmManager } from "@/lib/hooks";
 import { structureValue } from "@/lib/llm/utils";
 import {
@@ -33,6 +28,7 @@ import {
   SvgRefreshCw,
 } from "@opal/icons";
 import { IconProps } from "@/components/icons/icons";
+import { Section } from "@/layouts/general-layouts";
 
 interface LLMOption {
   name: string;
@@ -356,7 +352,6 @@ export default function LLMPopover({
           selected={isSelected}
           description={description}
           onClick={() => handleSelectModel(option)}
-          icon={() => null}
           rightChildren={
             isSelected ? (
               <SvgCheck className="h-4 w-4 stroke-action-link-05 shrink-0" />
@@ -371,7 +366,7 @@ export default function LLMPopover({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild disabled={disabled}>
+      <Popover.Trigger asChild disabled={disabled}>
         <div data-testid="llm-popover-trigger">
           <SelectButton
             leftIcon={
@@ -392,30 +387,24 @@ export default function LLMPopover({
             {currentLlmDisplayName}
           </SelectButton>
         </div>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-[280px] p-1.5">
-        <div className="flex flex-col gap-2">
+      </Popover.Trigger>
+      <Popover.Content side="top" align="end" width="xl">
+        <Section gap={0.5}>
           {/* Search Input */}
           <InputTypeIn
             ref={searchInputRef}
             leftSearchIcon
-            internal
+            variant="internal"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search models..."
           />
 
           {/* Model List with Vendor Groups */}
-          <PopoverMenu
-            scrollContainerRef={scrollContainerRef}
-            className="w-full max-h-[22.5rem]"
-          >
+          <PopoverMenu scrollContainerRef={scrollContainerRef}>
             {isLoadingProviders
               ? [
-                  <div
-                    key="loading"
-                    className="flex items-center gap-2 px-2 py-3"
-                  >
+                  <div key="loading" className="flex items-center gap-2 py-3">
                     <SimpleLoader />
                     <Text secondaryBody text03>
                       Loading models...
@@ -424,7 +413,7 @@ export default function LLMPopover({
                 ]
               : groupedOptions.length === 0
                 ? [
-                    <div key="empty" className="px-2 py-3">
+                    <div key="empty" className="py-3">
                       <Text secondaryBody text03>
                         No models found
                       </Text>
@@ -460,7 +449,7 @@ export default function LLMPopover({
                               className="border-none pt-1"
                             >
                               {/* Group Header */}
-                              <AccordionTrigger className="flex items-center rounded-08 hover:no-underline hover:bg-background-tint-02 group [&>svg]:hidden w-full py-1 px-1.5">
+                              <AccordionTrigger className="flex items-center rounded-08 hover:no-underline hover:bg-background-tint-02 group [&>svg]:hidden w-full py-1">
                                 <div className="flex items-center gap-1 shrink-0">
                                   <div className="flex items-center justify-center size-5 shrink-0">
                                     <group.Icon size={16} />
@@ -501,7 +490,7 @@ export default function LLMPopover({
           {user?.preferences?.temperature_override_enabled && (
             <>
               <div className="border-t border-border-02 mx-2" />
-              <div className="flex flex-col w-full py-2 px-2 gap-2">
+              <div className="flex flex-col w-full py-2 gap-2">
                 <Slider
                   value={[localTemperature]}
                   max={llmManager.maxTemperature}
@@ -522,8 +511,8 @@ export default function LLMPopover({
               </div>
             </>
           )}
-        </div>
-      </PopoverContent>
+        </Section>
+      </Popover.Content>
     </Popover>
   );
 }

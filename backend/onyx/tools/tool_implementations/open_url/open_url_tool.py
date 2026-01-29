@@ -34,6 +34,9 @@ from onyx.tools.tool_implementations.open_url.url_normalization import (
     _default_url_normalizer,
 )
 from onyx.tools.tool_implementations.open_url.url_normalization import normalize_url
+from onyx.tools.tool_implementations.open_url.utils import (
+    filter_web_contents_with_no_title_or_content,
+)
 from onyx.tools.tool_implementations.web_search.providers import (
     get_default_content_provider,
 )
@@ -48,6 +51,9 @@ from shared_configs.contextvars import get_current_tenant_id
 logger = setup_logger()
 
 URLS_FIELD = "urls"
+
+# 2 minute timeout for parallel URL fetching to prevent indefinite hangs
+OPEN_URL_TIMEOUT_SECONDS = 2 * 60
 
 
 class IndexedDocumentRequest(BaseModel):
@@ -177,12 +183,17 @@ def _resolve_urls_to_document_ids(
         normalized = normalize_url(url)
 
         if normalized:
-            # Get URL variants (with/without trailing slash) for database lookup
-            variants = _url_lookup_variants(normalized)
-            if variants:
-                normalized_map[url] = variants
+            # Some connectors (e.g. Notion) normalize to a non-URL canonical document
+            # identifier (e.g. a UUID) rather than a URL. In those cases, we should
+            # treat the normalized value as a document_id directly.
+            if normalized.startswith(("http://", "https://")):
+                # Get URL variants (with/without trailing slash) for database lookup
+                variants = _url_lookup_variants(normalized)
+                # Defensive fallback: if variant generation fails, still try the
+                # normalized URL itself.
+                normalized_map[url] = variants or {normalized}
             else:
-                unresolved.append(url)
+                normalized_map[url] = {normalized}
         else:
             # No normalizer found - could be a non-URL document ID (e.g., FILE_CONNECTOR__...)
             if url and not url.startswith(("http://", "https://")):
@@ -467,20 +478,43 @@ class OpenURLTool(Tool[OpenURLToolOverrideKwargs]):
                 """Wrapper for parallel execution with pre-built filters."""
                 return self._retrieve_indexed_documents_with_filters(requests, filters)
 
+            # Track if timeout occurred for error reporting
+            timeout_occurred = [False]  # Using list for mutability in closure
+
+            def _timeout_handler(index: int, func: Any, args: tuple[Any, ...]) -> None:
+                timeout_occurred[0] = True
+                return None
+
             # Run indexed retrieval and crawling in parallel for all URLs
             # This allows us to compare results and pick the best representation
+            # Note: allow_failures=True ensures we get partial results even if one
+            # task times out or fails - the other task's results will still be used
             indexed_result, crawled_result = run_functions_tuples_in_parallel(
                 [
                     (_retrieve_indexed_with_filters, (all_requests,)),
-                    (self._fetch_web_content, (urls,)),
+                    (self._fetch_web_content, (urls, override_kwargs.url_snippet_map)),
                 ],
                 allow_failures=True,
+                timeout=OPEN_URL_TIMEOUT_SECONDS,
+                timeout_callback=_timeout_handler,
             )
 
             indexed_result = indexed_result or IndexedRetrievalResult(
                 sections=[], missing_document_ids=[]
             )
             crawled_sections, failed_web_urls = crawled_result or ([], [])
+
+            # If timeout occurred and we have no successful results from either path,
+            # return a timeout-specific error message
+            if (
+                timeout_occurred[0]
+                and not indexed_result.sections
+                and not crawled_sections
+            ):
+                return ToolResponse(
+                    rich_response=None,
+                    llm_facing_response="The call to open_url timed out",
+                )
 
             # Last-resort: attempt link-based lookup for URLs that failed both
             # document-ID resolution and crawling.
@@ -519,6 +553,11 @@ class OpenURLTool(Tool[OpenURLToolOverrideKwargs]):
                 else "Failed to fetch content from the requested resources."
             )
             return ToolResponse(rich_response=None, llm_facing_response=failure_msg)
+
+        for section in inference_sections:
+            chunk = section.center_chunk
+            if not chunk.semantic_identifier and chunk.source_links:
+                chunk.semantic_identifier = chunk.source_links[0]
 
         # Convert sections to search docs, preserving source information
         search_docs = convert_inference_sections_to_search_docs(
@@ -761,20 +800,28 @@ class OpenURLTool(Tool[OpenURLToolOverrideKwargs]):
         return merged_sections
 
     def _fetch_web_content(
-        self, urls: list[str]
+        self, urls: list[str], url_snippet_map: dict[str, str]
     ) -> tuple[list[InferenceSection], list[str]]:
         if not urls:
             return [], []
 
-        web_contents = self._provider.contents(urls)
+        raw_web_contents = self._provider.contents(urls)
+        # Treat "no title and no content" as a failure for that URL, but don't
+        # include the empty entry in downstream prompting/sections.
+        failed_urls: list[str] = [
+            content.link
+            for content in raw_web_contents
+            if not content.title.strip() and not content.full_content.strip()
+        ]
+        web_contents = filter_web_contents_with_no_title_or_content(raw_web_contents)
         sections: list[InferenceSection] = []
-        failed_urls: list[str] = []
 
         for content in web_contents:
             # Check if content is insufficient (e.g., "Loading..." or too short)
             text_stripped = content.full_content.strip()
             is_insufficient = (
                 not text_stripped
+                # TODO: Likely a behavior of our scraper, understand why this special pattern occurs
                 or text_stripped.lower() == "loading..."
                 or len(text_stripped) < 50
             )
@@ -784,8 +831,15 @@ class OpenURLTool(Tool[OpenURLToolOverrideKwargs]):
                 and content.full_content
                 and not is_insufficient
             ):
-                sections.append(inference_section_from_internet_page_scrape(content))
+                sections.append(
+                    inference_section_from_internet_page_scrape(
+                        content, url_snippet_map.get(content.link, "")
+                    )
+                )
             else:
+                # TODO: Slight improvement - if failed URL reasons are passed back to the LLM
+                # for example, if it tries to crawl Reddit and fails, it should know (probably) that this error would
+                # happen again if it tried to crawl Reddit again.
                 failed_urls.append(content.link or "")
 
         return sections, failed_urls

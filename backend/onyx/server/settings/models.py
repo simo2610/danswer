@@ -27,6 +27,8 @@ class Notification(BaseModel):
     dismissed: bool
     last_shown: datetime
     first_shown: datetime
+    title: str
+    description: str | None = None
     additional_data: dict | None = None
 
     @classmethod
@@ -37,6 +39,8 @@ class Notification(BaseModel):
             dismissed=notif.dismissed,
             last_shown=notif.last_shown,
             first_shown=notif.first_shown,
+            title=notif.title,
+            description=notif.description,
             additional_data=notif.additional_data,
         )
 
@@ -76,3 +80,5 @@ class UserSettings(Settings):
     notifications: list[Notification]
     needs_reindexing: bool
     tenant_id: str = POSTGRES_DEFAULT_SCHEMA
+    # Feature flag for Onyx Craft (Build Mode) - used for server-side redirects
+    onyx_craft_enabled: bool = False

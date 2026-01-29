@@ -11,6 +11,7 @@ from typing import Any
 from typing import cast
 from typing import Dict
 from typing import List
+from typing import Literal
 from typing import Optional
 from typing import Protocol
 from typing import Tuple
@@ -60,6 +61,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from onyx.auth.api_key import get_hashed_api_key_from_request
+from onyx.auth.disposable_email_validator import is_disposable_email
 from onyx.auth.email_utils import send_forgot_password_email
 from onyx.auth.email_utils import send_user_verification_email
 from onyx.auth.invited_users import get_invited_users
@@ -248,13 +250,23 @@ def verify_email_in_whitelist(email: str, tenant_id: str) -> None:
 
 
 def verify_email_domain(email: str) -> None:
+    if email.count("@") != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is not valid",
+        )
+
+    domain = email.split("@")[-1].lower()
+
+    # Check if email uses a disposable/temporary domain
+    if is_disposable_email(email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Disposable email addresses are not allowed. Please use a permanent email address.",
+        )
+
+    # Check domain whitelist if configured
     if VALID_EMAIL_DOMAINS:
-        if email.count("@") != 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email is not valid",
-            )
-        domain = email.split("@")[-1].lower()
         if domain not in VALID_EMAIL_DOMAINS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -322,6 +334,27 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             user_create.password, cast(schemas.UC, user_create)
         )
 
+        # Check for disposable emails BEFORE provisioning tenant
+        # This prevents creating tenants for throwaway email addresses
+        try:
+            verify_email_domain(user_create.email)
+        except HTTPException as e:
+            # Log blocked disposable email attempts
+            if (
+                e.status_code == status.HTTP_400_BAD_REQUEST
+                and "Disposable email" in str(e.detail)
+            ):
+                domain = (
+                    user_create.email.split("@")[-1]
+                    if "@" in user_create.email
+                    else "unknown"
+                )
+                logger.warning(
+                    f"Blocked disposable email registration attempt: {domain}",
+                    extra={"email_domain": domain},
+                )
+            raise
+
         user_count: int | None = None
         referral_source = (
             request.cookies.get("referral_source", None)
@@ -343,8 +376,17 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         token = CURRENT_TENANT_ID_CONTEXTVAR.set(tenant_id)
         try:
             async with get_async_session_context_manager(tenant_id) as db_session:
-                verify_email_is_invited(user_create.email)
-                verify_email_domain(user_create.email)
+                # Check invite list based on deployment mode
+                if MULTI_TENANT:
+                    # Multi-tenant: Only require invite for existing tenants
+                    # New tenant creation (first user) doesn't require an invite
+                    user_count = await get_user_count()
+                    if user_count > 0:
+                        # Tenant already has users - require invite for new users
+                        verify_email_is_invited(user_create.email)
+                else:
+                    # Single-tenant: Check invite list (skips if SAML/OIDC or no list configured)
+                    verify_email_is_invited(user_create.email)
                 if MULTI_TENANT:
                     tenant_user_db = SQLAlchemyUserAdminDB[User, uuid.UUID](
                         db_session, User, OAuthAccount
@@ -1415,6 +1457,9 @@ def get_default_admin_user_emails_() -> list[str]:
 
 
 STATE_TOKEN_AUDIENCE = "fastapi-users:oauth-state"
+STATE_TOKEN_LIFETIME_SECONDS = 3600
+CSRF_TOKEN_KEY = "csrftoken"
+CSRF_TOKEN_COOKIE_NAME = "fastapiusersoauthcsrf"
 
 
 class OAuth2AuthorizeResponse(BaseModel):
@@ -1422,11 +1467,17 @@ class OAuth2AuthorizeResponse(BaseModel):
 
 
 def generate_state_token(
-    data: Dict[str, str], secret: SecretType, lifetime_seconds: int = 3600
+    data: Dict[str, str],
+    secret: SecretType,
+    lifetime_seconds: int = STATE_TOKEN_LIFETIME_SECONDS,
 ) -> str:
     data["aud"] = STATE_TOKEN_AUDIENCE
 
     return generate_jwt(data, secret, lifetime_seconds)
+
+
+def generate_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 # refer to https://github.com/fastapi-users/fastapi-users/blob/42ddc241b965475390e2bce887b084152ae1a2cd/fastapi_users/fastapi_users.py#L91
@@ -1457,6 +1508,13 @@ def get_oauth_router(
     redirect_url: Optional[str] = None,
     associate_by_email: bool = False,
     is_verified_by_default: bool = False,
+    *,
+    csrf_token_cookie_name: str = CSRF_TOKEN_COOKIE_NAME,
+    csrf_token_cookie_path: str = "/",
+    csrf_token_cookie_domain: Optional[str] = None,
+    csrf_token_cookie_secure: Optional[bool] = None,
+    csrf_token_cookie_httponly: bool = True,
+    csrf_token_cookie_samesite: Optional[Literal["lax", "strict", "none"]] = "lax",
 ) -> APIRouter:
     """Generate a router with the OAuth routes."""
     router = APIRouter()
@@ -1473,6 +1531,9 @@ def get_oauth_router(
             route_name=callback_route_name,
         )
 
+    if csrf_token_cookie_secure is None:
+        csrf_token_cookie_secure = WEB_DOMAIN.startswith("https")
+
     @router.get(
         "/authorize",
         name=f"oauth:{oauth_client.name}.{backend.name}.authorize",
@@ -1480,8 +1541,10 @@ def get_oauth_router(
     )
     async def authorize(
         request: Request,
+        response: Response,
+        redirect: bool = Query(False),
         scopes: List[str] = Query(None),
-    ) -> OAuth2AuthorizeResponse:
+    ) -> Response | OAuth2AuthorizeResponse:
         referral_source = request.cookies.get("referral_source", None)
 
         if redirect_url is not None:
@@ -1491,9 +1554,11 @@ def get_oauth_router(
 
         next_url = request.query_params.get("next", "/")
 
+        csrf_token = generate_csrf_token()
         state_data: Dict[str, str] = {
             "next_url": next_url,
             "referral_source": referral_source or "default_referral",
+            CSRF_TOKEN_KEY: csrf_token,
         }
         state = generate_state_token(state_data, state_secret)
 
@@ -1509,6 +1574,31 @@ def get_oauth_router(
             authorization_url = add_url_params(
                 authorization_url, {"access_type": "offline", "prompt": "consent"}
             )
+
+        if redirect:
+            redirect_response = RedirectResponse(authorization_url, status_code=302)
+            redirect_response.set_cookie(
+                key=csrf_token_cookie_name,
+                value=csrf_token,
+                max_age=STATE_TOKEN_LIFETIME_SECONDS,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                secure=csrf_token_cookie_secure,
+                httponly=csrf_token_cookie_httponly,
+                samesite=csrf_token_cookie_samesite,
+            )
+            return redirect_response
+
+        response.set_cookie(
+            key=csrf_token_cookie_name,
+            value=csrf_token,
+            max_age=STATE_TOKEN_LIFETIME_SECONDS,
+            path=csrf_token_cookie_path,
+            domain=csrf_token_cookie_domain,
+            secure=csrf_token_cookie_secure,
+            httponly=csrf_token_cookie_httponly,
+            samesite=csrf_token_cookie_samesite,
+        )
 
         return OAuth2AuthorizeResponse(authorization_url=authorization_url)
 
@@ -1559,7 +1649,33 @@ def get_oauth_router(
         try:
             state_data = decode_jwt(state, state_secret, [STATE_TOKEN_AUDIENCE])
         except jwt.DecodeError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=getattr(
+                    ErrorCode, "ACCESS_TOKEN_DECODE_ERROR", "ACCESS_TOKEN_DECODE_ERROR"
+                ),
+            )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=getattr(
+                    ErrorCode,
+                    "ACCESS_TOKEN_ALREADY_EXPIRED",
+                    "ACCESS_TOKEN_ALREADY_EXPIRED",
+                ),
+            )
+
+        cookie_csrf_token = request.cookies.get(csrf_token_cookie_name)
+        state_csrf_token = state_data.get(CSRF_TOKEN_KEY)
+        if (
+            not cookie_csrf_token
+            or not state_csrf_token
+            or not secrets.compare_digest(cookie_csrf_token, state_csrf_token)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=getattr(ErrorCode, "OAUTH_INVALID_STATE", "OAUTH_INVALID_STATE"),
+            )
 
         next_url = state_data.get("next_url", "/")
         referral_source = state_data.get("referral_source", None)

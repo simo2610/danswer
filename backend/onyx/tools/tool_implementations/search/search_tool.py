@@ -238,6 +238,8 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         bypass_acl: bool = False,
         # Slack context for federated Slack search (tokens fetched internally)
         slack_context: SlackContext | None = None,
+        # Whether to enable Slack federated search
+        enable_slack_search: bool = True,
     ) -> None:
         super().__init__(emitter=emitter)
 
@@ -249,17 +251,18 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         self.project_id = project_id
         self.bypass_acl = bypass_acl
         self.slack_context = slack_context
+        self.enable_slack_search = enable_slack_search
 
         # Store session factory instead of session for thread-safety
         # When tools are called in parallel, each thread needs its own session
-        # TODO ensure this works!!!
         self._session_bind = db_session.get_bind()
         self._session_factory = sessionmaker(bind=self._session_bind)
 
         self._id = tool_id
 
     def _get_thread_safe_session(self) -> Session:
-        """Create a new database session for the current thread.
+        """Create a new database session for the current thread. Note this is only safe for the ORM caches/identity maps,
+        pending objects, flush state, etc. But it is still using the same underlying database connection.
 
         This ensures thread-safety when the search tool is called in parallel.
         Each parallel execution gets its own isolated database session with
@@ -669,7 +672,11 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
             # This avoids the query multiplication problem where each Vespa query
             # would trigger a separate Slack search
             # Run if we have slack_context (bot) or user (might have OAuth token)
-            if (self.slack_context or self.user) and override_kwargs.original_query:
+            if (
+                (self.enable_slack_search or self.slack_context)
+                and (self.slack_context or self.user)
+                and override_kwargs.original_query
+            ):
                 search_functions.append(
                     (
                         self._run_slack_search,
@@ -825,7 +832,7 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
                 top_sections=merged_sections,
                 citation_start=override_kwargs.starting_citation_num,
                 limit=override_kwargs.max_llm_chunks,
-                include_document_id=True,
+                include_document_id=False,
             )
 
             # End overall timing
@@ -837,12 +844,12 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
                 f"document expansion: {document_expansion_elapsed:.3f}s)"
             )
 
-            # TODO: extension - this can include the smaller set of approved docs to be saved/displayed in the UI
-            # for replaying. Currently the full set is returned and saved.
             return ToolResponse(
                 # Typically the rich response will give more docs in case it needs to be displayed in the UI
                 rich_response=SearchDocsResponse(
-                    search_docs=search_docs, citation_mapping=citation_mapping
+                    search_docs=search_docs,
+                    citation_mapping=citation_mapping,
+                    displayed_docs=final_ui_docs or None,
                 ),
                 # The LLM facing response typically includes less docs to cut down on noise and token usage
                 llm_facing_response=docs_str,

@@ -11,14 +11,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import SessionTransaction
 
-from onyx.chat.chat_utils import prepare_chat_message_request
 from onyx.chat.models import MessageResponseIDInfo
 from onyx.chat.models import StreamingError
 from onyx.chat.process_message import AnswerStream
+from onyx.chat.process_message import handle_stream_message_objects
 from onyx.chat.process_message import remove_answer_citations
 from onyx.chat.process_message import stream_chat_message_objects
 from onyx.configs.constants import DEFAULT_PERSONA_ID
-from onyx.context.search.models import RetrievalDetails
 from onyx.db.chat import create_chat_session
 from onyx.db.engine.sql_engine import get_sqlalchemy_engine
 from onyx.db.users import get_user_by_email
@@ -33,7 +32,10 @@ from onyx.evals.models import ToolAssertion
 from onyx.evals.provider import get_provider
 from onyx.llm.override_models import LLMOverride
 from onyx.server.query_and_chat.models import AUTO_PLACE_AFTER_LATEST_MESSAGE
+from onyx.server.query_and_chat.models import ChatSessionCreationRequest
 from onyx.server.query_and_chat.models import CreateChatMessageRequest
+from onyx.server.query_and_chat.models import RetrievalDetails
+from onyx.server.query_and_chat.models import SendMessageRequest
 from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
 from onyx.server.query_and_chat.streaming_models import AgentResponseStart
 from onyx.server.query_and_chat.streaming_models import CitationInfo
@@ -232,10 +234,23 @@ def gather_stream_with_tools(packets: AnswerStream) -> GatherStreamResult:
     stream_end_time = time.time()
 
     if message_id is None:
-        raise ValueError("Message ID is required")
+        # If we got a streaming error, include it in the exception
+        if error_msg:
+            raise ValueError(f"Message ID is required. Stream error: {error_msg}")
+        raise ValueError(
+            f"Message ID is required. No MessageResponseIDInfo received. "
+            f"Tools called: {tools_called}"
+        )
 
+    # Allow empty answers for tool-only turns (e.g., in multi-turn evals)
+    # Some turns may only execute tools without generating a text response
     if answer is None:
-        raise RuntimeError("Answer was not generated")
+        logger.warning(
+            "No answer content generated. Tools called: %s. "
+            "This may be expected for tool-only turns.",
+            tools_called,
+        )
+        answer = ""
 
     # Calculate timings
     total_ms = (stream_end_time - stream_start_time) * 1000
@@ -386,22 +401,19 @@ def _get_answer_with_tools(
                 else None
             )
 
-            request = prepare_chat_message_request(
-                message_text=eval_input["message"],
-                user=user,
-                persona_id=None,
-                persona_override_config=full_configuration.persona_override_config,
-                message_ts_to_respond_to=None,
-                retrieval_details=RetrievalDetails(),
-                rerank_settings=None,
-                db_session=db_session,
-                skip_gen_ai_answer_generation=False,
+            forced_tool_id = forced_tool_ids[0] if forced_tool_ids else None
+            request = SendMessageRequest(
+                message=eval_input["message"],
                 llm_override=llm_override,
                 allowed_tool_ids=full_configuration.allowed_tool_ids,
-                forced_tool_ids=forced_tool_ids or None,
+                forced_tool_id=forced_tool_id,
+                chat_session_info=ChatSessionCreationRequest(
+                    persona_id=DEFAULT_PERSONA_ID,
+                    description="Eval session",
+                ),
             )
 
-            packets = stream_chat_message_objects(
+            packets = handle_stream_message_objects(
                 new_msg_req=request,
                 user=user,
                 db_session=db_session,
@@ -484,15 +496,18 @@ def _get_multi_turn_answer_with_tools(
                 if configuration.search_permissions_email
                 else None
             )
+            # Cache user_id to avoid SQLAlchemy expiration issues
+            user_id = user.id if user else None
 
             # Create a single chat session for all turns
             chat_session = create_chat_session(
                 db_session=db_session,
                 description="Multi-turn eval session",
-                user_id=user.id if user else None,
+                user_id=user_id,
                 persona_id=DEFAULT_PERSONA_ID,
                 onyxbot_flow=True,
             )
+            chat_session_id = chat_session.id
 
             # Process each turn sequentially
             for turn_idx, msg in enumerate(messages):
@@ -539,7 +554,7 @@ def _get_multi_turn_answer_with_tools(
                 # Create request for this turn
                 # Use AUTO_PLACE_AFTER_LATEST_MESSAGE to chain messages
                 request = CreateChatMessageRequest(
-                    chat_session_id=chat_session.id,
+                    chat_session_id=chat_session_id,
                     parent_message_id=AUTO_PLACE_AFTER_LATEST_MESSAGE,
                     message=msg.message,
                     file_descriptors=[],

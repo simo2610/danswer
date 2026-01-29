@@ -3,30 +3,24 @@
 import React, { useState, memo, useMemo, useEffect } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import useChatSessions from "@/hooks/useChatSessions";
-import { deleteChatSession, renameChatSession } from "@/app/chat/services/lib";
-import { ChatSession } from "@/app/chat/interfaces";
+import { deleteChatSession, renameChatSession } from "@/app/app/services/lib";
+import { ChatSession } from "@/app/app/interfaces";
 import ConfirmationModalLayout from "@/refresh-components/layouts/ConfirmationModalLayout";
 import Button from "@/refresh-components/buttons/Button";
 import { cn, noProp } from "@/lib/utils";
-import {
-  Popover,
-  PopoverContent,
-  PopoverMenu,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import Popover, { PopoverMenu } from "@/refresh-components/Popover";
 import { useAppRouter } from "@/hooks/appNavigation";
 import {
   Project,
   removeChatSessionFromProject,
   createProject as createProjectService,
-} from "@/app/chat/projects/projectsService";
-import { useProjectsContext } from "@/app/chat/projects/ProjectsContext";
+} from "@/app/app/projects/projectsService";
+import { useProjectsContext } from "@/app/app/projects/ProjectsContext";
 import MoveCustomAgentChatModal from "@/components/modals/MoveCustomAgentChatModal";
 import { UNNAMED_CHAT } from "@/lib/constants";
-import ShareChatSessionModal from "@/app/chat/components/modal/ShareChatSessionModal";
+import ShareChatSessionModal from "@/app/app/components/modal/ShareChatSessionModal";
 import SidebarTab from "@/refresh-components/buttons/SidebarTab";
 import IconButton from "@/refresh-components/buttons/IconButton";
-import { PopoverAnchor } from "@radix-ui/react-popover";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { DRAG_TYPES, LOCAL_STORAGE_KEYS } from "@/sections/sidebar/constants";
@@ -36,8 +30,6 @@ import {
   handleMoveOperation,
 } from "@/sections/sidebar/sidebarUtils";
 import ButtonRenaming from "@/refresh-components/buttons/ButtonRenaming";
-import Truncated from "@/refresh-components/texts/Truncated";
-import Text from "@/refresh-components/texts/Text";
 import useAppFocus from "@/hooks/useAppFocus";
 import LineItem from "@/refresh-components/buttons/LineItem";
 import {
@@ -51,6 +43,7 @@ import {
   SvgTrash,
 } from "@opal/icons";
 import useOnMount from "@/hooks/useOnMount";
+import { useAgents, usePinnedAgents } from "@/hooks/useAgents";
 
 export interface PopoverSearchInputProps {
   setShowMoveOptions: (show: boolean) => void;
@@ -94,7 +87,7 @@ export function PopoverSearchInput({
         onKeyDown={handleKeyDown}
         placeholder="Search Projects"
         onClick={noProp()}
-        internal
+        variant="internal"
         autoFocus
       />
     </div>
@@ -137,6 +130,8 @@ const ChatButton = memo(
       createProject,
     } = useProjectsContext();
     const { popup, setPopup } = usePopup();
+    const { agents } = useAgents();
+    const { pinnedAgents, togglePinnedAgent } = usePinnedAgents();
     const [popoverOpen, setPopoverOpen] = useState(false);
     const [pendingMoveProjectId, setPendingMoveProjectId] = useState<
       number | null
@@ -267,12 +262,7 @@ const ChatButton = memo(
                     handleCreateProjectAndMove(searchTerm.trim())
                   )}
                 >
-                  <Text as="p" text03 mainUiMuted className="-mr-1">
-                    Create
-                  </Text>
-                  <Truncated text03 mainUiAction>
-                    {searchTerm.trim()}
-                  </Truncated>
+                  {`Create ${searchTerm.trim()}`}
                 </LineItem>,
               ]
             : []),
@@ -291,6 +281,17 @@ const ChatButton = memo(
       searchTerm,
       createProject,
     ]);
+
+    // Pin the chat's agent when clicking on the conversation
+    async function handleClick() {
+      const agent = agents.find((a) => a.id === chatSession.persona_id);
+      if (agent) {
+        const isAlreadyPinned = pinnedAgents.some((a) => a.id === agent.id);
+        if (!isAlreadyPinned) {
+          await togglePinnedAgent(agent, true);
+        }
+      }
+    }
 
     async function handleRename(newName: string) {
       setDisplayName(newName);
@@ -403,7 +404,7 @@ const ChatButton = memo(
 
     const rightMenu = (
       <>
-        <PopoverTrigger asChild onClick={noProp()}>
+        <Popover.Trigger asChild onClick={noProp()}>
           <div>
             <IconButton
               icon={SvgMoreHorizontal}
@@ -415,10 +416,10 @@ const ChatButton = memo(
               internal
             />
           </div>
-        </PopoverTrigger>
-        <PopoverContent side="right" align="start">
+        </Popover.Trigger>
+        <Popover.Content side="right" align="start" width="md">
           <PopoverMenu>{popoverItems}</PopoverMenu>
-        </PopoverContent>
+        </Popover.Content>
       </>
     );
 
@@ -432,9 +433,10 @@ const ChatButton = memo(
           }
         }}
       >
-        <PopoverAnchor>
+        <Popover.Anchor>
           <SidebarTab
-            href={`/chat?chatId=${chatSession.id}`}
+            href={isDragging ? undefined : `/app?chatId=${chatSession.id}`}
+            onClick={handleClick}
             transient={active}
             rightChildren={rightMenu}
             focused={renaming}
@@ -449,7 +451,7 @@ const ChatButton = memo(
               displayName
             )}
           </SidebarTab>
-        </PopoverAnchor>
+        </Popover.Anchor>
       </Popover>
     );
 

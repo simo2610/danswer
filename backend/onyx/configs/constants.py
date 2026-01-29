@@ -7,6 +7,7 @@ from enum import Enum
 
 ONYX_DEFAULT_APPLICATION_NAME = "Onyx"
 ONYX_DISCORD_URL = "https://discord.gg/4NA5SbzrWb"
+ONYX_UTM_SOURCE = "onyx_app"
 SLACK_USER_TOKEN_PREFIX = "xoxp-"
 SLACK_BOT_TOKEN_PREFIX = "xoxb-"
 ONYX_EMAILABLE_LOGO_MAX_DIM = 512
@@ -21,6 +22,9 @@ GEN_AI_API_KEY_STORAGE_KEY = "genai_api_key"
 PUBLIC_DOC_PAT = "PUBLIC"
 ID_SEPARATOR = ":;:"
 DEFAULT_BOOST = 0
+
+# Tag for endpoints that should be included in the public API documentation
+PUBLIC_API_TAGS: list[str | Enum] = ["public"]
 
 # Cookies
 FASTAPI_USERS_AUTH_COOKIE_NAME = (
@@ -76,7 +80,6 @@ POSTGRES_CELERY_WORKER_DOCFETCHING_APP_NAME = "celery_worker_docfetching"
 POSTGRES_CELERY_WORKER_INDEXING_CHILD_APP_NAME = "celery_worker_indexing_child"
 POSTGRES_CELERY_WORKER_BACKGROUND_APP_NAME = "celery_worker_background"
 POSTGRES_CELERY_WORKER_HEAVY_APP_NAME = "celery_worker_heavy"
-POSTGRES_CELERY_WORKER_KG_PROCESSING_APP_NAME = "celery_worker_kg_processing"
 POSTGRES_CELERY_WORKER_MONITORING_APP_NAME = "celery_worker_monitoring"
 POSTGRES_CELERY_WORKER_USER_FILE_PROCESSING_APP_NAME = (
     "celery_worker_user_file_processing"
@@ -89,6 +92,7 @@ SSL_CERT_FILE = "bundle.pem"
 DANSWER_API_KEY_PREFIX = "API_KEY__"
 DANSWER_API_KEY_DUMMY_EMAIL_DOMAIN = "onyxapikey.ai"
 UNNAMED_KEY_PLACEHOLDER = "Unnamed"
+DISCORD_SERVICE_API_KEY_NAME = "discord-bot-service"
 
 # Key-Value store keys
 KV_REINDEX_KEY = "needs_reindexing"
@@ -145,9 +149,6 @@ CELERY_PRUNING_LOCK_TIMEOUT = 3600  # 1 hour (in seconds)
 CELERY_PERMISSIONS_SYNC_LOCK_TIMEOUT = 3600  # 1 hour (in seconds)
 
 CELERY_EXTERNAL_GROUP_SYNC_LOCK_TIMEOUT = 300  # 5 min
-
-# Doc ID migration can be long-running; use a longer TTL and renew periodically
-CELERY_USER_FILE_DOCID_MIGRATION_LOCK_TIMEOUT = 10 * 60  # 10 minutes (in seconds)
 
 CELERY_USER_FILE_PROCESSING_LOCK_TIMEOUT = 30 * 60  # 30 minutes (in seconds)
 
@@ -238,6 +239,9 @@ class NotificationType(str, Enum):
     REINDEX = "reindex"
     PERSONA_SHARED = "persona_shared"
     TRIAL_ENDS_TWO_DAYS = "two_day_trial_ending"  # 2 days left in trial
+    RELEASE_NOTES = "release_notes"
+    ASSISTANT_FILES_READY = "assistant_files_ready"
+    FEATURE_ANNOUNCEMENT = "feature_announcement"
 
 
 class BlobType(str, Enum):
@@ -324,6 +328,7 @@ class FileOrigin(str, Enum):
     PLAINTEXT_CACHE = "plaintext_cache"
     OTHER = "other"
     QUERY_HISTORY_CSV = "query_history_csv"
+    SANDBOX_SNAPSHOT = "sandbox_snapshot"
     USER_FILE = "user_file"
 
 
@@ -341,6 +346,7 @@ class MilestoneRecordType(str, Enum):
     MULTIPLE_ASSISTANTS = "multiple_assistants"
     CREATED_ASSISTANT = "created_assistant"
     CREATED_ONYX_BOT = "created_onyx_bot"
+    REQUESTED_CONNECTOR = "requested_connector"
 
 
 class PostgresAdvisoryLocks(Enum):
@@ -364,10 +370,8 @@ class OnyxCeleryQueues:
     CONNECTOR_PRUNING = "connector_pruning"
     CONNECTOR_DOC_PERMISSIONS_SYNC = "connector_doc_permissions_sync"
     CONNECTOR_EXTERNAL_GROUP_SYNC = "connector_external_group_sync"
+    CONNECTOR_HIERARCHY_FETCHING = "connector_hierarchy_fetching"
     CSV_GENERATION = "csv_generation"
-
-    # Indexing queue
-    USER_FILES_INDEXING = "user_files_indexing"
 
     # User file processing queue
     USER_FILE_PROCESSING = "user_file_processing"
@@ -380,8 +384,8 @@ class OnyxCeleryQueues:
     # Monitoring queue
     MONITORING = "monitoring"
 
-    # KG processing queue
-    KG_PROCESSING = "kg_processing"
+    # Sandbox processing queue
+    SANDBOX = "sandbox"
 
 
 class OnyxRedisLocks:
@@ -389,6 +393,7 @@ class OnyxRedisLocks:
     CHECK_VESPA_SYNC_BEAT_LOCK = "da_lock:check_vespa_sync_beat"
     CHECK_CONNECTOR_DELETION_BEAT_LOCK = "da_lock:check_connector_deletion_beat"
     CHECK_PRUNE_BEAT_LOCK = "da_lock:check_prune_beat"
+    CHECK_HIERARCHY_FETCHING_BEAT_LOCK = "da_lock:check_hierarchy_fetching_beat"
     CHECK_INDEXING_BEAT_LOCK = "da_lock:check_indexing_beat"
     CHECK_CHECKPOINT_CLEANUP_BEAT_LOCK = "da_lock:check_checkpoint_cleanup_beat"
     CHECK_INDEX_ATTEMPT_CLEANUP_BEAT_LOCK = "da_lock:check_index_attempt_cleanup_beat"
@@ -417,9 +422,6 @@ class OnyxRedisLocks:
     CLOUD_BEAT_TASK_GENERATOR_LOCK = "da_lock:cloud_beat_task_generator"
     CLOUD_CHECK_ALEMBIC_BEAT_LOCK = "da_lock:cloud_check_alembic"
 
-    # KG processing
-    KG_PROCESSING_LOCK = "da_lock:kg_processing"
-
     # User file processing
     USER_FILE_PROCESSING_BEAT_LOCK = "da_lock:check_user_file_processing_beat"
     USER_FILE_PROCESSING_LOCK_PREFIX = "da_lock:user_file_processing"
@@ -427,7 +429,13 @@ class OnyxRedisLocks:
     USER_FILE_PROJECT_SYNC_LOCK_PREFIX = "da_lock:user_file_project_sync"
     USER_FILE_DELETE_BEAT_LOCK = "da_lock:check_user_file_delete_beat"
     USER_FILE_DELETE_LOCK_PREFIX = "da_lock:user_file_delete"
-    USER_FILE_DOCID_MIGRATION_LOCK = "da_lock:user_file_docid_migration"
+
+    # Release notes
+    RELEASE_NOTES_FETCH_LOCK = "da_lock:release_notes_fetch"
+
+    # Sandbox cleanup
+    CLEANUP_IDLE_SANDBOXES_BEAT_LOCK = "da_lock:cleanup_idle_sandboxes_beat"
+    CLEANUP_OLD_SNAPSHOTS_BEAT_LOCK = "da_lock:cleanup_old_snapshots_beat"
 
 
 class OnyxRedisSignals:
@@ -444,9 +452,6 @@ class OnyxRedisSignals:
     BLOCK_VALIDATE_CONNECTOR_DELETION_FENCES = (
         "signal:block_validate_connector_deletion_fences"
     )
-
-    # KG processing
-    CHECK_KG_PROCESSING_BEAT_LOCK = "da_lock:check_kg_processing_beat"
 
 
 class OnyxRedisConstants:
@@ -491,6 +496,7 @@ class OnyxCeleryTask:
     CHECK_FOR_VESPA_SYNC_TASK = "check_for_vespa_sync_task"
     CHECK_FOR_INDEXING = "check_for_indexing"
     CHECK_FOR_PRUNING = "check_for_pruning"
+    CHECK_FOR_HIERARCHY_FETCHING = "check_for_hierarchy_fetching"
     CHECK_FOR_DOC_PERMISSIONS_SYNC = "check_for_doc_permissions_sync"
     CHECK_FOR_EXTERNAL_GROUP_SYNC = "check_for_external_group_sync"
     CHECK_FOR_AUTO_LLM_UPDATE = "check_for_auto_llm_update"
@@ -532,9 +538,9 @@ class OnyxCeleryTask:
     DOCPROCESSING_TASK = "docprocessing_task"
 
     CONNECTOR_PRUNING_GENERATOR_TASK = "connector_pruning_generator_task"
+    CONNECTOR_HIERARCHY_FETCHING_TASK = "connector_hierarchy_fetching_task"
     DOCUMENT_BY_CC_PAIR_CLEANUP_TASK = "document_by_cc_pair_cleanup_task"
     VESPA_METADATA_SYNC_TASK = "vespa_metadata_sync_task"
-    USER_FILE_DOCID_MIGRATION = "user_file_docid_migration"
 
     # chat retention
     CHECK_TTL_MANAGEMENT_TASK = "check_ttl_management_task"
@@ -543,16 +549,17 @@ class OnyxCeleryTask:
     GENERATE_USAGE_REPORT_TASK = "generate_usage_report_task"
 
     EVAL_RUN_TASK = "eval_run_task"
+    SCHEDULED_EVAL_TASK = "scheduled_eval_task"
 
     EXPORT_QUERY_HISTORY_TASK = "export_query_history_task"
     EXPORT_QUERY_HISTORY_CLEANUP_TASK = "export_query_history_cleanup_task"
 
-    # KG processing
-    CHECK_KG_PROCESSING = "check_kg_processing"
-    KG_PROCESSING = "kg_processing"
-    KG_CLUSTERING_ONLY = "kg_clustering_only"
-    CHECK_KG_PROCESSING_CLUSTERING_ONLY = "check_kg_processing_clustering_only"
-    KG_RESET_SOURCE_INDEX = "kg_reset_source_index"
+    # Sandbox cleanup
+    CLEANUP_IDLE_SANDBOXES = "cleanup_idle_sandboxes"
+    CLEANUP_OLD_SNAPSHOTS = "cleanup_old_snapshots"
+
+    # Sandbox file sync
+    SANDBOX_FILE_SYNC = "sandbox_file_sync"
 
 
 # this needs to correspond to the matching entry in supervisord

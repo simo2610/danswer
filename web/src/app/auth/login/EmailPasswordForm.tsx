@@ -153,7 +153,7 @@ export default function EmailPasswordForm({
               const validatedNextUrl = validateInternalRedirect(nextUrl);
               window.location.href = validatedNextUrl
                 ? validatedNextUrl
-                : `/chat${isSignup && !isJoin ? "?new_team=true" : ""}`;
+                : `/app${isSignup && !isJoin ? "?new_team=true" : ""}`;
             }
           } else {
             setIsWorking(false);
@@ -200,7 +200,7 @@ export default function EmailPasswordForm({
                         placeholder="email@yourcompany.com"
                         onClear={() => helper.setValue("")}
                         data-testid="email"
-                        error={apiStatus === "error"}
+                        variant={apiStatus === "error" ? "error" : undefined}
                         showClearButton={false}
                       />
                     </FormField.Control>
@@ -224,7 +224,7 @@ export default function EmailPasswordForm({
                           }
                           field.onChange(e);
                         }}
-                        placeholder="**************"
+                        placeholder="∗∗∗∗∗∗∗∗∗∗∗∗∗∗"
                         onClear={() => helper.setValue("")}
                         data-testid="password"
                         error={apiStatus === "error"}
@@ -260,7 +260,7 @@ export default function EmailPasswordForm({
               </Button>
               {user?.is_anonymous_user && (
                 <Link
-                  href="/chat"
+                  href="/app"
                   className="text-xs text-action-link-05 cursor-pointer text-center w-full font-medium mx-auto"
                 >
                   <span className="hover:border-b hover:border-dotted hover:border-action-link-05">

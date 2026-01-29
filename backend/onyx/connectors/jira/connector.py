@@ -18,6 +18,7 @@ from typing_extensions import override
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.app_configs import JIRA_CONNECTOR_LABELS_TO_SKIP
 from onyx.configs.app_configs import JIRA_CONNECTOR_MAX_TICKET_SIZE
+from onyx.configs.app_configs import JIRA_SLIM_PAGE_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
     is_atlassian_date_error,
@@ -46,6 +47,7 @@ from onyx.connectors.models import ConnectorFailure
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
 from onyx.connectors.models import DocumentFailure
+from onyx.connectors.models import HierarchyNode
 from onyx.connectors.models import SlimDocument
 from onyx.connectors.models import TextSection
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
@@ -57,7 +59,6 @@ logger = setup_logger()
 ONE_HOUR = 3600
 
 _MAX_RESULTS_FETCH_IDS = 5000  # 5000
-_JIRA_SLIM_PAGE_SIZE = 500
 _JIRA_FULL_PAGE_SIZE = 50
 
 # Constants for Jira field names
@@ -676,14 +677,14 @@ class JiraConnector(
         checkpoint_callback = make_checkpoint_callback(checkpoint)
         prev_offset = 0
         current_offset = 0
-        slim_doc_batch = []
+        slim_doc_batch: list[SlimDocument | HierarchyNode] = []
 
         while checkpoint.has_more:
             for issue in _perform_jql_search(
                 jira_client=self.jira_client,
                 jql=jql,
                 start=current_offset,
-                max_results=_JIRA_SLIM_PAGE_SIZE,
+                max_results=JIRA_SLIM_PAGE_SIZE,
                 all_issue_ids=checkpoint.all_issue_ids,
                 checkpoint_callback=checkpoint_callback,
                 nextPageToken=checkpoint.cursor,
@@ -703,11 +704,11 @@ class JiraConnector(
                     )
                 )
                 current_offset += 1
-                if len(slim_doc_batch) >= _JIRA_SLIM_PAGE_SIZE:
+                if len(slim_doc_batch) >= JIRA_SLIM_PAGE_SIZE:
                     yield slim_doc_batch
                     slim_doc_batch = []
             self.update_checkpoint_for_next_run(
-                checkpoint, current_offset, prev_offset, _JIRA_SLIM_PAGE_SIZE
+                checkpoint, current_offset, prev_offset, JIRA_SLIM_PAGE_SIZE
             )
             prev_offset = current_offset
 

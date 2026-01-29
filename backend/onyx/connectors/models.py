@@ -11,6 +11,7 @@ from onyx.access.models import ExternalAccess
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import INDEX_SEPARATOR
 from onyx.configs.constants import RETURN_SEPARATOR
+from onyx.db.enums import HierarchyNodeType
 from onyx.db.enums import IndexModelStatus
 from onyx.utils.text_processing import make_url_compatible
 
@@ -161,6 +162,8 @@ class DocumentBase(BaseModel):
     sections: list[TextSection | ImageSection]
     source: DocumentSource | None = None
     semantic_identifier: str  # displayed in the UI as the main identifier for the doc
+    # TODO(andrei): Ideally we could improve this to where each value is just a
+    # list of strings.
     metadata: dict[str, str | list[str]]
 
     # UTC time
@@ -185,6 +188,10 @@ class DocumentBase(BaseModel):
     external_access: ExternalAccess | None = None
     doc_metadata: dict[str, Any] | None = None
 
+    # Parent hierarchy node raw ID - the folder/space/page containing this document
+    # If None, document's hierarchy position is unknown or connector doesn't support hierarchy
+    parent_hierarchy_raw_node_id: str | None = None
+
     def get_title_for_document_index(
         self,
     ) -> str | None:
@@ -202,13 +209,7 @@ class DocumentBase(BaseModel):
         if not self.metadata:
             return None
         # Combined string for the key/value for easy filtering
-        attributes: list[str] = []
-        for k, v in self.metadata.items():
-            if isinstance(v, list):
-                attributes.extend([k + INDEX_SEPARATOR + vi for vi in v])
-            else:
-                attributes.append(k + INDEX_SEPARATOR + v)
-        return attributes
+        return convert_metadata_dict_to_list_of_strings(self.metadata)
 
     def __sizeof__(self) -> int:
         size = sys.getsizeof(self.id)
@@ -238,6 +239,69 @@ class DocumentBase(BaseModel):
 
     def get_text_content(self) -> str:
         return " ".join([section.text for section in self.sections if section.text])
+
+
+def convert_metadata_dict_to_list_of_strings(
+    metadata: dict[str, str | list[str]],
+) -> list[str]:
+    """Converts a metadata dict to a list of strings.
+
+    Each string is a key-value pair separated by the INDEX_SEPARATOR. If a key
+    points to a list of values, each value generates a unique pair.
+
+    NOTE: Whatever formatting strategy is used here to generate a key-value
+    string must be replicated when constructing query filters.
+
+    Args:
+        metadata: The metadata dict to convert where values can be either a
+            string or a list of strings.
+
+    Returns:
+        A list of strings where each string is a key-value pair separated by the
+            INDEX_SEPARATOR.
+    """
+    attributes: list[str] = []
+    for k, v in metadata.items():
+        if isinstance(v, list):
+            attributes.extend([k + INDEX_SEPARATOR + vi for vi in v])
+        else:
+            attributes.append(k + INDEX_SEPARATOR + v)
+    return attributes
+
+
+def convert_metadata_list_of_strings_to_dict(
+    metadata_list: list[str],
+) -> dict[str, str | list[str]]:
+    """
+    Converts a list of strings to a metadata dict. The inverse of
+    convert_metadata_dict_to_list_of_strings.
+
+    Assumes the input strings are formatted as in the output of
+    convert_metadata_dict_to_list_of_strings.
+
+    The schema of the output metadata dict is suboptimal yet bound to legacy
+    code. Ideally each key would just point to a list of strings, where each
+    list might contain just one element.
+
+    Args:
+        metadata_list: The list of strings to convert to a metadata dict.
+
+    Returns:
+        A metadata dict where values can be either a string or a list of
+            strings.
+    """
+    metadata: dict[str, str | list[str]] = {}
+    for item in metadata_list:
+        key, value = item.split(INDEX_SEPARATOR, 1)
+        if key in metadata:
+            # We have already seen this key therefore it must point to a list.
+            if isinstance(metadata[key], list):
+                cast(list[str], metadata[key]).append(value)
+            else:
+                metadata[key] = [cast(str, metadata[key]), value]
+        else:
+            metadata[key] = value
+    return metadata
 
 
 class Document(DocumentBase):
@@ -306,6 +370,39 @@ class IndexingDocument(Document):
 
 class SlimDocument(BaseModel):
     id: str
+    external_access: ExternalAccess | None = None
+
+
+class HierarchyNode(BaseModel):
+    """
+    Hierarchy node yielded by connectors.
+
+    This is the Pydantic model used by connectors, distinct from the
+    SQLAlchemy HierarchyNode model in db/models.py. The connector runner
+    layer converts this to the DB model when persisting to Postgres.
+    """
+
+    # Raw identifier from the source system
+    # e.g., "1h7uWUR2BYZjtMfEXFt43tauj-Gp36DTPtwnsNuA665I" for Google Drive
+    raw_node_id: str
+
+    # Raw ID of parent node, or None for SOURCE-level children (direct children of the source root)
+    raw_parent_id: str | None = None
+
+    # Human-readable name for display
+    display_name: str
+
+    # Link to view this node in the source system
+    link: str | None = None
+
+    # What kind of structural node this is (folder, space, page, etc.)
+    node_type: HierarchyNodeType
+
+    # Optional: if this hierarchy node represents a document (e.g., Confluence page),
+    # this is the document ID. Set by the connector when the node IS a document.
+    document_id: str | None = None
+
+    # External access information for the node
     external_access: ExternalAccess | None = None
 
 

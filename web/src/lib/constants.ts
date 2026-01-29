@@ -7,9 +7,9 @@ export enum AuthType {
   CLOUD = "cloud",
 }
 
-export const HOST_URL = process.env.WEB_DOMAIN || "http://127.0.0.1:3000";
+export const HOST_URL = process.env.WEB_DOMAIN || "http://localhost:3000";
 
-export const INTERNAL_URL = process.env.INTERNAL_URL || "http://127.0.0.1:8080";
+export const INTERNAL_URL = process.env.INTERNAL_URL || "http://localhost:8080";
 
 // Documentation URLs
 export const DOCS_BASE_URL = "https://docs.onyx.app";
@@ -70,9 +70,6 @@ export const CUSTOM_ANALYTICS_ENABLED = process.env.CUSTOM_ANALYTICS_SECRET_KEY
 export const GTM_ENABLED =
   process.env.NEXT_PUBLIC_GTM_ENABLED?.toLowerCase() === "true";
 
-export const DISABLE_LLM_DOC_RELEVANCE =
-  process.env.DISABLE_LLM_DOC_RELEVANCE?.toLowerCase() === "true";
-
 export const NEXT_PUBLIC_CLOUD_ENABLED =
   process.env.NEXT_PUBLIC_CLOUD_ENABLED?.toLowerCase() === "true";
 
@@ -95,9 +92,6 @@ export const NEXT_PUBLIC_ENABLE_CHROME_EXTENSION =
 export const NEXT_PUBLIC_INCLUDE_ERROR_POPUP_SUPPORT_LINK =
   process.env.NEXT_PUBLIC_INCLUDE_ERROR_POPUP_SUPPORT_LINK?.toLowerCase() ===
   "true";
-
-export const NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY =
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
 // Restrict markdown links to safe protocols
 export const ALLOWED_URL_PROTOCOLS = ["http:", "https:", "mailto:"] as const;

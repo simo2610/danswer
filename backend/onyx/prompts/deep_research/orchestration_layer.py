@@ -19,6 +19,7 @@ If you need to ask questions, follow these guidelines:
 - Be concise and do not ask more than 5 questions.
 - If there are ambiguous terms or questions, ask the user to clarify.
 - Your questions should be a numbered list for clarity.
+- Respond in the same language as the user's query.
 - Make sure to gather all the information needed to carry out the research task in a concise, well-structured manner.{{internal_search_clarification_guidance}}
 - Wrap up with a quick sentence on what the clarification will help with, it's ok to reference the user query closely here.
 """.strip()
@@ -43,7 +44,7 @@ For context, the date is {current_datetime}.
 
 The research plan should be formatted as a numbered list of steps and have 6 or less individual steps.
 
-Each step should be a standalone exploration question or topic that can be researched independently but may build on previous steps.
+Each step should be a standalone exploration question or topic that can be researched independently but may build on previous steps. The plan should be in the same language as the user's query.
 
 Output only the numbered list of steps with no additional prefix or suffix.
 """.strip()
@@ -75,7 +76,8 @@ You have currently used {{current_cycle_count}} of {{max_cycles}} max research c
 
 ## {RESEARCH_AGENT_TOOL_NAME}
 The research task provided to the {RESEARCH_AGENT_TOOL_NAME} should be reasonably high level with a clear direction for investigation. \
-It should not be a single short query, rather it should be 1 (or 2 if necessary) descriptive sentences that outline the direction of the investigation.
+It should not be a single short query, rather it should be 1 (or 2 if necessary) descriptive sentences that outline the direction of the investigation. \
+The research task should be in the same language as the overall research plan.
 
 CRITICAL - the {RESEARCH_AGENT_TOOL_NAME} only receives the task and has no additional context about the user's query, research plan, other research agents, or message history. \
 You absolutely must provide all of the context needed to complete the task in the argument to the {RESEARCH_AGENT_TOOL_NAME}.{{internal_search_research_task_guidance}}
@@ -164,7 +166,8 @@ You have currently used {{current_cycle_count}} of {{max_cycles}} max research c
 
 ## {RESEARCH_AGENT_TOOL_NAME}
 The research task provided to the {RESEARCH_AGENT_TOOL_NAME} should be reasonably high level with a clear direction for investigation. \
-It should not be a single short query, rather it should be 1 (or 2 if necessary) descriptive sentences that outline the direction of the investigation.
+It should not be a single short query, rather it should be 1 (or 2 if necessary) descriptive sentences that outline the direction of the investigation. \
+The research task should be in the same language as the overall research plan.
 
 CRITICAL - the {RESEARCH_AGENT_TOOL_NAME} only receives the task and has no additional context about the user's query, research plan, or message history. \
 You absolutely must provide all of the context needed to complete the task in the argument to the {RESEARCH_AGENT_TOOL_NAME}.{{internal_search_research_task_guidance}}

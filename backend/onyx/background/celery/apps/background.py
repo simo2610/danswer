@@ -121,9 +121,9 @@ celery_app.autodiscover_tasks(
     [
         # Original background worker tasks
         "onyx.background.celery.tasks.pruning",
-        "onyx.background.celery.tasks.kg_processing",
         "onyx.background.celery.tasks.monitoring",
         "onyx.background.celery.tasks.user_file_processing",
+        "onyx.background.celery.tasks.llm_model_update",
         # Light worker tasks
         "onyx.background.celery.tasks.shared",
         "onyx.background.celery.tasks.vespa",
@@ -133,5 +133,7 @@ celery_app.autodiscover_tasks(
         "onyx.background.celery.tasks.docprocessing",
         # Docfetching worker tasks
         "onyx.background.celery.tasks.docfetching",
+        # Sandbox cleanup tasks (isolated in build feature)
+        "onyx.server.features.build.sandbox.tasks",
     ]
 )

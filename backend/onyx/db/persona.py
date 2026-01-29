@@ -25,6 +25,7 @@ from onyx.configs.constants import NotificationType
 from onyx.context.search.enums import RecencyBiasSetting
 from onyx.db.constants import SLACK_BOT_PERSONA_PREFIX
 from onyx.db.models import DocumentSet
+from onyx.db.models import HierarchyNode
 from onyx.db.models import Persona
 from onyx.db.models import Persona__User
 from onyx.db.models import Persona__UserGroup
@@ -187,13 +188,25 @@ def _get_persona_by_name(
     return result
 
 
-def make_persona_private(
+def update_persona_access(
     persona_id: int,
     creator_user_id: UUID | None,
-    user_ids: list[UUID] | None,
-    group_ids: list[int] | None,
     db_session: Session,
+    is_public: bool | None = None,
+    user_ids: list[UUID] | None = None,
+    group_ids: list[int] | None = None,
 ) -> None:
+    """Updates the access settings for a persona including public status and user shares.
+
+    NOTE: Callers are responsible for committing."""
+
+    if is_public is not None:
+        persona = db_session.query(Persona).filter(Persona.id == persona_id).first()
+        if persona:
+            persona.is_public = is_public
+
+    # NOTE: For user-ids and group-ids, `None` means "leave unchanged", `[]` means "clear all shares",
+    # and a non-empty list means "replace with these shares".
     if user_ids is not None:
         db_session.query(Persona__User).filter(
             Persona__User.persona_id == persona_id
@@ -205,17 +218,22 @@ def make_persona_private(
                 create_notification(
                     user_id=user_uuid,
                     notif_type=NotificationType.PERSONA_SHARED,
+                    title="A new agent was shared with you!",
                     db_session=db_session,
                     additional_data=PersonaSharedNotificationData(
                         persona_id=persona_id,
                     ).model_dump(),
                 )
 
-        db_session.commit()
+    # MIT doesn't support group-based sharing, so we allow clearing (no-op since
+    # there shouldn't be any) but raise an error if trying to add actual groups.
+    if group_ids is not None:
+        db_session.query(Persona__UserGroup).filter(
+            Persona__UserGroup.persona_id == persona_id
+        ).delete(synchronize_session="fetch")
 
-    # May cause error if someone switches down to MIT from EE
-    if group_ids:
-        raise NotImplementedError("Scientifica Answer does not support private Personas")
+        if group_ids:
+            raise NotImplementedError("Onyx MIT does not support group-based sharing")
 
 
 def create_update_persona(
@@ -281,20 +299,22 @@ def create_update_persona(
             llm_filter_extraction=create_persona_request.llm_filter_extraction,
             is_default_persona=create_persona_request.is_default_persona,
             user_file_ids=converted_user_file_ids,
+            commit=False,
+            hierarchy_node_ids=create_persona_request.hierarchy_node_ids,
         )
 
-        versioned_make_persona_private = fetch_versioned_implementation(
-            "onyx.db.persona", "make_persona_private"
+        versioned_update_persona_access = fetch_versioned_implementation(
+            "onyx.db.persona", "update_persona_access"
         )
 
-        # Privatize Persona
-        versioned_make_persona_private(
+        versioned_update_persona_access(
             persona_id=persona.id,
             creator_user_id=user.id if user else None,
+            db_session=db_session,
             user_ids=create_persona_request.users,
             group_ids=create_persona_request.groups,
-            db_session=db_session,
         )
+        db_session.commit()
 
     except ValueError as e:
         logger.exception("Failed to create persona")
@@ -303,11 +323,13 @@ def create_update_persona(
     return FullPersonaSnapshot.from_model(persona)
 
 
-def update_persona_shared_users(
+def update_persona_shared(
     persona_id: int,
-    user_ids: list[UUID],
     user: User | None,
     db_session: Session,
+    user_ids: list[UUID] | None = None,
+    group_ids: list[int] | None = None,
+    is_public: bool | None = None,
 ) -> None:
     """Simplified version of `create_update_persona` which only touches the
     accessibility rather than any of the logic (e.g. prompt, connected data sources,
@@ -316,21 +338,24 @@ def update_persona_shared_users(
         db_session=db_session, persona_id=persona_id, user=user, get_editable=True
     )
 
-    if persona.is_public:
-        raise HTTPException(status_code=400, detail="Cannot share public persona")
+    if user and user.role != UserRole.ADMIN and persona.user_id != user.id:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to modify this persona"
+        )
 
-    versioned_make_persona_private = fetch_versioned_implementation(
-        "onyx.db.persona", "make_persona_private"
+    versioned_update_persona_access = fetch_versioned_implementation(
+        "onyx.db.persona", "update_persona_access"
     )
-
-    # Privatize Persona
-    versioned_make_persona_private(
+    versioned_update_persona_access(
         persona_id=persona_id,
         creator_user_id=user.id if user else None,
-        user_ids=user_ids,
-        group_ids=None,
         db_session=db_session,
+        is_public=is_public,
+        user_ids=user_ids,
+        group_ids=group_ids,
     )
+
+    db_session.commit()
 
 
 def update_persona_public_status(
@@ -392,6 +417,7 @@ def get_minimal_persona_snapshots_for_user(
         selectinload(Persona.tools),
         selectinload(Persona.labels),
         selectinload(Persona.document_sets),
+        selectinload(Persona.hierarchy_nodes),
         selectinload(Persona.user),
     )
     results = db_session.scalars(stmt).all()
@@ -414,6 +440,7 @@ def get_persona_snapshots_for_user(
     )
     stmt = stmt.options(
         selectinload(Persona.tools),
+        selectinload(Persona.hierarchy_nodes),
         selectinload(Persona.labels),
         selectinload(Persona.document_sets),
         selectinload(Persona.user),
@@ -507,6 +534,7 @@ def get_minimal_persona_snapshots_paginated(
     # need.
     stmt = stmt.options(
         selectinload(Persona.tools),
+        selectinload(Persona.hierarchy_nodes),
         selectinload(Persona.labels),
         selectinload(Persona.document_sets),
         selectinload(Persona.user),
@@ -562,6 +590,7 @@ def get_persona_snapshots_paginated(
     # Do eager loading of columns we know PersonaSnapshot.from_model will need.
     stmt = stmt.options(
         selectinload(Persona.tools),
+        selectinload(Persona.hierarchy_nodes),
         selectinload(Persona.labels),
         selectinload(Persona.document_sets),
         selectinload(Persona.user),
@@ -796,6 +825,7 @@ def upsert_persona(
     is_default_persona: bool | None = None,
     label_ids: list[int] | None = None,
     user_file_ids: list[UUID] | None = None,
+    hierarchy_node_ids: list[int] | None = None,
     chunks_above: int = CONTEXT_CHUNKS_ABOVE,
     chunks_below: int = CONTEXT_CHUNKS_BELOW,
     replace_base_system_prompt: bool = False,
@@ -863,6 +893,17 @@ def upsert_persona(
             db_session.query(PersonaLabel).filter(PersonaLabel.id.in_(label_ids)).all()
         )
 
+    # Fetch and attach hierarchy_nodes by IDs
+    hierarchy_nodes = None
+    if hierarchy_node_ids:
+        hierarchy_nodes = (
+            db_session.query(HierarchyNode)
+            .filter(HierarchyNode.id.in_(hierarchy_node_ids))
+            .all()
+        )
+        if not hierarchy_nodes and hierarchy_node_ids:
+            raise ValueError("hierarchy_nodes not found")
+
     # ensure all specified tools are valid
     if tools:
         validate_persona_tools(tools, db_session)
@@ -924,6 +965,10 @@ def upsert_persona(
             existing_persona.user_files.clear()
             existing_persona.user_files = user_files or []
 
+        if hierarchy_node_ids is not None:
+            existing_persona.hierarchy_nodes.clear()
+            existing_persona.hierarchy_nodes = hierarchy_nodes or []
+
         # We should only update display priority if it is not already set
         if existing_persona.display_priority is None:
             existing_persona.display_priority = display_priority
@@ -964,6 +1009,7 @@ def upsert_persona(
             ),
             user_files=user_files or [],
             labels=labels or [],
+            hierarchy_nodes=hierarchy_nodes or [],
         )
         db_session.add(new_persona)
         persona = new_persona

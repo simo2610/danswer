@@ -35,7 +35,7 @@ export default function UserGroupCreationForm({
 
   return (
     <Modal open onOpenChange={onClose}>
-      <Modal.Content medium>
+      <Modal.Content>
         <Modal.Header
           icon={SvgUsers}
           title={isUpdate ? "Update a User Group" : "Create a new User Group"}
@@ -87,7 +87,6 @@ export default function UserGroupCreationForm({
                   label="Name:"
                   placeholder="A name for the User Group"
                   disabled={isUpdate}
-                  autoCompleteDisabled={true}
                 />
 
                 <Separator />

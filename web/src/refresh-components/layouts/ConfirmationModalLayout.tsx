@@ -1,3 +1,5 @@
+"use client";
+
 import React from "react";
 import type { IconProps } from "@opal/types";
 import Text from "@/refresh-components/texts/Text";
@@ -8,29 +10,39 @@ import { useModalClose } from "../contexts/ModalContext";
 export interface ConfirmationModalProps {
   icon: React.FunctionComponent<IconProps>;
   title: string;
+  description?: string;
   children?: React.ReactNode;
 
   submit: React.ReactNode;
   hideCancel?: boolean;
   onClose?: () => void;
+  /** If false, removes the gray background from the body. Defaults to true. */
+  twoTone?: boolean;
 }
 
 export default function ConfirmationModalLayout({
   icon,
   title,
+  description,
   children,
 
   submit,
   hideCancel,
   onClose: externalOnClose,
+  twoTone = true,
 }: ConfirmationModalProps) {
   const onClose = useModalClose(externalOnClose);
 
   return (
     <Modal open onOpenChange={(isOpen) => !isOpen && onClose?.()}>
-      <Modal.Content mini className="z-confirmation">
-        <Modal.Header icon={icon} title={title} onClose={onClose} />
-        <Modal.Body className="p-4 bg-background-tint-01">
+      <Modal.Content width="sm">
+        <Modal.Header
+          icon={icon}
+          title={title}
+          description={description}
+          onClose={onClose}
+        />
+        <Modal.Body twoTone={twoTone}>
           {typeof children === "string" ? (
             <Text as="p" text03>
               {children}
@@ -39,7 +51,7 @@ export default function ConfirmationModalLayout({
             children
           )}
         </Modal.Body>
-        <Modal.Footer className="w-full p-4 gap-2">
+        <Modal.Footer>
           {!hideCancel && (
             <Button secondary onClick={onClose} type="button">
               Cancel

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Settings Page Layout Components
  *
@@ -31,8 +33,6 @@
  * ```
  */
 
-"use client";
-
 import BackButton from "@/refresh-components/buttons/BackButton";
 import { cn } from "@/lib/utils";
 import Separator from "@/refresh-components/Separator";
@@ -40,33 +40,45 @@ import Spacer from "@/refresh-components/Spacer";
 import Text from "@/refresh-components/texts/Text";
 import { WithoutStyles } from "@/types";
 import { IconProps } from "@opal/types";
-import { useEffect, useRef, useState } from "react";
+import { HtmlHTMLAttributes, useEffect, useRef, useState } from "react";
+
+const widthClasses = {
+  md: "w-[min(50rem,100%)]",
+  lg: "w-[min(60rem,100%)]",
+};
 
 /**
  * Settings Root Component
  *
  * Wrapper component that provides the base structure for settings pages.
- * Creates a centered, scrollable container with a maximum width of 50rem.
+ * Creates a centered, scrollable container with configurable width.
  *
  * Features:
  * - Full height container with centered content
  * - Automatic overflow-y scrolling
  * - Contains the scroll container ID that Settings.Header uses for shadow detection
- * - Maximum content width of 50rem (responsive)
+ * - Configurable width: "md" (50rem max) or "full" (full width with 4rem padding)
  *
  * @example
  * ```tsx
+ * // Default medium width (50rem max)
  * <SettingsLayouts.Root>
+ *   <SettingsLayouts.Header {...} />
+ *   <SettingsLayouts.Body>...</SettingsLayouts.Body>
+ * </SettingsLayouts.Root>
+ *
+ * // Full width with padding
+ * <SettingsLayouts.Root width="full">
  *   <SettingsLayouts.Header {...} />
  *   <SettingsLayouts.Body>...</SettingsLayouts.Body>
  * </SettingsLayouts.Root>
  * ```
  */
-export type SettingsRootProps = WithoutStyles<
-  React.HtmlHTMLAttributes<HTMLDivElement>
->;
-
-function SettingsRoot(props: SettingsRootProps) {
+interface SettingsRootProps
+  extends WithoutStyles<React.HtmlHTMLAttributes<HTMLDivElement>> {
+  width?: keyof typeof widthClasses;
+}
+function SettingsRoot({ width = "md", ...props }: SettingsRootProps) {
   return (
     <div
       id="page-wrapper-scroll-container"
@@ -75,7 +87,7 @@ function SettingsRoot(props: SettingsRootProps) {
       {/* WARNING: The id="page-wrapper-scroll-container" above is used by SettingsHeader
           to detect scroll position and show/hide the scroll shadow.
           DO NOT REMOVE this ID without updating SettingsHeader accordingly. */}
-      <div className="h-full w-[min(50rem,100%)]">
+      <div className={cn("h-full", widthClasses[width])}>
         <div {...props} />
       </div>
     </div>
@@ -130,7 +142,7 @@ function SettingsRoot(props: SettingsRootProps) {
  *   icon={SvgDatabase}
  *   title="Data Sources"
  *   description="Manage your connected data sources"
- *   includeBottomSeparator
+ *   separator
  * >
  *   <InputTypeIn placeholder="Search data sources..." />
  * </SettingsLayouts.Header>
@@ -140,7 +152,7 @@ function SettingsRoot(props: SettingsRootProps) {
  *   icon={SvgArrow}
  *   title="Advanced Settings"
  *   description="Expert configuration options"
- *   renderBackButton
+ *   backButton
  * />
  *
  * // With dynamic description content
@@ -166,7 +178,6 @@ export interface SettingsHeaderProps {
   backButton?: boolean;
   separator?: boolean;
 }
-
 function SettingsHeader({
   icon: Icon,
   title,
@@ -263,14 +274,14 @@ function SettingsHeader({
  * and vertical spacing for content sections.
  *
  * Features:
- * - Vertical padding: 1.5rem (py-6)
+ * - Top padding: 1.5rem (pt-6)
+ * - Bottom padding: 4.5rem (pb-[4.5rem])
  * - Horizontal padding: 1rem (px-4)
  * - Flex column layout with 2rem gap (gap-8)
  * - Full width container
  *
  * @example
  * ```tsx
- * // Basic usage
  * <SettingsLayouts.Body>
  *   <Card>
  *     <h3>Section 1</h3>
@@ -281,27 +292,16 @@ function SettingsHeader({
  *     <p>More content</p>
  *   </Card>
  * </SettingsLayouts.Body>
- *
- * // Custom spacing
- * <SettingsLayouts.Body className="gap-4">
- *   <Card>Tighter spacing</Card>
- * </SettingsLayouts.Body>
- *
- * // No padding
- * <SettingsLayouts.Body className="p-0">
- *   <FullWidthComponent />
- * </SettingsLayouts.Body>
  * ```
  */
-export interface SettingsBodyProps {
-  children: React.ReactNode;
-}
-
-function SettingsBody({ children }: SettingsBodyProps) {
+function SettingsBody(
+  props: WithoutStyles<HtmlHTMLAttributes<HTMLDivElement>>
+) {
   return (
-    <div className="pt-6 pb-[4.5rem] px-4 flex flex-col gap-8 w-full">
-      {children}
-    </div>
+    <div
+      className="pt-6 pb-[4.5rem] px-4 flex flex-col gap-8 w-full"
+      {...props}
+    />
   );
 }
 

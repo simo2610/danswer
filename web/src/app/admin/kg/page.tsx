@@ -299,7 +299,7 @@ function Main() {
       )}
       {configureModalShown && (
         <Modal open onOpenChange={() => setConfigureModalShown(false)}>
-          <Modal.Content medium>
+          <Modal.Content>
             <Modal.Header
               icon={SvgSettings}
               title="Configure Knowledge Graph"
@@ -335,12 +335,12 @@ export default function Page() {
   }
 
   return (
-    <div className="container">
+    <>
       <AdminPageTitle
         title="Knowledge Graph"
         icon={<BrainIcon size={32} className="my-auto" />}
       />
       <Main />
-    </div>
+    </>
   );
 }

@@ -64,9 +64,9 @@ def _prompt_to_dicts(prompt: LanguageModelInput) -> list[dict[str, Any]]:
     LiteLLM expects messages to be dictionaries (with .get() method),
     not Pydantic models. This function serializes the messages.
     """
-    if isinstance(prompt, str):
-        return [{"role": "user", "content": prompt}]
-    return [msg.model_dump(exclude_none=True) for msg in prompt]
+    if isinstance(prompt, list):
+        return [msg.model_dump(exclude_none=True) for msg in prompt]
+    return [prompt.model_dump(exclude_none=True)]
 
 
 def _prompt_as_json(prompt: LanguageModelInput) -> JSON_ro:
@@ -164,9 +164,13 @@ class LitellmLLM(LLM):
     def _safe_model_config(self) -> dict:
         dump = self.config.model_dump()
         dump["api_key"] = mask_string(dump.get("api_key") or "")
-        credentials_file = dump.get("credentials_file")
-        if isinstance(credentials_file, str) and credentials_file:
-            dump["credentials_file"] = mask_string(credentials_file)
+        custom_config = dump.get("custom_config")
+        if isinstance(custom_config, dict):
+            # Mask sensitive values in custom_config
+            masked_config = {}
+            for k, v in custom_config.items():
+                masked_config[k] = mask_string(v) if v else v
+            dump["custom_config"] = masked_config
         return dump
 
     def _record_call(
@@ -296,6 +300,13 @@ class LitellmLLM(LLM):
             self.config.model_provider, self.config.model_name
         )
         is_ollama = self._model_provider == LlmProviderNames.OLLAMA_CHAT
+        is_mistral = self._model_provider == LlmProviderNames.MISTRAL
+        is_vertex_ai = self._model_provider == LlmProviderNames.VERTEX_AI
+        # Vertex Anthropic Opus 4.5 rejects output_config (LiteLLM maps reasoning_effort).
+        # Keep this guard until LiteLLM/Vertex accept the field for this model.
+        is_vertex_opus_4_5 = (
+            is_vertex_ai and "claude-opus-4-5" in self.config.model_name.lower()
+        )
 
         #########################
         # Build arguments
@@ -326,12 +337,16 @@ class LitellmLLM(LLM):
         # Temperature
         temperature = 1 if is_reasoning else self._temperature
 
-        if stream:
+        if stream and not is_vertex_opus_4_5:
             optional_kwargs["stream_options"] = {"include_usage": True}
 
         # Use configured default if not provided (if not set in env, low)
         reasoning_effort = reasoning_effort or ReasoningEffort(DEFAULT_REASONING_EFFORT)
-        if is_reasoning and reasoning_effort != ReasoningEffort.OFF:
+        if (
+            is_reasoning
+            and reasoning_effort != ReasoningEffort.OFF
+            and not is_vertex_opus_4_5
+        ):
             if is_openai_model:
                 # OpenAI API does not accept reasoning params for GPT 5 chat models
                 # (neither reasoning nor reasoning_effort are accepted)
@@ -353,9 +368,10 @@ class LitellmLLM(LLM):
         if structured_response_format:
             optional_kwargs["response_format"] = structured_response_format
 
-        if not (is_claude_model or is_ollama):
+        if not (is_claude_model or is_ollama or is_mistral):
             # Litellm bug: tool_choice is dropped silently if not specified here for OpenAI
-            # However, this param breaks Anthropic models, so it must be conditionally included
+            # However, this param breaks Anthropic and Mistral models,
+            # so it must be conditionally included.
             # Additionally, tool_choice is not supported by Ollama and causes warnings if included.
             # See also, https://github.com/ollama/ollama/issues/11171
             optional_kwargs["allowed_openai_params"] = ["tool_choice"]
@@ -400,12 +416,6 @@ class LitellmLLM(LLM):
 
     @property
     def config(self) -> LLMConfig:
-        credentials_file: str | None = (
-            self._custom_config.get(VERTEX_CREDENTIALS_FILE_KWARG, None)
-            if self._custom_config
-            else None
-        )
-
         return LLMConfig(
             model_provider=self._model_provider,
             model_name=self._model_version,
@@ -414,7 +424,7 @@ class LitellmLLM(LLM):
             api_base=self._api_base,
             api_version=self._api_version,
             deployment_name=self._deployment_name,
-            credentials_file=credentials_file,
+            custom_config=self._custom_config,
             max_input_tokens=self._max_input_tokens,
         )
 

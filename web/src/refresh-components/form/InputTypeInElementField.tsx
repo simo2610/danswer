@@ -7,6 +7,7 @@ import InputTypeIn, {
 import IconButton from "@/refresh-components/buttons/IconButton";
 import { SvgMinusCircle } from "@opal/icons";
 import { useOnChangeEvent, useOnBlurEvent } from "@/hooks/formHooks";
+import { Section } from "@/layouts/general-layouts";
 
 export interface InputTypeInElementFieldProps
   extends Omit<InputTypeInProps, "value" | "onClear"> {
@@ -27,9 +28,11 @@ export default function InputTypeInElementField({
   const onBlur = useOnBlurEvent(name, onBlurProp);
   const hasError = meta.touched && meta.error;
   const isEmpty = !field.value || field.value.trim() === "";
+  const isNonEditable =
+    inputProps.variant === "disabled" || inputProps.variant === "readOnly";
 
   return (
-    <div className="flex flex-row items-center gap-1">
+    <Section flexDirection="row" gap={0.25}>
       {/* Input */}
       <InputTypeIn
         {...inputProps}
@@ -38,7 +41,13 @@ export default function InputTypeInElementField({
         value={field.value ?? ""}
         onChange={onChange}
         onBlur={onBlur}
-        error={!!hasError}
+        variant={
+          isNonEditable
+            ? inputProps.variant
+            : hasError
+              ? "error"
+              : inputProps.variant
+        }
         showClearButton={false}
       />
       <IconButton
@@ -48,6 +57,6 @@ export default function InputTypeInElementField({
         onClick={onRemove}
         tooltip="Remove"
       />
-    </div>
+    </Section>
   );
 }

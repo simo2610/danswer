@@ -223,8 +223,13 @@ function BedrockFormFields(props: OnboardingFormChildProps<BedrockFormValues>) {
                     {...field}
                     placeholder="AKIAIOSFODNN7EXAMPLE"
                     showClearButton={false}
-                    disabled={disabled}
-                    error={apiStatus === "error"}
+                    variant={
+                      disabled
+                        ? "disabled"
+                        : apiStatus === "error"
+                          ? "error"
+                          : undefined
+                    }
                   />
                 </FormField.Control>
                 <FormField.Message
@@ -364,6 +369,7 @@ function BedrockFormFields(props: OnboardingFormChildProps<BedrockFormValues>) {
                           : "Complete authentication first"
                         : "Fetch available models"
                     }
+                    aria-label="Fetch available models"
                     disabled={disabled || isFetchingModels || isFetchDisabled}
                   />
                 }

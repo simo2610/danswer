@@ -22,6 +22,14 @@ APP_PORT = 8080
 # prefix from requests directed towards the API server. In these cases, set this to `/api`
 APP_API_PREFIX = os.environ.get("API_PREFIX", "")
 
+# Certain services need to make HTTP requests to the API server, such as the MCP server and Discord bot
+API_SERVER_PROTOCOL = os.environ.get("API_SERVER_PROTOCOL", "http")
+API_SERVER_HOST = os.environ.get("API_SERVER_HOST", "127.0.0.1")
+# This override allows self-hosting the MCP server with Onyx Cloud backend.
+API_SERVER_URL_OVERRIDE_FOR_HTTP_REQUESTS = os.environ.get(
+    "API_SERVER_URL_OVERRIDE_FOR_HTTP_REQUESTS"
+)
+
 # Whether to send user metadata (user_id/email and session_id) to the LLM provider.
 # Disabled by default.
 SEND_USER_METADATA_TO_LLM_PROVIDER = (
@@ -120,6 +128,14 @@ VALID_EMAIL_DOMAINS = (
     if _VALID_EMAIL_DOMAINS_STR
     else []
 )
+
+# Disposable email blocking - blocks temporary/throwaway email addresses
+# Set to empty string to disable disposable email blocking
+DISPOSABLE_EMAIL_DOMAINS_URL = os.environ.get(
+    "DISPOSABLE_EMAIL_DOMAINS_URL",
+    "https://disposable.github.io/disposable-email-domains/domains.json",
+)
+
 # OAuth Login Flow
 # Used for both Google OAuth2 and OIDC flows
 OAUTH_CLIENT_ID = (
@@ -191,9 +207,23 @@ OPENSEARCH_HOST = os.environ.get("OPENSEARCH_HOST") or "localhost"
 OPENSEARCH_REST_API_PORT = int(os.environ.get("OPENSEARCH_REST_API_PORT") or 9200)
 OPENSEARCH_ADMIN_USERNAME = os.environ.get("OPENSEARCH_ADMIN_USERNAME", "admin")
 OPENSEARCH_ADMIN_PASSWORD = os.environ.get("OPENSEARCH_ADMIN_PASSWORD", "")
+USING_AWS_MANAGED_OPENSEARCH = (
+    os.environ.get("USING_AWS_MANAGED_OPENSEARCH", "").lower() == "true"
+)
 
-ENABLE_OPENSEARCH_FOR_ONYX = (
-    os.environ.get("ENABLE_OPENSEARCH_FOR_ONYX", "").lower() == "true"
+# This is the "base" config for now, the idea is that at least for our dev
+# environments we always want to be dual indexing into both OpenSearch and Vespa
+# to stress test the new codepaths. Only enable this if there is some instance
+# of OpenSearch running for the relevant Onyx instance.
+ENABLE_OPENSEARCH_INDEXING_FOR_ONYX = (
+    os.environ.get("ENABLE_OPENSEARCH_INDEXING_FOR_ONYX", "").lower() == "true"
+)
+# Given that the "base" config above is true, this enables whether we want to
+# retrieve from OpenSearch or Vespa. We want to be able to quickly toggle this
+# in the event we see issues with OpenSearch retrieval in our dev environments.
+ENABLE_OPENSEARCH_RETRIEVAL_FOR_ONYX = (
+    ENABLE_OPENSEARCH_INDEXING_FOR_ONYX
+    and os.environ.get("ENABLE_OPENSEARCH_RETRIEVAL_FOR_ONYX", "").lower() == "true"
 )
 
 VESPA_HOST = os.environ.get("VESPA_HOST") or "localhost"
@@ -383,7 +413,7 @@ CELERY_WORKER_PRIMARY_POOL_OVERFLOW = int(
     os.environ.get("CELERY_WORKER_PRIMARY_POOL_OVERFLOW") or 4
 )
 
-# Consolidated background worker (light, docprocessing, docfetching, heavy, kg_processing, monitoring, user_file_processing)
+# Consolidated background worker (light, docprocessing, docfetching, heavy, monitoring, user_file_processing)
 # separate workers' defaults: light=24, docprocessing=6, docfetching=1, heavy=4, kg=2, monitoring=1, user_file=2
 # Total would be 40, but we use a more conservative default of 20 for the consolidated worker
 CELERY_WORKER_BACKGROUND_CONCURRENCY = int(
@@ -393,10 +423,6 @@ CELERY_WORKER_BACKGROUND_CONCURRENCY = int(
 # Individual worker concurrency settings (used when USE_LIGHTWEIGHT_BACKGROUND_WORKER is False or on Kuberenetes deployments)
 CELERY_WORKER_HEAVY_CONCURRENCY = int(
     os.environ.get("CELERY_WORKER_HEAVY_CONCURRENCY") or 4
-)
-
-CELERY_WORKER_KG_PROCESSING_CONCURRENCY = int(
-    os.environ.get("CELERY_WORKER_KG_PROCESSING_CONCURRENCY") or 2
 )
 
 CELERY_WORKER_MONITORING_CONCURRENCY = int(
@@ -560,6 +586,7 @@ JIRA_CONNECTOR_LABELS_TO_SKIP = [
 JIRA_CONNECTOR_MAX_TICKET_SIZE = int(
     os.environ.get("JIRA_CONNECTOR_MAX_TICKET_SIZE", 100 * 1024)
 )
+JIRA_SLIM_PAGE_SIZE = int(os.environ.get("JIRA_SLIM_PAGE_SIZE", 500))
 
 GONG_CONNECTOR_START_TIME = os.environ.get("GONG_CONNECTOR_START_TIME")
 
@@ -671,10 +698,6 @@ INDEXING_EMBEDDING_MODEL_NUM_THREADS = int(
     os.environ.get("INDEXING_EMBEDDING_MODEL_NUM_THREADS") or 8
 )
 
-# Maximum number of user file connector credential pairs to index in a single batch
-# Setting this number too high may overload the indexing process
-USER_FILE_INDEXING_LIMIT = int(os.environ.get("USER_FILE_INDEXING_LIMIT") or 100)
-
 # Maximum file size in a document to be indexed
 MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS") or 5_000_000)
 MAX_FILE_SIZE_BYTES = int(
@@ -725,6 +748,10 @@ JOB_TIMEOUT = 60 * 60 * 6  # 6 hours default
 LOG_ONYX_MODEL_INTERACTIONS = (
     os.environ.get("LOG_ONYX_MODEL_INTERACTIONS", "").lower() == "true"
 )
+
+PROMPT_CACHE_CHAT_HISTORY = (
+    os.environ.get("PROMPT_CACHE_CHAT_HISTORY", "").lower() == "true"
+)
 # If set to `true` will enable additional logs about Vespa query performance
 # (time spent on finding the right docs + time spent fetching summaries from disk)
 LOG_VESPA_TIMING_INFORMATION = (
@@ -746,7 +773,27 @@ BRAINTRUST_PROJECT = os.environ.get("BRAINTRUST_PROJECT", "Onyx")
 # Braintrust API key - if provided, Braintrust tracing will be enabled
 BRAINTRUST_API_KEY = os.environ.get("BRAINTRUST_API_KEY") or ""
 # Maximum concurrency for Braintrust evaluations
-BRAINTRUST_MAX_CONCURRENCY = int(os.environ.get("BRAINTRUST_MAX_CONCURRENCY") or 5)
+# None means unlimited concurrency, otherwise specify a number
+_braintrust_concurrency = os.environ.get("BRAINTRUST_MAX_CONCURRENCY")
+BRAINTRUST_MAX_CONCURRENCY = (
+    int(_braintrust_concurrency) if _braintrust_concurrency else None
+)
+
+#####
+# Scheduled Evals Configuration
+#####
+# Comma-separated list of Braintrust dataset names to run on schedule
+SCHEDULED_EVAL_DATASET_NAMES = [
+    name.strip()
+    for name in os.environ.get("SCHEDULED_EVAL_DATASET_NAMES", "").split(",")
+    if name.strip()
+]
+# Email address to use for search permissions during scheduled evals
+SCHEDULED_EVAL_PERMISSIONS_EMAIL = os.environ.get(
+    "SCHEDULED_EVAL_PERMISSIONS_EMAIL", "roshan@onyx.app"
+)
+# Braintrust project name to use for scheduled evals
+SCHEDULED_EVAL_PROJECT = os.environ.get("SCHEDULED_EVAL_PROJECT", "st-dev")
 
 #####
 # Langfuse Configuration
@@ -825,6 +872,7 @@ AZURE_IMAGE_DEPLOYMENT_NAME = os.environ.get(
 
 # configurable image model
 IMAGE_MODEL_NAME = os.environ.get("IMAGE_MODEL_NAME", "gpt-image-1")
+IMAGE_MODEL_PROVIDER = os.environ.get("IMAGE_MODEL_PROVIDER", "openai")
 
 # Use managed Vespa (Vespa Cloud). If set, must also set VESPA_CLOUD_URL, VESPA_CLOUD_CERT_PATH and VESPA_CLOUD_KEY_PATH
 MANAGED_VESPA = os.environ.get("MANAGED_VESPA", "").lower() == "true"
@@ -971,3 +1019,25 @@ COHERE_DEFAULT_API_KEY = os.environ.get("COHERE_DEFAULT_API_KEY")
 VERTEXAI_DEFAULT_CREDENTIALS = os.environ.get("VERTEXAI_DEFAULT_CREDENTIALS")
 VERTEXAI_DEFAULT_LOCATION = os.environ.get("VERTEXAI_DEFAULT_LOCATION", "global")
 OPENROUTER_DEFAULT_API_KEY = os.environ.get("OPENROUTER_DEFAULT_API_KEY")
+
+INSTANCE_TYPE = (
+    "managed"
+    if os.environ.get("IS_MANAGED_INSTANCE", "").lower() == "true"
+    else "cloud" if AUTH_TYPE == AuthType.CLOUD else "self_hosted"
+)
+
+
+## Discord Bot Configuration
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+DISCORD_BOT_INVOKE_CHAR = os.environ.get("DISCORD_BOT_INVOKE_CHAR", "!")
+
+
+## Stripe Configuration
+# URL to fetch the Stripe publishable key from a public S3 bucket.
+# Publishable keys are safe to expose publicly - they can only initialize
+# Stripe.js and tokenize payment info, not make charges or access data.
+STRIPE_PUBLISHABLE_KEY_URL = (
+    "https://onyx-stripe-public.s3.amazonaws.com/publishable-key.txt"
+)
+# Override for local testing with Stripe test keys (pk_test_*)
+STRIPE_PUBLISHABLE_KEY_OVERRIDE = os.environ.get("STRIPE_PUBLISHABLE_KEY")
