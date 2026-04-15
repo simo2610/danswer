@@ -3,9 +3,9 @@
 import * as React from "react";
 import { cn, noProp } from "@/lib/utils";
 import IconButton from "@/refresh-components/buttons/IconButton";
+import { Button } from "@opal/components";
 import {
   innerClasses,
-  MIN_WIDTH_CLASS,
   textClasses,
   Variants,
   wrapperClasses,
@@ -53,7 +53,7 @@ import { SvgSearch, SvgX } from "@opal/icons";
  *   value={password}
  *   onChange={(e) => setPassword(e.target.value)}
  *   type={showPassword ? "text" : "password"}
- *   rightSection={<IconButton icon={SvgEye} onClick={togglePassword} />}
+ *   rightSection={<Button icon={SvgEye} onClick={togglePassword}/>}
  * />
  *
  * // Without clear button
@@ -128,8 +128,7 @@ const InputTypeIn = React.forwardRef<HTMLInputElement, InputTypeInProps>(
     return (
       <div
         className={cn(
-          "flex flex-row items-center justify-between w-full h-fit p-1.5 rounded-08 relative",
-          MIN_WIDTH_CLASS,
+          "flex flex-row items-center justify-between flex-1 h-fit p-1.5 rounded-08 relative w-full",
           wrapperClasses[variant],
           className
         )}
@@ -138,8 +137,8 @@ const InputTypeIn = React.forwardRef<HTMLInputElement, InputTypeInProps>(
         }}
       >
         {leftSearchIcon && (
-          <div className="pr-2">
-            <div className="pl-1">
+          <div className="pr-2 pl-1">
+            <div className="pl-[2px]">
               <SvgSearch className="w-[1rem] h-[1rem] stroke-text-02" />
             </div>
           </div>
@@ -167,6 +166,7 @@ const InputTypeIn = React.forwardRef<HTMLInputElement, InputTypeInProps>(
         />
 
         {showClearButton && !disabled && !isReadOnly && (
+          // TODO(@raunakab): migrate to opal Button once className/iconClassName is resolved
           <IconButton
             icon={SvgX}
             disabled={disabled}

@@ -11,12 +11,12 @@ import {
 } from "@/app/craft/hooks/useBuildSessionStore";
 import { useUsageLimits } from "@/app/craft/hooks/useUsageLimits";
 import { CRAFT_SEARCH_PARAM_NAMES } from "@/app/craft/services/searchParams";
-import SidebarTab from "@/refresh-components/buttons/SidebarTab";
+import { SidebarTab } from "@opal/components";
 import Text from "@/refresh-components/texts/Text";
 import SidebarWrapper from "@/sections/sidebar/SidebarWrapper";
 import SidebarBody from "@/sections/sidebar/SidebarBody";
 import SidebarSection from "@/sections/sidebar/SidebarSection";
-import UserAvatarPopover from "@/sections/sidebar/UserAvatarPopover";
+import AccountPopover from "@/sections/sidebar/AccountPopover";
 import Popover, { PopoverMenu } from "@/refresh-components/Popover";
 import IconButton from "@/refresh-components/buttons/IconButton";
 import ButtonRenaming from "@/refresh-components/buttons/ButtonRenaming";
@@ -33,7 +33,7 @@ import {
   SvgCheckCircle,
 } from "@opal/icons";
 import ConfirmationModalLayout from "@/refresh-components/layouts/ConfirmationModalLayout";
-import Button from "@/refresh-components/buttons/Button";
+import { Button } from "@opal/components";
 import SimpleLoader from "@/refresh-components/loaders/SimpleLoader";
 import TypewriterText from "@/app/craft/components/TypewriterText";
 import {
@@ -178,6 +178,7 @@ function BuildSessionButton({
     <>
       <Popover.Trigger asChild onClick={noProp()}>
         <div>
+          {/* TODO(@raunakab): migrate to opal Button once className/iconClassName is resolved */}
           <IconButton
             icon={SvgMoreHorizontal}
             className={cn(
@@ -224,9 +225,8 @@ function BuildSessionButton({
         <Popover.Anchor>
           <SidebarTab
             onClick={onLoad}
-            transient={isActive}
+            selected={isActive}
             rightChildren={rightMenu}
-            focused={renaming}
           >
             {renaming ? (
               <ButtonRenaming
@@ -238,9 +238,7 @@ function BuildSessionButton({
               <Text
                 as="p"
                 data-state={isActive ? "active" : "inactive"}
-                className={cn(
-                  "sidebar-tab-text-defaulted line-clamp-1 break-all text-left"
-                )}
+                className="line-clamp-1 break-all text-left"
                 mainUiBody
               >
                 <TypewriterText
@@ -263,7 +261,7 @@ function BuildSessionButton({
               ? "Deleted"
               : deleteError
                 ? "Delete Failed"
-                : "Delete Build"
+                : "Delete Craft"
           }
           icon={deleteSuccess ? SvgCheckCircle : SvgTrash}
           onClose={isDeleting || deleteSuccess ? undefined : closeModal}
@@ -271,19 +269,19 @@ function BuildSessionButton({
           twoTone={!isDeleting && !deleteSuccess && !deleteError}
           submit={
             deleteSuccess ? (
-              <Button action disabled leftIcon={SvgCheckCircle}>
+              <Button disabled variant="action" icon={SvgCheckCircle}>
                 Done
               </Button>
             ) : deleteError ? (
-              <Button danger onClick={closeModal}>
+              <Button variant="danger" onClick={closeModal}>
                 Close
               </Button>
             ) : (
               <Button
-                danger
-                onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                leftIcon={isDeleting ? SimpleLoader : undefined}
+                variant="danger"
+                onClick={handleConfirmDelete}
+                icon={isDeleting ? SimpleLoader : undefined}
               >
                 {isDeleting ? "Deleting..." : "Delete"}
               </Button>
@@ -345,7 +343,7 @@ const MemoizedBuildSidebarInner = memo(
     // limit=0 indicates unlimited (local/self-hosted mode), so hide the count
     const sessionsTitle = useMemo(() => {
       if (isEnabled && limits && limits.limit > 0) {
-        return `Sessions (${limits.messagesUsed}/${limits.limit})`;
+        return `Total Messages (${limits.messagesUsed}/${limits.limit})`;
       }
       return "Sessions";
     }, [isEnabled, limits]);
@@ -366,11 +364,7 @@ const MemoizedBuildSidebarInner = memo(
 
     const newBuildButton = useMemo(
       () => (
-        <SidebarTab
-          leftIcon={SvgEditBig}
-          folded={folded}
-          onClick={handleNewBuild}
-        >
+        <SidebarTab icon={SvgEditBig} folded={folded} onClick={handleNewBuild}>
           Start Crafting
         </SidebarTab>
       ),
@@ -380,10 +374,10 @@ const MemoizedBuildSidebarInner = memo(
     const buildConfigurePanel = useMemo(
       () => (
         <SidebarTab
-          leftIcon={SvgSettings}
+          icon={SvgSettings}
           folded={folded}
           href={CRAFT_CONFIGURE_PATH}
-          transient={pathname.startsWith(CRAFT_CONFIGURE_PATH)}
+          selected={pathname.startsWith(CRAFT_CONFIGURE_PATH)}
         >
           Configure
         </SidebarTab>
@@ -393,7 +387,7 @@ const MemoizedBuildSidebarInner = memo(
 
     const backToChatButton = useMemo(
       () => (
-        <SidebarTab leftIcon={SvgArrowLeft} folded={folded} href="/app">
+        <SidebarTab icon={SvgArrowLeft} folded={folded} href="/app">
           Back to Chat
         </SidebarTab>
       ),
@@ -404,7 +398,7 @@ const MemoizedBuildSidebarInner = memo(
       () => (
         <div>
           {backToChatButton}
-          <UserAvatarPopover folded={folded} />
+          <AccountPopover folded={folded} />
         </div>
       ),
       [folded, backToChatButton]
@@ -413,7 +407,7 @@ const MemoizedBuildSidebarInner = memo(
     return (
       <SidebarWrapper folded={folded} onFoldClick={onFoldClick}>
         <SidebarBody
-          actionButtons={
+          pinnedContent={
             <div className="flex flex-col gap-0.5">
               {newBuildButton}
               {buildConfigurePanel}

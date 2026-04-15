@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
+import sentry_sdk
 from celery import Celery
 from sqlalchemy.orm import Session
 
@@ -45,6 +46,7 @@ from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.enums import IndexingStatus
 from onyx.db.enums import IndexModelStatus
 from onyx.db.enums import ProcessingMode
+from onyx.db.hierarchy import upsert_hierarchy_node_cc_pair_entries
 from onyx.db.hierarchy import upsert_hierarchy_nodes_batch
 from onyx.db.index_attempt import create_index_attempt_error
 from onyx.db.index_attempt import get_index_attempt
@@ -60,6 +62,8 @@ from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.indexing.indexing_pipeline import index_doc_batch_prepare
 from onyx.redis.redis_hierarchy import cache_hierarchy_nodes_batch
 from onyx.redis.redis_hierarchy import ensure_source_node_exists
+from onyx.redis.redis_hierarchy import get_node_id_from_raw_id
+from onyx.redis.redis_hierarchy import get_source_node_id_from_cache
 from onyx.redis.redis_hierarchy import HierarchyNodeCacheEntry
 from onyx.redis.redis_pool import get_redis_client
 from onyx.server.features.build.indexing.persistent_document_writer import (
@@ -67,6 +71,8 @@ from onyx.server.features.build.indexing.persistent_document_writer import (
 )
 from onyx.utils.logger import setup_logger
 from onyx.utils.middleware import make_randomized_onyx_request_id
+from onyx.utils.postgres_sanitization import sanitize_document_for_postgres
+from onyx.utils.postgres_sanitization import sanitize_hierarchy_nodes_for_postgres
 from onyx.utils.variable_functionality import global_version
 from shared_configs.configs import MULTI_TENANT
 from shared_configs.contextvars import INDEX_ATTEMPT_INFO_CONTEXTVAR
@@ -154,36 +160,7 @@ def strip_null_characters(doc_batch: list[Document]) -> list[Document]:
             logger.warning(
                 f"doc {doc.id} too large, Document size: {sys.getsizeof(doc)}"
             )
-        cleaned_doc = doc.model_copy()
-
-        # Postgres cannot handle NUL characters in text fields
-        if "\x00" in cleaned_doc.id:
-            logger.warning(f"NUL characters found in document ID: {cleaned_doc.id}")
-            cleaned_doc.id = cleaned_doc.id.replace("\x00", "")
-
-        if cleaned_doc.title and "\x00" in cleaned_doc.title:
-            logger.warning(
-                f"NUL characters found in document title: {cleaned_doc.title}"
-            )
-            cleaned_doc.title = cleaned_doc.title.replace("\x00", "")
-
-        if "\x00" in cleaned_doc.semantic_identifier:
-            logger.warning(
-                f"NUL characters found in document semantic identifier: {cleaned_doc.semantic_identifier}"
-            )
-            cleaned_doc.semantic_identifier = cleaned_doc.semantic_identifier.replace(
-                "\x00", ""
-            )
-
-        for section in cleaned_doc.sections:
-            if section.link is not None:
-                section.link = section.link.replace("\x00", "")
-
-            # since text can be longer, just replace to avoid double scan
-            if isinstance(section, TextSection) and section.text is not None:
-                section.text = section.text.replace("\x00", "")
-
-        cleaned_batch.append(cleaned_doc)
+        cleaned_batch.append(sanitize_document_for_postgres(doc))
 
     return cleaned_batch
 
@@ -250,15 +227,13 @@ def _check_failure_threshold(
     FAILURE_RATIO_THRESHOLD = 0.1
     if total_failures > FAILURE_THRESHOLD and failure_ratio > FAILURE_RATIO_THRESHOLD:
         logger.error(
-            f"Connector run failed with '{total_failures}' errors "
-            f"after '{batch_num}' batches."
+            f"Connector run failed with '{total_failures}' errors after '{batch_num}' batches."
         )
         if last_failure and last_failure.exception:
             raise last_failure.exception from last_failure.exception
 
         raise RuntimeError(
-            f"Connector run encountered too many errors, aborting. "
-            f"Last error: {last_failure}"
+            f"Connector run encountered too many errors, aborting. Last error: {last_failure}"
         )
 
 
@@ -382,6 +357,9 @@ def connector_document_extraction(
         db_credential = index_attempt.connector_credential_pair.credential
         processing_mode = index_attempt.connector_credential_pair.processing_mode
         is_primary = index_attempt.search_settings.status == IndexModelStatus.PRESENT
+        is_connector_public = (
+            index_attempt.connector_credential_pair.access_type == AccessType.PUBLIC
+        )
 
         from_beginning = index_attempt.from_beginning
         has_successful_attempt = (
@@ -579,6 +557,27 @@ def connector_document_extraction(
 
                 # save record of any failures at the connector level
                 if failure is not None:
+                    if failure.exception is not None:
+                        with sentry_sdk.new_scope() as scope:
+                            scope.set_tag("stage", "connector_fetch")
+                            scope.set_tag("connector_source", db_connector.source.value)
+                            scope.set_tag("cc_pair_id", str(cc_pair_id))
+                            scope.set_tag("index_attempt_id", str(index_attempt_id))
+                            scope.set_tag("tenant_id", tenant_id)
+                            if failure.failed_document:
+                                scope.set_tag(
+                                    "doc_id", failure.failed_document.document_id
+                                )
+                            if failure.failed_entity:
+                                scope.set_tag(
+                                    "entity_id", failure.failed_entity.entity_id
+                                )
+                            scope.fingerprint = [
+                                "connector-fetch-failure",
+                                db_connector.source.value,
+                                type(failure.exception).__name__,
+                            ]
+                            sentry_sdk.capture_exception(failure.exception)
                     total_failures += 1
                     with get_session_with_current_tenant() as db_session:
                         create_index_attempt_error(
@@ -597,11 +596,23 @@ def connector_document_extraction(
 
                 # Process hierarchy nodes batch - upsert to Postgres and cache in Redis
                 if hierarchy_node_batch:
+                    hierarchy_node_batch_cleaned = (
+                        sanitize_hierarchy_nodes_for_postgres(hierarchy_node_batch)
+                    )
                     with get_session_with_current_tenant() as db_session:
                         upserted_nodes = upsert_hierarchy_nodes_batch(
                             db_session=db_session,
-                            nodes=hierarchy_node_batch,
+                            nodes=hierarchy_node_batch_cleaned,
                             source=db_connector.source,
+                            commit=True,
+                            is_connector_public=is_connector_public,
+                        )
+
+                        upsert_hierarchy_node_cc_pair_entries(
+                            db_session=db_session,
+                            hierarchy_node_ids=[n.id for n in upserted_nodes],
+                            connector_id=db_connector.id,
+                            credential_id=db_credential.id,
                             commit=True,
                         )
 
@@ -618,8 +629,7 @@ def connector_document_extraction(
                         )
 
                     logger.debug(
-                        f"Persisted and cached {len(hierarchy_node_batch)} hierarchy nodes "
-                        f"for attempt={index_attempt_id}"
+                        f"Persisted and cached {len(hierarchy_node_batch_cleaned)} hierarchy nodes for attempt={index_attempt_id}"
                     )
 
                 # below is all document processing task, so if no batch we can just continue
@@ -628,6 +638,26 @@ def connector_document_extraction(
 
                 # Clean documents and create batch
                 doc_batch_cleaned = strip_null_characters(document_batch)
+
+                # Resolve parent_hierarchy_raw_node_id to parent_hierarchy_node_id
+                # using the Redis cache (just populated from hierarchy nodes batch)
+                with get_session_with_current_tenant() as db_session_tmp:
+                    source_node_id = get_source_node_id_from_cache(
+                        redis_client, db_session_tmp, db_connector.source
+                    )
+                for doc in doc_batch_cleaned:
+                    if doc.parent_hierarchy_raw_node_id is not None:
+                        node_id, found = get_node_id_from_raw_id(
+                            redis_client,
+                            db_connector.source,
+                            doc.parent_hierarchy_raw_node_id,
+                        )
+                        doc.parent_hierarchy_node_id = (
+                            node_id if found else source_node_id
+                        )
+                    else:
+                        doc.parent_hierarchy_node_id = source_node_id
+
                 batch_description = []
 
                 for doc in doc_batch_cleaned:
@@ -651,11 +681,28 @@ def connector_document_extraction(
                 logger.debug(f"Indexing batch of documents: {batch_description}")
                 memory_tracer.increment_and_maybe_trace()
 
-                # cc4a
                 if processing_mode == ProcessingMode.FILE_SYSTEM:
                     # File system only - write directly to persistent storage,
                     # skip chunking/embedding/Vespa but still track documents in DB
 
+                    # IMPORTANT: Write to S3 FIRST, before marking as indexed in DB.
+
+                    # Write documents to persistent file system
+                    # Use creator_id for user-segregated storage paths (sandbox isolation)
+                    creator_id = index_attempt.connector_credential_pair.creator_id
+                    if creator_id is None:
+                        raise ValueError(
+                            f"ConnectorCredentialPair {index_attempt.connector_credential_pair.id} "
+                            "must have a creator_id for persistent document storage"
+                        )
+                    user_id_str: str = str(creator_id)
+                    writer = get_persistent_document_writer(
+                        user_id=user_id_str,
+                        tenant_id=tenant_id,
+                    )
+                    written_paths = writer.write_documents(doc_batch_cleaned)
+
+                    # Only after successful S3 write, mark documents as indexed in DB
                     with get_session_with_current_tenant() as db_session:
                         # Create metadata for the batch
                         index_attempt_metadata = IndexAttemptMetadata(
@@ -684,21 +731,6 @@ def connector_document_extraction(
                             db_session=db_session,
                         )
                         db_session.commit()
-
-                    # Write documents to persistent file system
-                    # Use creator_id for user-segregated storage paths (sandbox isolation)
-                    creator_id = index_attempt.connector_credential_pair.creator_id
-                    if creator_id is None:
-                        raise ValueError(
-                            f"ConnectorCredentialPair {index_attempt.connector_credential_pair.id} "
-                            "must have a creator_id for persistent document storage"
-                        )
-                    user_id_str: str = str(creator_id)
-                    writer = get_persistent_document_writer(
-                        user_id=user_id_str,
-                        tenant_id=tenant_id,
-                    )
-                    written_paths = writer.write_documents(doc_batch_cleaned)
 
                     # Update coordination directly (no docprocessing task)
                     with get_session_with_current_tenant() as db_session:
@@ -788,24 +820,23 @@ def connector_document_extraction(
         if processing_mode == ProcessingMode.FILE_SYSTEM:
             creator_id = index_attempt.connector_credential_pair.creator_id
             if creator_id:
+                source_value = db_connector.source.value
                 app.send_task(
                     OnyxCeleryTask.SANDBOX_FILE_SYNC,
                     kwargs={
                         "user_id": str(creator_id),
                         "tenant_id": tenant_id,
+                        "source": source_value,
                     },
                     queue=OnyxCeleryQueues.SANDBOX,
                 )
                 logger.info(
-                    f"Triggered sandbox file sync for user {creator_id} "
-                    f"after indexing complete"
+                    f"Triggered sandbox file sync for user {creator_id} source={source_value} after indexing complete"
                 )
 
     except Exception as e:
         logger.exception(
-            f"Document extraction failed: "
-            f"attempt={index_attempt_id} "
-            f"error={str(e)}"
+            f"Document extraction failed: attempt={index_attempt_id} error={str(e)}"
         )
 
         # Do NOT clean up batches on failure; future runs will use those batches
@@ -941,7 +972,6 @@ def reissue_old_batches(
     # is still in the filestore waiting for processing or not.
     last_batch_num = len(old_batches) + recent_batches
     logger.info(
-        f"Starting from batch {last_batch_num} due to "
-        f"re-issued batches: {old_batches}, completed batches: {recent_batches}"
+        f"Starting from batch {last_batch_num} due to re-issued batches: {old_batches}, completed batches: {recent_batches}"
     )
     return len(old_batches), recent_batches

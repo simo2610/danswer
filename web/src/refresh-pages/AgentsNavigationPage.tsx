@@ -2,19 +2,19 @@
 
 import { useMemo, useState, useRef, useEffect } from "react";
 import AgentCard from "@/sections/cards/AgentCard";
-import { useUser } from "@/components/user/UserProvider";
-import { checkUserOwnsAssistant as checkUserOwnsAgent } from "@/lib/agents";
+import { useUser } from "@/providers/UserProvider";
+import { checkUserOwnsAgent as checkUserOwnsAgent } from "@/lib/agents";
 import { useAgents } from "@/hooks/useAgents";
-import { MinimalPersonaSnapshot } from "@/app/admin/assistants/interfaces";
+import { MinimalPersonaSnapshot } from "@/app/admin/agents/interfaces";
 import Text from "@/refresh-components/texts/Text";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import * as SettingsLayouts from "@/layouts/settings-layouts";
-import CounterSeparator from "@/refresh-components/CounterSeparator";
+import TextSeparator from "@/refresh-components/TextSeparator";
 import Tabs from "@/refresh-components/Tabs";
-import FilterButton from "@/refresh-components/buttons/FilterButton";
+import { FilterButton } from "@opal/components";
 import Popover, { PopoverMenu } from "@/refresh-components/Popover";
 import LineItem from "@/refresh-components/buttons/LineItem";
-import Button from "@/refresh-components/buttons/Button";
+import { Button } from "@opal/components";
 import {
   SEARCH_TOOL_ID,
   IMAGE_GENERATION_TOOL_ID,
@@ -361,12 +361,10 @@ export default function AgentsNavigationPage() {
   ]);
 
   const featuredAgents = [
-    ...memoizedCurrentlyVisibleAgents.filter(
-      (agent) => agent.is_default_persona
-    ),
+    ...memoizedCurrentlyVisibleAgents.filter((agent) => agent.is_featured),
   ];
   const allAgents = memoizedCurrentlyVisibleAgents.filter(
-    (agent) => !agent.is_default_persona
+    (agent) => !agent.is_featured
   );
 
   const agentCount = featuredAgents.length + allAgents.length;
@@ -425,14 +423,16 @@ export default function AgentsNavigationPage() {
     >
       <SettingsLayouts.Header
         icon={SvgOnyxOctagon}
-        title="Agents & Assistants"
-        description="Customize AI behavior and knowledge for you and your team’s use cases."
+        title="Agents"
+        description="Customize AI behavior and knowledge for you and your team's use cases."
         rightChildren={
-          <div data-testid="AgentsPage/new-agent-button">
-            <Button href="/app/agents/create" leftIcon={SvgPlus}>
-              New Agent
-            </Button>
-          </div>
+          <Button
+            href="/app/agents/create"
+            icon={SvgPlus}
+            aria-label="AgentsPage/new-agent-button"
+          >
+            New Agent
+          </Button>
         }
       >
         <div className="flex flex-col gap-2">
@@ -465,9 +465,8 @@ export default function AgentsNavigationPage() {
             >
               <Popover.Trigger asChild>
                 <FilterButton
-                  leftIcon={SvgUser}
+                  icon={SvgUser}
                   active={selectedCreatorIds.size > 0}
-                  transient={creatorFilterOpen}
                   onClear={() => setSelectedCreatorIds(new Set())}
                 >
                   {creatorFilterButtonText}
@@ -537,8 +536,7 @@ export default function AgentsNavigationPage() {
             >
               <Popover.Trigger asChild>
                 <FilterButton
-                  leftIcon={SvgActions}
-                  transient={actionsFilterOpen}
+                  icon={SvgActions}
                   active={
                     selectedActionIds.size > 0 || selectedMcpServerIds.size > 0
                   }
@@ -660,7 +658,7 @@ export default function AgentsNavigationPage() {
               agents={featuredAgents}
             />
             <AgentsSection title="All Agents" agents={allAgents} />
-            <CounterSeparator
+            <TextSeparator
               count={agentCount}
               text={agentCount === 1 ? "Agent" : "Agents"}
             />

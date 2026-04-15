@@ -3,10 +3,6 @@ import os
 PROMPTS_YAML = "./onyx/seeding/prompts.yaml"
 PERSONAS_YAML = "./onyx/seeding/personas.yaml"
 NUM_RETURNED_HITS = 50
-# Used for LLM filtering and reranking
-# We want this to be approximately the number of results we want to show on the first page
-# It cannot be too large due to cost and latency implications
-NUM_POSTPROCESSED_RESULTS = 20
 
 # May be less depending on model
 MAX_CHUNKS_FED_TO_CHAT = int(os.environ.get("MAX_CHUNKS_FED_TO_CHAT") or 25)
@@ -23,12 +19,16 @@ FAVOR_RECENT_DECAY_MULTIPLIER = 2.0
 # Currently only applies to search flow not chat
 CONTEXT_CHUNKS_ABOVE = int(os.environ.get("CONTEXT_CHUNKS_ABOVE") or 1)
 CONTEXT_CHUNKS_BELOW = int(os.environ.get("CONTEXT_CHUNKS_BELOW") or 1)
-QA_TIMEOUT = int(os.environ.get("QA_TIMEOUT") or "60")  # 60 seconds
-# Weighting factor between Vector and Keyword Search, 1 for completely vector search
+# Fairly long but this is to account for edge cases where the LLM pauses for much longer than usual
+# The alternative is to fail the request completely so this is intended to be fairly lenient.
+LLM_SOCKET_READ_TIMEOUT = int(
+    os.environ.get("LLM_SOCKET_READ_TIMEOUT") or "60"
+)  # 60 seconds
+# Weighting factor between vector and keyword Search; 1 for completely vector
+# search, 0 for keyword. Enforces a valid range of [0, 1]. A supplied value from
+# the env outside of this range will be clipped to the respective end of the
+# range. Defaults to 0.5.
 HYBRID_ALPHA = max(0, min(1, float(os.environ.get("HYBRID_ALPHA") or 0.5)))
-HYBRID_ALPHA_KEYWORD = max(
-    0, min(1, float(os.environ.get("HYBRID_ALPHA_KEYWORD") or 0.4))
-)
 # Weighting factor between Title and Content of documents during search, 1 for completely
 # Title based. Default heavily favors Content because Title is also included at the top of
 # Content. This is to avoid cases where the Content is very relevant but it may not be clear
@@ -55,4 +55,12 @@ VESPA_SEARCHER_THREADS = int(os.environ.get("VESPA_SEARCHER_THREADS") or 2)
 USE_SEMANTIC_KEYWORD_EXPANSIONS_BASIC_SEARCH = (
     os.environ.get("USE_SEMANTIC_KEYWORD_EXPANSIONS_BASIC_SEARCH", "false").lower()
     == "true"
+)
+
+# Chat History Compression
+# Trigger compression when history exceeds this ratio of available context window
+COMPRESSION_TRIGGER_RATIO = float(os.environ.get("COMPRESSION_TRIGGER_RATIO", "0.75"))
+
+SKIP_DEEP_RESEARCH_CLARIFICATION = (
+    os.environ.get("SKIP_DEEP_RESEARCH_CLARIFICATION", "false").lower() == "true"
 )

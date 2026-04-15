@@ -19,13 +19,16 @@ from ee.onyx.server.query_and_chat.models import SearchHistoryResponse
 from ee.onyx.server.query_and_chat.models import SearchQueryResponse
 from ee.onyx.server.query_and_chat.models import SendSearchQueryRequest
 from ee.onyx.server.query_and_chat.streaming_models import SearchErrorPacket
-from onyx.auth.users import current_user
+from onyx.auth.permissions import require_permission
+from onyx.configs.app_configs import ONYX_SEARCH_UI_USES_OPENSEARCH_KEYWORD_SEARCH
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.enums import Permission
 from onyx.db.models import User
 from onyx.llm.factory import get_default_llm
 from onyx.server.usage_limits import check_llm_cost_limit_for_provider
 from onyx.server.utils import get_json_line
+from onyx.server.utils_vector_db import require_vector_db
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
 
@@ -37,8 +40,7 @@ router = APIRouter(prefix="/search")
 @router.post("/search-flow-classification")
 def search_flow_classification(
     request: SearchFlowClassificationRequest,
-    # This is added just to ensure this endpoint isn't spammed by non-authorized users since there's an LLM call underneath it
-    _: User | None = Depends(current_user),
+    _: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> SearchFlowClassificationResponse:
     query = request.user_query
@@ -67,19 +69,33 @@ def search_flow_classification(
     return SearchFlowClassificationResponse(is_search_flow=is_search_flow)
 
 
-@router.post("/send-search-message", response_model=None)
+# NOTE: This endpoint is used for the core flow of the Onyx application, any
+# changes to it should be reviewed and approved by an experienced team member.
+# It is very important to 1. avoid bloat and 2. that this remains backwards
+# compatible across versions.
+@router.post(
+    "/send-search-message",
+    response_model=None,
+    dependencies=[Depends(require_vector_db)],
+)
 def handle_send_search_message(
     request: SendSearchQueryRequest,
-    user: User | None = Depends(current_user),
+    user: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> StreamingResponse | SearchFullResponse:
     """
-    Execute a search query with optional streaming.
+    Executes a search query with optional streaming.
 
-    When stream=True: Returns StreamingResponse with SSE
-    When stream=False: Returns SearchFullResponse
+    If hybrid_alpha is unset and ONYX_SEARCH_UI_USES_OPENSEARCH_KEYWORD_SEARCH
+    is True, executes pure keyword search.
+
+    Returns:
+        StreamingResponse with SSE if stream=True, otherwise SearchFullResponse.
     """
     logger.debug(f"Received search query: {request.search_query}")
+
+    if request.hybrid_alpha is None and ONYX_SEARCH_UI_USES_OPENSEARCH_KEYWORD_SEARCH:
+        request.hybrid_alpha = 0.0
 
     # Non-streaming path
     if not request.stream:
@@ -114,7 +130,7 @@ def handle_send_search_message(
 def get_search_history(
     limit: int = 100,
     filter_days: int | None = None,
-    user: User | None = Depends(current_user),
+    user: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> SearchHistoryResponse:
     """
@@ -145,11 +161,6 @@ def get_search_history(
             status_code=400,
             detail="filter_days must be greater than 0",
         )
-
-    # TODO(yuhong) remove this
-    if user is None:
-        # Return empty list for unauthenticated users
-        return SearchHistoryResponse(search_queries=[])
 
     search_queries = fetch_search_queries_for_user(
         db_session=db_session,

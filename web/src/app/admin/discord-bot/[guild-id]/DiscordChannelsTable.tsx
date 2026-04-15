@@ -19,7 +19,7 @@ import {
 } from "@/app/admin/discord-bot/types";
 import { SvgHash, SvgBubbleText, SvgLock } from "@opal/icons";
 import { IconProps } from "@opal/types";
-import { Persona } from "@/app/admin/assistants/interfaces";
+import { Persona } from "@/app/admin/agents/interfaces";
 
 function getChannelIcon(
   channelType: DiscordChannelType,
@@ -144,7 +144,6 @@ export function DiscordChannelsTable({
                     )
                   }
                   disabled={disabled}
-                  className="w-[160px]"
                 >
                   <InputSelect.Trigger placeholder="-" />
                   <InputSelect.Content>

@@ -2,12 +2,10 @@
 
 import { SvgCheckCircle } from "@opal/icons";
 import { cn } from "@/lib/utils";
+import { Disabled } from "@opal/core";
 import Text from "@/refresh-components/texts/Text";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
-import {
-  LLMProviderName,
-  LLMProviderDescriptor,
-} from "@/app/admin/configuration/llm/interfaces";
+import { Tooltip } from "@opal/components";
+import { LLMProviderName, LLMProviderDescriptor } from "@/interfaces/llm";
 
 // Provider configurations
 export type ProviderKey = "anthropic" | "openai" | "openrouter";
@@ -36,8 +34,8 @@ export const PROVIDERS: ProviderConfig[] = [
     providerName: LLMProviderName.ANTHROPIC,
     recommended: true,
     models: [
-      { name: "claude-opus-4-5", label: "Claude Opus 4.5", recommended: true },
-      { name: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+      { name: "claude-opus-4-6", label: "Claude Opus 4.6", recommended: true },
+      { name: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     ],
     apiKeyPlaceholder: "sk-ant-...",
     apiKeyUrl: "https://console.anthropic.com/dashboard",
@@ -93,20 +91,21 @@ function SelectableButton({
 }: SelectableButtonProps) {
   const button = (
     <div className="flex flex-col items-center gap-1">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        className={cn(
-          "w-full px-6 py-3 rounded-12 border transition-colors",
-          disabled && "opacity-50 cursor-not-allowed",
-          selected
-            ? "border-action-link-05 bg-action-link-01 text-action-text-link-05"
-            : "border-border-01 bg-background-tint-00 text-text-04 hover:bg-background-tint-01"
-        )}
-      >
-        <Text mainUiAction>{children}</Text>
-      </button>
+      <Disabled disabled={disabled} allowClick>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          className={cn(
+            "w-full px-6 py-3 rounded-12 border transition-colors",
+            selected
+              ? "border-action-link-05 bg-action-link-01 text-action-text-link-05"
+              : "border-border-01 bg-background-tint-00 text-text-04 hover:bg-background-tint-01"
+          )}
+        >
+          <Text mainUiAction>{children}</Text>
+        </button>
+      </Disabled>
       {subtext && (
         <Text figureSmallLabel text02>
           {subtext}
@@ -116,7 +115,7 @@ function SelectableButton({
   );
 
   if (tooltip) {
-    return <SimpleTooltip tooltip={tooltip}>{button}</SimpleTooltip>;
+    return <Tooltip tooltip={tooltip}>{button}</Tooltip>;
   }
 
   return button;
@@ -139,20 +138,21 @@ function ModelSelectButton({
 }: ModelSelectButtonProps) {
   return (
     <div className="flex flex-col items-center gap-1 w-full">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        className={cn(
-          "w-full px-4 py-2.5 rounded-12 border transition-colors",
-          disabled && "opacity-50 cursor-not-allowed",
-          selected
-            ? "border-action-link-05 bg-action-link-01 text-action-text-link-05"
-            : "border-border-01 bg-background-tint-00 text-text-04 hover:bg-background-tint-01"
-        )}
-      >
-        <Text mainUiAction>{label}</Text>
-      </button>
+      <Disabled disabled={disabled} allowClick>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          className={cn(
+            "w-full px-4 py-2.5 rounded-12 border transition-colors",
+            selected
+              ? "border-action-link-05 bg-action-link-01 text-action-text-link-05"
+              : "border-border-01 bg-background-tint-00 text-text-04 hover:bg-background-tint-01"
+          )}
+        >
+          <Text mainUiAction>{label}</Text>
+        </button>
+      </Disabled>
       {recommended && (
         <Text figureSmallLabel text02>
           Recommended
@@ -292,17 +292,16 @@ export default function OnboardingLlmSetup({
           API Key
         </Text>
         <div className="w-full max-w-md">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => handleApiKeyChange(e.target.value)}
-            placeholder={currentProviderConfig.apiKeyPlaceholder}
-            disabled={connectionStatus === "testing"}
-            className={cn(
-              "w-full px-3 py-2 rounded-08 input-normal text-text-04 placeholder:text-text-02 focus:outline-none",
-              connectionStatus === "testing" && "opacity-50 cursor-not-allowed"
-            )}
-          />
+          <Disabled disabled={connectionStatus === "testing"} allowClick>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => handleApiKeyChange(e.target.value)}
+              placeholder={currentProviderConfig.apiKeyPlaceholder}
+              disabled={connectionStatus === "testing"}
+              className="w-full px-3 py-2 rounded-08 input-normal text-text-04 placeholder:text-text-02 focus:outline-none"
+            />
+          </Disabled>
           {/* Message area */}
           <div className="min-h-[2rem] flex justify-center pt-4">
             {connectionStatus === "error" && (

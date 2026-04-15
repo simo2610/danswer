@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from httpx_oauth.clients.google import GoogleOAuth2
 
-from ee.onyx.configs.app_configs import LICENSE_ENFORCEMENT_ENABLED
 from ee.onyx.server.analytics.api import router as analytics_router
 from ee.onyx.server.auth_check import check_ee_router_auth
 from ee.onyx.server.billing.api import router as billing_router
@@ -16,6 +15,7 @@ from ee.onyx.server.enterprise_settings.api import (
     basic_router as enterprise_settings_router,
 )
 from ee.onyx.server.evals.api import router as evals_router
+from ee.onyx.server.features.hooks.api import router as hook_router
 from ee.onyx.server.license.api import router as license_router
 from ee.onyx.server.manage.standard_answer import router as standard_answer_router
 from ee.onyx.server.middleware.license_enforcement import (
@@ -31,6 +31,8 @@ from ee.onyx.server.query_and_chat.query_backend import (
 from ee.onyx.server.query_and_chat.search_backend import router as search_router
 from ee.onyx.server.query_history.api import router as query_history_router
 from ee.onyx.server.reporting.usage_export_api import router as usage_export_router
+from ee.onyx.server.scim.api import register_scim_exception_handlers
+from ee.onyx.server.scim.api import scim_router
 from ee.onyx.server.seeding import seed_db
 from ee.onyx.server.tenants.api import router as tenants_router
 from ee.onyx.server.token_rate_limits.api import (
@@ -137,6 +139,7 @@ def get_application() -> FastAPI:
     include_router_with_global_prefix_prepended(application, ee_oauth_router)
     include_router_with_global_prefix_prepended(application, ee_document_cc_pair_router)
     include_router_with_global_prefix_prepended(application, evals_router)
+    include_router_with_global_prefix_prepended(application, hook_router)
 
     # Enterprise-only global settings
     include_router_with_global_prefix_prepended(
@@ -151,16 +154,19 @@ def get_application() -> FastAPI:
     # License management
     include_router_with_global_prefix_prepended(application, license_router)
 
-    # Unified billing API - available when license system is enabled
-    # Works for both self-hosted and cloud deployments
-    # TODO(ENG-3533): Once frontend migrates to /admin/billing/*, this becomes the
-    # primary billing API and /tenants/* billing endpoints can be removed
-    if LICENSE_ENFORCEMENT_ENABLED:
-        include_router_with_global_prefix_prepended(application, billing_router)
+    # Unified billing API - always registered in EE.
+    # Each endpoint is protected by admin permission checks.
+    include_router_with_global_prefix_prepended(application, billing_router)
 
     if MULTI_TENANT:
         # Tenant management
         include_router_with_global_prefix_prepended(application, tenants_router)
+
+    # SCIM 2.0 — protocol endpoints (unauthenticated by Onyx session auth;
+    # they use their own SCIM bearer token auth).
+    # Not behind APP_API_PREFIX because IdPs expect /scim/v2/... directly.
+    application.include_router(scim_router)
+    register_scim_exception_handlers(application)
 
     # Ensure all routes have auth enabled or are explicitly marked as public
     check_ee_router_auth(application)

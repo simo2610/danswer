@@ -94,7 +94,7 @@ import {
 import { cn, noProp } from "@/lib/utils";
 import InputTypeIn from "../InputTypeIn";
 import { FieldContext } from "../../form/FieldContext";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import { Button } from "@opal/components";
 import { FieldMessage } from "../../messages/FieldMessage";
 
 // Hooks
@@ -129,6 +129,9 @@ const InputComboBox = ({
   leftSearchIcon = false,
   rightSection,
   separatorLabel = "Other options",
+  createPrefix,
+  showOtherOptions = false,
+  dropdownMaxHeight,
   ...rest
 }: WithoutStyles<InputComboBoxProps>) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -152,23 +155,22 @@ const InputComboBox = ({
   // Filtering Hook
   const { matchedOptions, unmatchedOptions, hasSearchTerm } =
     useOptionFiltering({ options, inputValue });
+  const visibleUnmatchedOptions =
+    hasSearchTerm && showOtherOptions ? unmatchedOptions : [];
 
-  // Whether to show the create option (only when no partial matches)
-  const showCreateOption =
-    !strict &&
-    hasSearchTerm &&
-    inputValue.trim() !== "" &&
-    matchedOptions.length === 0;
+  // Whether to show the create option (always show when typing in non-strict mode)
+  const showCreateOption = !strict && hasSearchTerm && inputValue.trim() !== "";
 
   // Combined list for keyboard navigation (includes create option when shown)
+  // Only show matched options when searching (hide unmatched)
   const allVisibleOptions = useMemo(() => {
-    const baseOptions = [...matchedOptions, ...unmatchedOptions];
+    const baseOptions = [...matchedOptions, ...visibleUnmatchedOptions];
     if (showCreateOption) {
       // Prepend a synthetic option for the "create new" item
       return [{ value: inputValue, label: inputValue }, ...baseOptions];
     }
     return baseOptions;
-  }, [matchedOptions, unmatchedOptions, showCreateOption, inputValue]);
+  }, [matchedOptions, visibleUnmatchedOptions, showCreateOption, inputValue]);
 
   // Floating UI for dropdown positioning
   const { refs, floatingStyles } = useFloating({
@@ -318,24 +320,32 @@ const InputComboBox = ({
 
   const handleFocus = useCallback(() => {
     if (hasOptions) {
+      setInputValue("");
       setIsOpen(true);
-      setHighlightedIndex(-1); // Start with no highlight on focus
-      setIsKeyboardNav(false); // Start with mouse mode
+      setHighlightedIndex(-1);
+      setIsKeyboardNav(false);
     }
-  }, [hasOptions, setIsOpen, setHighlightedIndex, setIsKeyboardNav]);
+  }, [
+    hasOptions,
+    setInputValue,
+    setIsOpen,
+    setHighlightedIndex,
+    setIsKeyboardNav,
+  ]);
 
   const toggleDropdown = useCallback(() => {
     if (!disabled && hasOptions) {
       setIsOpen((prev) => {
         const newOpen = !prev;
         if (newOpen) {
-          setHighlightedIndex(-1); // Reset highlight when opening
+          setInputValue("");
+          setHighlightedIndex(-1);
         }
         return newOpen;
       });
       inputRef.current?.focus();
     }
-  }, [disabled, hasOptions, setIsOpen, setHighlightedIndex]);
+  }, [disabled, hasOptions, setIsOpen, setInputValue, setHighlightedIndex]);
 
   const autoId = useId();
   const fieldId = fieldContext?.baseId || name || `combo-box-${autoId}`;
@@ -391,10 +401,11 @@ const InputComboBox = ({
                 </div>
               )}
               {hasOptions && (
-                <IconButton
-                  internal
-                  onClick={noProp(toggleDropdown)}
+                <Button
                   disabled={disabled}
+                  prominence="tertiary"
+                  size="sm"
+                  onClick={noProp(toggleDropdown)}
                   icon={isOpen ? SvgChevronUp : SvgChevronDown}
                   aria-label={isOpen ? "Close dropdown" : "Open dropdown"}
                   tabIndex={-1}
@@ -417,7 +428,7 @@ const InputComboBox = ({
           fieldId={fieldId}
           placeholder={placeholder}
           matchedOptions={matchedOptions}
-          unmatchedOptions={unmatchedOptions}
+          unmatchedOptions={visibleUnmatchedOptions}
           hasSearchTerm={hasSearchTerm}
           separatorLabel={separatorLabel}
           value={value}
@@ -436,6 +447,8 @@ const InputComboBox = ({
           inputValue={inputValue}
           allowCreate={!strict}
           showCreateOption={showCreateOption}
+          createPrefix={createPrefix}
+          dropdownMaxHeight={dropdownMaxHeight}
         />
       </>
 

@@ -50,10 +50,10 @@ import {
 } from "@/components/icons/icons";
 import { ValidSources } from "./types";
 import { SourceCategory, SourceMetadata } from "./search/interfaces";
-import { Persona } from "@/app/admin/assistants/interfaces";
+import { Persona } from "@/app/admin/agents/interfaces";
 import React from "react";
-import { DOCS_ADMINS_PATH } from "./constants";
-import { SvgFileText, SvgGlobe } from "@opal/icons";
+import { DOCS_ADMINS_PATH, DOCS_BASE_URL } from "./constants";
+import { SvgFileText, SvgGlobe, SvgUploadCloud } from "@opal/icons";
 
 interface PartialSourceMetadata {
   icon: React.FC<{ size?: number; className?: string }>;
@@ -67,6 +67,11 @@ interface PartialSourceMetadata {
   // federated connectors store the base source type if it's a source
   // that has both indexed connectors and federated connectors
   baseSourceType?: ValidSources;
+  // For connectors that are always available (don't need connection setup)
+  // e.g., User Library (CraftFile) where users just upload files
+  alwaysConnected?: boolean;
+  // Custom description to show instead of status (e.g., "Manage your uploaded files")
+  customDescription?: string;
 }
 
 type SourceMap = {
@@ -407,11 +412,10 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     isPopular: true,
   },
   user_file: {
-    // TODO: write docs for projects and link them here
-    icon: SvgFileText,
-    displayName: "File",
+    icon: SvgUploadCloud,
+    displayName: "Uploaded Files",
     category: SourceCategory.Other,
-    docs: `${DOCS_ADMINS_PATH}/connectors/official/file`,
+    docs: `${DOCS_BASE_URL}/overview/core_features/chat#projects`,
     isPopular: false, // Needs to be false to hide from the Add Connector page
   },
 
@@ -420,6 +424,16 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     icon: SvgGlobe,
     displayName: "Ingestion",
     category: SourceCategory.Other,
+  },
+
+  // Craft-specific sources
+  craft_file: {
+    icon: SvgFileText,
+    displayName: "Your Files",
+    category: SourceCategory.Other,
+    isPopular: false, // Hidden from standard Add Connector page
+    alwaysConnected: true, // No setup required, just upload files
+    customDescription: "Manage your uploaded files",
   },
 
   // Placeholder (non-null default)
@@ -447,12 +461,17 @@ function fillSourceMetadata(
 }
 
 export function getSourceMetadata(sourceType: ValidSources): SourceMetadata {
-  const response = fillSourceMetadata(
-    SOURCE_METADATA_MAP[sourceType],
-    sourceType
-  );
+  const partialMetadata = SOURCE_METADATA_MAP[sourceType];
 
-  return response;
+  // Fallback to not_applicable if sourceType not found in map
+  if (!partialMetadata) {
+    return fillSourceMetadata(
+      SOURCE_METADATA_MAP[ValidSources.NotApplicable],
+      ValidSources.NotApplicable
+    );
+  }
+
+  return fillSourceMetadata(partialMetadata, sourceType);
 }
 
 export function listSourceMetadata(): SourceMetadata[] {

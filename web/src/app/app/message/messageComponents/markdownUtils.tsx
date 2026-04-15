@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, JSX } from "react";
+import React, { useCallback, useEffect, useRef, useMemo, JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -14,6 +14,68 @@ import {
 import { extractCodeText, preprocessLaTeX } from "@/app/app/message/codeUtils";
 import { CodeBlock } from "@/app/app/message/CodeBlock";
 import { transformLinkUri, cn } from "@/lib/utils";
+import { InMessageImage } from "@/app/app/components/files/images/InMessageImage";
+import { extractChatImageFileId } from "@/app/app/components/files/images/utils";
+
+/** Table wrapper that detects horizontal overflow and shows a fade + scrollbar. */
+interface ScrollableTableProps
+  extends React.TableHTMLAttributes<HTMLTableElement> {
+  children: React.ReactNode;
+}
+
+export function ScrollableTable({
+  className,
+  children,
+  ...props
+}: ScrollableTableProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    const wrap = wrapRef.current;
+    const table = tableRef.current;
+    if (!el || !wrap) return;
+
+    const check = () => {
+      const overflows = el.scrollWidth > el.clientWidth;
+      const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
+      wrap.dataset.overflows = overflows && !atEnd ? "true" : "false";
+      el.dataset.scrolled = el.scrollLeft > 0 ? "true" : "false";
+    };
+
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    // Observe both the scroll container (parent resize) and the table
+    // itself (content growth during streaming).
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    if (table) ro.observe(table);
+
+    return () => {
+      el.removeEventListener("scroll", check);
+      ro.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={wrapRef} className="markdown-table-card">
+      <div ref={scrollRef} className="markdown-table-breakout">
+        <table
+          ref={tableRef}
+          className={cn(
+            className,
+            "min-w-full !my-0 [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap"
+          )}
+          {...props}
+        >
+          {children}
+        </table>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Processes content for markdown rendering by handling code blocks and LaTeX
@@ -58,17 +120,31 @@ export const useMarkdownComponents = (
   );
 
   const anchorCallback = useCallback(
-    (props: any) => (
-      <MemoizedAnchor
-        updatePresentingDocument={state?.setPresentingDocument || (() => {})}
-        docs={state?.docs || []}
-        userFiles={state?.userFiles || []}
-        citations={state?.citations}
-        href={props.href}
-      >
-        {props.children}
-      </MemoizedAnchor>
-    ),
+    (props: any) => {
+      const imageFileId = extractChatImageFileId(
+        props.href,
+        String(props.children ?? "")
+      );
+      if (imageFileId) {
+        return (
+          <InMessageImage
+            fileId={imageFileId}
+            fileName={String(props.children ?? "")}
+          />
+        );
+      }
+      return (
+        <MemoizedAnchor
+          updatePresentingDocument={state?.setPresentingDocument || (() => {})}
+          docs={state?.docs || []}
+          userFiles={state?.userFiles || []}
+          citations={state?.citations}
+          href={props.href}
+        >
+          {props.children}
+        </MemoizedAnchor>
+      );
+    },
     [
       state?.docs,
       state?.userFiles,
@@ -111,11 +187,9 @@ export const useMarkdownComponents = (
       },
       table: ({ node, className, children, ...props }: any) => {
         return (
-          <div className="markdown-table-breakout">
-            <table className={cn(className, "min-w-full")} {...props}>
-              {children}
-            </table>
-          </div>
+          <ScrollableTable className={className} {...props}>
+            {children}
+          </ScrollableTable>
         );
       },
       code: ({ node, className, children }: any) => {

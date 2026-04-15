@@ -429,8 +429,7 @@ class CloudEmbedding:
                 # Log progress for large batches to track memory usage patterns
                 if batch_idx % 10 == 0 and batch_idx > 0:
                     logger.debug(
-                        f"VertexAI embedding progress: batch {batch_idx}/{len(batches)}, "
-                        f"total_embeddings={len(all_embeddings)}"
+                        f"VertexAI embedding progress: batch {batch_idx}/{len(batches)}, total_embeddings={len(all_embeddings)}"
                     )
 
             logger.debug(
@@ -583,8 +582,7 @@ async def cohere_rerank_api(
     except ApiError as err:
         if err.status_code == 402:
             logger.warning(
-                "Cohere rerank request rejected due to billing cap. "
-                "Falling back to retrieval ordering until billing resets."
+                "Cohere rerank request rejected due to billing cap. Falling back to retrieval ordering until billing resets."
             )
             raise CohereBillingLimitError(
                 "Cohere billing limit reached for reranking"
@@ -703,8 +701,8 @@ class EmbeddingModel:
     async def _make_direct_api_call(
         self,
         embed_request: EmbedRequest,
-        tenant_id: str | None = None,
-        request_id: str | None = None,
+        tenant_id: str | None = None,  # noqa: ARG002
+        request_id: str | None = None,  # noqa: ARG002
     ) -> EmbedResponse:
         """Make direct API call to cloud provider, bypassing model server."""
         if self.provider_type is None:
@@ -1166,8 +1164,8 @@ def warm_up_retry(
     func: Callable[..., Any],
     tries: int = 20,
     delay: int = 5,
-    *args: Any,
-    **kwargs: Any,
+    *args: Any,  # noqa: ARG001
+    **kwargs: Any,  # noqa: ARG001
 ) -> Callable[..., Any]:
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:

@@ -2,8 +2,8 @@ import { useRef, useState } from "react";
 import { FileDescriptor } from "@/app/app/interfaces";
 import { FiLoader, FiFileText } from "react-icons/fi";
 import { InputBarPreviewImage } from "./images/InputBarPreviewImage";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import { Tooltip } from "@opal/components";
+import { Button } from "@opal/components";
 import { SvgX } from "@opal/icons";
 export interface InputBarPreviewImageProviderProps {
   file: FileDescriptor;
@@ -24,7 +24,14 @@ export function InputBarPreviewImageProvider({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {isHovered && <IconButton icon={SvgX} onClick={onDelete} internal />}
+      {isHovered && (
+        <Button
+          icon={SvgX}
+          onClick={onDelete}
+          prominence="tertiary"
+          size="sm"
+        />
+      )}
       {isUploading && (
         <div
           className="
@@ -107,16 +114,21 @@ export function InputBarPreview({
           </div>
         </div>
 
-        <SimpleTooltip tooltip={file.name ?? undefined}>
+        <Tooltip tooltip={file.name ?? undefined}>
           <div
             ref={fileNameRef}
             className={`font-medium text-sm line-clamp-1 break-all ellipses max-w-48`}
           >
             {file.name}
           </div>
-        </SimpleTooltip>
+        </Tooltip>
 
-        <IconButton onClick={onDelete} icon={SvgX} internal />
+        <Button
+          onClick={onDelete}
+          icon={SvgX}
+          prominence="tertiary"
+          size="sm"
+        />
       </div>
     </div>
   );

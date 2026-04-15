@@ -1,4 +1,5 @@
 import abc
+from collections.abc import Iterable
 from typing import Self
 
 from pydantic import BaseModel
@@ -51,6 +52,11 @@ class TenantState(BaseModel):
 
     tenant_id: str
     multitenant: bool
+
+    def __str__(self) -> str:
+        return (
+            f"TenantState(tenant_id={self.tenant_id}, multitenant={self.multitenant})"
+        )
 
     @model_validator(mode="after")
     def check_tenant_id_is_set_in_multitenant_mode(self) -> Self:
@@ -143,6 +149,7 @@ class MetadataUpdateRequest(BaseModel):
     hidden: bool | None = None
     secondary_index_updated: bool | None = None
     project_ids: set[int] | None = None
+    persona_ids: set[int] | None = None
 
 
 class IndexRetrievalFilters(BaseModel):
@@ -203,10 +210,10 @@ class Indexable(abc.ABC):
     @abc.abstractmethod
     def index(
         self,
-        chunks: list[DocMetadataAwareIndexChunk],
+        chunks: Iterable[DocMetadataAwareIndexChunk],
         indexing_metadata: IndexingMetadata,
     ) -> list[DocumentInsertionRecord]:
-        """Indexes a list of document chunks into the document index.
+        """Indexes an iterable of document chunks into the document index.
 
         This is often a batch operation including chunks from multiple
         documents.
@@ -318,6 +325,7 @@ class IdRetrievalCapable(abc.ABC):
         # TODO(andrei): This is temporary, we will not expose this in the long
         # run.
         batch_retrieval: bool = False,
+        # TODO(andrei): Add a param for whether to retrieve hidden docs.
     ) -> list[InferenceChunk]:
         """Fetches chunk(s) based on document ID.
 
@@ -347,12 +355,12 @@ class HybridCapable(abc.ABC):
         self,
         query: str,
         query_embedding: Embedding,
+        # TODO(andrei): This param is not great design, get rid of it.
         final_keywords: list[str] | None,
         query_type: QueryType,
         # TODO(andrei): Make this more strict w.r.t. acl, temporary for now.
         filters: IndexFilters,
         num_to_retrieve: int,
-        offset: int = 0,
     ) -> list[InferenceChunk]:
         """Runs hybrid search and returns a list of inference chunks.
 
@@ -368,8 +376,47 @@ class HybridCapable(abc.ABC):
             filters: Filters for things like permissions, source type, time,
                 etc.
             num_to_retrieve: Number of highest matching chunks to return.
-            offset: Number of highest matching chunks to initially skip (kind of
-                like pagination). Defaults to 0.
+
+        Returns:
+            Score-ranked (highest first) list of highest matching chunks.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def keyword_retrieval(
+        self,
+        query: str,
+        filters: IndexFilters,
+        num_to_retrieve: int,
+    ) -> list[InferenceChunk]:
+        """Runs keyword-only search and returns a list of inference chunks.
+
+        Args:
+            query: User query.
+            filters: Filters for things like permissions, source type, time,
+                etc.
+            num_to_retrieve: Number of highest matching chunks to return.
+
+        Returns:
+            Score-ranked (highest first) list of highest matching chunks.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def semantic_retrieval(
+        self,
+        query_embedding: Embedding,
+        filters: IndexFilters,
+        num_to_retrieve: int,
+    ) -> list[InferenceChunk]:
+        """Runs semantic-only search and returns a list of inference chunks.
+
+        Args:
+            query_embedding: Vector representation of the query. Must be of the
+                correct dimensionality for the primary index.
+            filters: Filters for things like permissions, source type, time,
+                etc.
+            num_to_retrieve: Number of highest matching chunks to return.
 
         Returns:
             Score-ranked (highest first) list of highest matching chunks.
@@ -380,8 +427,6 @@ class HybridCapable(abc.ABC):
 class RandomCapable(abc.ABC):
     """
     Class must implement random document retrieval.
-
-    This currently is just used for porting the documents to a secondary index.
     """
 
     @abc.abstractmethod
@@ -389,7 +434,7 @@ class RandomCapable(abc.ABC):
         self,
         # TODO(andrei): Make this more strict w.r.t. acl, temporary for now.
         filters: IndexFilters,
-        num_to_retrieve: int = 100,
+        num_to_retrieve: int = 10,
         dirty: bool | None = None,
     ) -> list[InferenceChunk]:
         """Retrieves random chunks matching the filters.
@@ -397,7 +442,7 @@ class RandomCapable(abc.ABC):
         Args:
             filters: Filters for things like permissions, source type, time,
                 etc.
-            num_to_retrieve: Number of chunks to retrieve. Defaults to 100.
+            num_to_retrieve: Number of chunks to retrieve. Defaults to 10.
             dirty: If set, retrieve chunks whose "dirty" flag matches this
                 argument. If None, there is no restriction on retrieved chunks
                 with respect to that flag. A chunk is considered dirty if there

@@ -4,7 +4,9 @@ import {
   PythonToolPacket,
   PythonToolStart,
   PythonToolDelta,
+  ToolCallArgumentDelta,
   SectionEnd,
+  CODE_INTERPRETER_TOOL_TYPES,
 } from "@/app/app/services/streamingModels";
 import {
   MessageRenderer,
@@ -39,6 +41,18 @@ function HighlightedPythonCode({ code }: { code: string }) {
 
 // Helper function to construct current Python execution state
 function constructCurrentPythonState(packets: PythonToolPacket[]) {
+  // Accumulate streaming code from argument deltas (arrives before PythonToolStart)
+  const streamingCode = packets
+    .filter(
+      (packet) =>
+        packet.obj.type === PacketType.TOOL_CALL_ARGUMENT_DELTA &&
+        (packet.obj as ToolCallArgumentDelta).tool_type ===
+          CODE_INTERPRETER_TOOL_TYPES.PYTHON
+    )
+    .map((packet) =>
+      String((packet.obj as ToolCallArgumentDelta).argument_deltas.code ?? "")
+    )
+    .join("");
   const pythonStart = packets.find(
     (packet) => packet.obj.type === PacketType.PYTHON_TOOL_START
   )?.obj as PythonToolStart | null;
@@ -51,7 +65,8 @@ function constructCurrentPythonState(packets: PythonToolPacket[]) {
       packet.obj.type === PacketType.ERROR
   )?.obj as SectionEnd | null;
 
-  const code = pythonStart?.code || "";
+  // Use complete code from PythonToolStart if available, else use streamed code.
+  const code = pythonStart?.code || streamingCode;
   const stdout = pythonDeltas
     .map((delta) => delta?.stdout || "")
     .filter((s) => s)
@@ -61,6 +76,7 @@ function constructCurrentPythonState(packets: PythonToolPacket[]) {
     .filter((s) => s)
     .join("");
   const fileIds = pythonDeltas.flatMap((delta) => delta?.file_ids || []);
+  const isStreaming = !pythonStart && streamingCode.length > 0;
   const isExecuting = pythonStart && !pythonEnd;
   const isComplete = pythonStart && pythonEnd;
   const hasError = stderr.length > 0;
@@ -70,6 +86,7 @@ function constructCurrentPythonState(packets: PythonToolPacket[]) {
     stdout,
     stderr,
     fileIds,
+    isStreaming,
     isExecuting,
     isComplete,
     hasError,
@@ -82,8 +99,16 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
   renderType,
   children,
 }) => {
-  const { code, stdout, stderr, fileIds, isExecuting, isComplete, hasError } =
-    constructCurrentPythonState(packets);
+  const {
+    code,
+    stdout,
+    stderr,
+    fileIds,
+    isStreaming,
+    isExecuting,
+    isComplete,
+    hasError,
+  } = constructCurrentPythonState(packets);
 
   useEffect(() => {
     if (isComplete) {
@@ -92,6 +117,9 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
   }, [isComplete, onComplete]);
 
   const status = useMemo(() => {
+    if (isStreaming) {
+      return "Writing code...";
+    }
     if (isExecuting) {
       return "Executing Python code...";
     }
@@ -102,13 +130,13 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
       return "Python execution completed";
     }
     return "Python execution";
-  }, [isComplete, isExecuting, hasError]);
+  }, [isStreaming, isComplete, isExecuting, hasError]);
 
   // Shared content for all states - used by both FULL and compact modes
   const content = (
     <div className="flex flex-col mb-1 space-y-2">
-      {/* Loading indicator when executing */}
-      {isExecuting && (
+      {/* Loading indicator when streaming or executing */}
+      {(isStreaming || isExecuting) && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="flex gap-0.5">
             <div className="w-1 h-1 bg-current rounded-full animate-pulse"></div>
@@ -121,7 +149,7 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
               style={{ animationDelay: "0.2s" }}
             ></div>
           </div>
-          <span>Running code...</span>
+          <span>{isStreaming ? "Writing code..." : "Running code..."}</span>
         </div>
       )}
 
@@ -136,11 +164,9 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
 
       {/* Output */}
       {stdout && (
-        <div className="rounded-md bg-gray-100 dark:bg-gray-800 p-3">
-          <div className="text-xs font-semibold mb-1 text-gray-600 dark:text-gray-400">
-            Output:
-          </div>
-          <pre className="text-sm whitespace-pre-wrap font-mono text-gray-900 dark:text-gray-100">
+        <div className="rounded-md bg-background-neutral-02 p-3">
+          <div className="text-xs font-semibold mb-1 text-text-03">Output:</div>
+          <pre className="text-sm whitespace-pre-wrap font-mono text-text-01 overflow-x-auto">
             {stdout}
           </pre>
         </div>
@@ -148,11 +174,11 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
 
       {/* Error */}
       {stderr && (
-        <div className="rounded-md bg-red-50 dark:bg-red-900/20 p-3 border border-red-200 dark:border-red-800">
-          <div className="text-xs font-semibold mb-1 text-red-600 dark:text-red-400">
+        <div className="rounded-md bg-status-error-01 p-3 border border-status-error-02">
+          <div className="text-xs font-semibold mb-1 text-status-error-05">
             Error:
           </div>
-          <pre className="text-sm whitespace-pre-wrap font-mono text-red-900 dark:text-red-100">
+          <pre className="text-sm whitespace-pre-wrap font-mono text-status-error-05 overflow-x-auto">
             {stderr}
           </pre>
         </div>
@@ -160,14 +186,14 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
 
       {/* File count */}
       {fileIds.length > 0 && (
-        <div className="text-sm text-gray-600 dark:text-gray-400">
+        <div className="text-sm text-text-03">
           Generated {fileIds.length} file{fileIds.length !== 1 ? "s" : ""}
         </div>
       )}
 
       {/* No output fallback - only when complete with no output */}
       {isComplete && !stdout && !stderr && (
-        <div className="py-2 text-center text-gray-500 dark:text-gray-400">
+        <div className="py-2 text-center text-text-04">
           <SvgTerminal className="w-4 h-4 mx-auto mb-1 opacity-50" />
           <p className="text-xs">No output</p>
         </div>
@@ -177,23 +203,32 @@ export const PythonToolRenderer: MessageRenderer<PythonToolPacket, {}> = ({
 
   // FULL mode: render content directly
   if (renderType === RenderType.FULL) {
-    return children({
-      icon: SvgTerminal,
-      status,
-      content,
-      supportsCompact: true,
-    });
+    return children([
+      {
+        icon: SvgTerminal,
+        status,
+        content,
+        supportsCollapsible: true,
+        alwaysCollapsible: true,
+      },
+    ]);
   }
 
   // Compact mode: wrap content in FadeDiv
-  return children({
-    icon: SvgTerminal,
-    status,
-    supportsCompact: true,
-    content: (
-      <FadingEdgeContainer direction="bottom" className="h-24">
-        {content}
-      </FadingEdgeContainer>
-    ),
-  });
+  return children([
+    {
+      icon: SvgTerminal,
+      status,
+      supportsCollapsible: true,
+      alwaysCollapsible: true,
+      content: (
+        <FadingEdgeContainer
+          direction="bottom"
+          className="max-h-24 overflow-hidden"
+        >
+          {content}
+        </FadingEdgeContainer>
+      ),
+    },
+  ]);
 };

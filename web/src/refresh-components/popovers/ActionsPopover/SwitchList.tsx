@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import { Button } from "@opal/components";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import { PopoverMenu } from "@/refresh-components/Popover";
 import LineItem from "@/refresh-components/buttons/LineItem";
 import type { IconProps } from "@opal/types";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import { Tooltip } from "@opal/components";
 import Switch from "@/refresh-components/inputs/Switch";
 import { SvgChevronLeft, SvgPlug, SvgUnplug } from "@opal/icons";
 
@@ -59,9 +59,10 @@ export default function SwitchList({
     <PopoverMenu footer={footer}>
       {[
         <div className="flex items-center gap-1" key="search">
-          <IconButton
+          <Button
             icon={SvgChevronLeft}
-            internal
+            prominence="tertiary"
+            size="sm"
             aria-label="Back"
             onClick={() => {
               setSearchTerm("");
@@ -90,11 +91,7 @@ export default function SwitchList({
             ? item.disabledTooltip
             : item.description;
           return (
-            <SimpleTooltip
-              key={item.id}
-              tooltip={tooltip}
-              className="max-w-[30rem]"
-            >
+            <Tooltip key={item.id} tooltip={tooltip}>
               <LineItem
                 icon={
                   item.leading
@@ -113,7 +110,7 @@ export default function SwitchList({
               >
                 {item.label}
               </LineItem>
-            </SimpleTooltip>
+            </Tooltip>
           );
         }),
       ]}

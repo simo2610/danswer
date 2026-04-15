@@ -2,8 +2,8 @@
  * E2E Test: Personal Access Token (PAT) Management
  * Tests complete user flow: login → create → authenticate → delete
  */
-import { test, expect } from "@chromatic-com/playwright";
-import { loginAsRandomUser } from "../utils/auth";
+import { test, expect } from "@playwright/test";
+import { loginAsRandomUser } from "@tests/e2e/utils/auth";
 
 test("PAT Complete Workflow", async ({ page }, testInfo) => {
   // Skip in admin project - we test with fresh user auth
@@ -79,7 +79,7 @@ test("PAT Complete Workflow", async ({ page }, testInfo) => {
   expect(clipboardText).toBe(tokenValue);
 
   await page.locator('button:has-text("Done")').first().click();
-  await expect(page.getByText(tokenName)).toBeVisible({
+  await expect(page.getByText(tokenName).first()).toBeVisible({
     timeout: 5000,
   });
 
@@ -202,14 +202,14 @@ test("PAT Multiple Tokens Management", async ({ page }, testInfo) => {
     await page.locator('button:has-text("Done")').first().click();
 
     // Wait for token to appear in the list
-    await expect(page.getByText(token.name)).toBeVisible({
+    await expect(page.getByText(token.name).first()).toBeVisible({
       timeout: 5000,
     });
   }
 
   // Verify all tokens are visible in the list
   for (const token of tokens) {
-    await expect(page.getByText(token.name)).toBeVisible();
+    await expect(page.getByText(token.name).first()).toBeVisible();
   }
 
   // Delete the second token using its aria-label
@@ -232,6 +232,6 @@ test("PAT Multiple Tokens Management", async ({ page }, testInfo) => {
   });
 
   // Verify the other two tokens are still visible
-  await expect(page.getByText(tokens[0]!.name)).toBeVisible();
-  await expect(page.getByText(tokens[2]!.name)).toBeVisible();
+  await expect(page.getByText(tokens[0]!.name).first()).toBeVisible();
+  await expect(page.getByText(tokens[2]!.name).first()).toBeVisible();
 });

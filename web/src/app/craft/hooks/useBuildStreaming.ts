@@ -347,7 +347,7 @@ export function useBuildStreaming() {
                   .map((item) => item.content)
                   .join("");
 
-                const isFirstAssistantMessage =
+                const isFirstAgentMessage =
                   session.messages.filter((m) => m.type === "assistant")
                     .length === 0;
 
@@ -355,11 +355,7 @@ export function useBuildStreaming() {
                   (m) => m.type === "user"
                 );
 
-                if (
-                  isFirstAssistantMessage &&
-                  firstUserMessage &&
-                  textContent
-                ) {
+                if (isFirstAgentMessage && firstUserMessage && textContent) {
                   (async () => {
                     try {
                       setSuggestionsLoading(sessionId, true);
@@ -377,7 +373,7 @@ export function useBuildStreaming() {
                 }
 
                 appendMessageToSession(sessionId, {
-                  id: genId("assistant-msg"),
+                  id: genId("agent-msg"),
                   type: "assistant",
                   content: textContent,
                   timestamp: new Date(),
@@ -393,7 +389,7 @@ export function useBuildStreaming() {
               }
 
               updateSessionData(sessionId, {
-                status: "completed",
+                status: "active",
                 streamItems: [],
               });
               break;
@@ -418,7 +414,7 @@ export function useBuildStreaming() {
         } else if (err instanceof RateLimitError) {
           console.warn("[Streaming] Rate limit exceeded");
           updateSessionData(sessionId, {
-            status: "completed",
+            status: "active",
             error: SessionErrorCode.RATE_LIMIT_EXCEEDED,
           });
         } else {

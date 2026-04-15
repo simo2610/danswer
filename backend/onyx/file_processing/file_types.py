@@ -15,28 +15,32 @@ PLAIN_TEXT_MIME_TYPE = "text/plain"
 class OnyxMimeTypes:
     IMAGE_MIME_TYPES = {"image/jpg", "image/jpeg", "image/png", "image/webp"}
     CSV_MIME_TYPES = {"text/csv"}
+    TABULAR_MIME_TYPES = CSV_MIME_TYPES | {SPREADSHEET_MIME_TYPE}
     TEXT_MIME_TYPES = {
         PLAIN_TEXT_MIME_TYPE,
         "text/markdown",
         "text/x-markdown",
+        "text/x-log",
         "text/x-config",
         "text/tab-separated-values",
         "application/json",
         "application/xml",
         "text/xml",
         "application/x-yaml",
+        "application/yaml",
+        "text/yaml",
+        "text/x-yaml",
     }
     DOCUMENT_MIME_TYPES = {
         PDF_MIME_TYPE,
         WORD_PROCESSING_MIME_TYPE,
         PRESENTATION_MIME_TYPE,
-        SPREADSHEET_MIME_TYPE,
         "message/rfc822",
         "application/epub+zip",
     }
 
     ALLOWED_MIME_TYPES = IMAGE_MIME_TYPES.union(
-        TEXT_MIME_TYPES, DOCUMENT_MIME_TYPES, CSV_MIME_TYPES
+        TEXT_MIME_TYPES, DOCUMENT_MIME_TYPES, TABULAR_MIME_TYPES
     )
 
     EXCLUDED_IMAGE_TYPES = {
@@ -49,6 +53,11 @@ class OnyxMimeTypes:
 
 
 class OnyxFileExtensions:
+    TABULAR_EXTENSIONS = {
+        ".csv",
+        ".tsv",
+        ".xlsx",
+    }
     PLAIN_TEXT_EXTENSIONS = {
         ".txt",
         ".md",

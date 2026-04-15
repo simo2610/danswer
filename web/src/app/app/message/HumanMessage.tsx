@@ -1,15 +1,16 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FileDescriptor } from "@/app/app/interfaces";
 import "katex/dist/katex.min.css";
 import MessageSwitcher from "@/app/app/message/MessageSwitcher";
 import Text from "@/refresh-components/texts/Text";
 import { cn } from "@/lib/utils";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import useScreenSize from "@/hooks/useScreenSize";
 import CopyIconButton from "@/refresh-components/buttons/CopyIconButton";
-import Button from "@/refresh-components/buttons/Button";
+import { Button } from "@opal/components";
 import { SvgEdit } from "@opal/icons";
+import { Hoverable } from "@opal/core";
 import FileDisplay from "./FileDisplay";
 
 interface MessageEditingProps {
@@ -73,9 +74,9 @@ function MessageEditing({
             if (e.key === "Enter" && e.metaKey) handleSubmit();
           }}
         />
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-1">
           <Button onClick={handleSubmit}>Submit</Button>
-          <Button secondary onClick={handleCancel}>
+          <Button prominence="secondary" onClick={handleCancel}>
             Cancel
           </Button>
         </div>
@@ -138,6 +139,7 @@ const HumanMessage = React.memo(function HumanMessage({
   const [content, setContent] = useState(initialContent);
 
   const [isEditing, setIsEditing] = useState(false);
+  const { isMobile } = useScreenSize();
 
   // Use nodeId for switching (finding position in siblings)
   const indexInSiblings = otherMessagesCanSwitchTo?.indexOf(nodeId);
@@ -169,13 +171,39 @@ const HumanMessage = React.memo(function HumanMessage({
     return undefined;
   };
 
+  const copyEditButtonContent = useMemo(
+    () => (
+      <div className="flex flex-row flex-shrink px-1">
+        <CopyIconButton
+          getCopyText={() => content}
+          prominence="tertiary"
+          data-testid="HumanMessage/copy-button"
+        />
+        <Button
+          icon={SvgEdit}
+          prominence="tertiary"
+          tooltip="Edit"
+          onClick={() => setIsEditing(true)}
+          data-testid="HumanMessage/edit-button"
+        />
+      </div>
+    ),
+    [content]
+  );
+
+  const copyEditButton = (
+    <Hoverable.Item group="humanMessage" variant="opacity-on-hover">
+      {copyEditButtonContent}
+    </Hoverable.Item>
+  );
+
   return (
-    <div
-      id="onyx-human-message"
-      className="group flex flex-col justify-end pt-5 pb-1 w-full -mr-6 relative"
-    >
-      <FileDisplay alignBubble files={files || []} />
-      <div className="flex flex-wrap justify-end break-words">
+    <Hoverable.Root group="humanMessage" widthVariant="full">
+      <div
+        id="onyx-human-message"
+        className="flex flex-col justify-end w-full relative"
+      >
+        <FileDisplay files={files || []} />
         {isEditing ? (
           <MessageEditing
             content={content}
@@ -191,12 +219,13 @@ const HumanMessage = React.memo(function HumanMessage({
             }}
             onCancelEdit={() => setIsEditing(false)}
           />
-        ) : typeof content === "string" ? (
-          <>
-            <div className="md:max-w-[25rem] flex basis-[100%] md:basis-auto justify-end md:order-1">
+        ) : (
+          <div className="flex justify-end">
+            {onEdit && !isMobile && copyEditButton}
+            <div className="md:max-w-[37.5rem]">
               <div
                 className={
-                  "max-w-[25rem] whitespace-break-spaces rounded-t-16 rounded-bl-16 bg-background-tint-02 py-2 px-3"
+                  "max-w-[30rem] md:max-w-[37.5rem] whitespace-break-spaces break-anywhere rounded-t-16 rounded-bl-16 bg-background-tint-02 py-2 px-3"
                 }
                 onCopy={(e) => {
                   const selection = window.getSelection();
@@ -210,49 +239,19 @@ const HumanMessage = React.memo(function HumanMessage({
                   }
                 }}
               >
-                <Text as="p" mainContentBody>
+                <Text
+                  as="p"
+                  className="inline-block align-middle"
+                  mainContentBody
+                >
                   {content}
                 </Text>
               </div>
             </div>
-            {onEdit && !isEditing && (!files || files.length === 0) && (
-              <div className="flex flex-row gap-1 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <CopyIconButton
-                  getCopyText={() => content}
-                  tertiary
-                  data-testid="HumanMessage/copy-button"
-                />
-                <IconButton
-                  icon={SvgEdit}
-                  tertiary
-                  tooltip="Edit"
-                  onClick={() => setIsEditing(true)}
-                  data-testid="HumanMessage/edit-button"
-                />
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <div
-              className={cn(
-                "my-auto",
-                onEdit && !isEditing && (!files || files.length === 0)
-                  ? "opacity-0 group-hover:opacity-100 transition-opacity"
-                  : "invisible"
-              )}
-            >
-              <IconButton
-                icon={SvgEdit}
-                onClick={() => setIsEditing(true)}
-                tertiary
-                tooltip="Edit"
-              />
-            </div>
-            <div className="ml-auto rounded-lg p-1">{content}</div>
-          </>
+          </div>
         )}
-        <div className="md:min-w-[100%] flex justify-end order-1 mt-1">
+        <div className="flex justify-end pt-1">
+          {!isEditing && onEdit && isMobile && copyEditButton}
           {currentMessageInd !== undefined &&
             onMessageSelection &&
             otherMessagesCanSwitchTo &&
@@ -279,7 +278,7 @@ const HumanMessage = React.memo(function HumanMessage({
             )}
         </div>
       </div>
-    </div>
+    </Hoverable.Root>
   );
 }, arePropsEqual);
 

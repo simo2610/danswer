@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { track, AnalyticsEvent } from "@/lib/analytics";
 import {
   useSession,
   useSessionId,
@@ -24,10 +25,9 @@ import {
   UploadFileStatus,
   useUploadFilesContext,
 } from "@/app/craft/contexts/UploadFilesContext";
-import { uploadFile } from "@/app/craft/services/apiServices";
 import { CRAFT_SEARCH_PARAM_NAMES } from "@/app/craft/services/searchParams";
 import { CRAFT_PATH } from "@/app/craft/v1/constants";
-import { usePopup } from "@/components/admin/connectors/Popup";
+import { toast } from "@/hooks/useToast";
 import InputBar, { InputBarHandle } from "@/app/craft/components/InputBar";
 import BuildWelcome from "@/app/craft/components/BuildWelcome";
 import BuildMessageList from "@/app/craft/components/BuildMessageList";
@@ -37,10 +37,11 @@ import SandboxStatusIndicator from "@/app/craft/components/SandboxStatusIndicato
 import UpgradePlanModal from "@/app/craft/components/UpgradePlanModal";
 import IconButton from "@/refresh-components/buttons/IconButton";
 import { SvgSidebar, SvgChevronDown } from "@opal/icons";
+import { Button as OpalButton } from "@opal/components";
 import { useBuildContext } from "@/app/craft/contexts/BuildContext";
 import useScreenSize from "@/hooks/useScreenSize";
 import { cn } from "@/lib/utils";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import { Tooltip } from "@opal/components";
 
 interface BuildChatPanelProps {
   /** Session ID from URL - used to prevent welcome flash while loading */
@@ -60,7 +61,6 @@ export default function BuildChatPanel({
   existingSessionId,
 }: BuildChatPanelProps) {
   const router = useRouter();
-  const { popup, setPopup } = usePopup();
   const outputPanelOpen = useOutputPanelOpen();
   const session = useSession();
   const sessionId = useSessionId();
@@ -118,7 +118,8 @@ export default function BuildChatPanel({
 
   // Disable input when pre-provisioning is in progress or failed (waiting for retry)
   const sandboxNotReady = isPreProvisioning || isPreProvisioningFailed;
-  const { currentMessageFiles, hasUploadingFiles } = useUploadFilesContext();
+  const { currentMessageFiles, hasUploadingFiles, setActiveSession } =
+    useUploadFilesContext();
   const followupSuggestions = useFollowupSuggestions();
   const suggestionsLoading = useSuggestionsLoading();
   const clearFollowupSuggestions = useBuildSessionStore(
@@ -130,6 +131,16 @@ export default function BuildChatPanel({
   useEffect(() => {
     currentFilesRef.current = currentMessageFiles;
   }, [currentMessageFiles]);
+
+  /**
+   * Keep the upload context in sync with the active session.
+   * The context handles all session change logic internally (fetching attachments,
+   * clearing files, auto-uploading pending files).
+   */
+  useEffect(() => {
+    const activeSession = existingSessionId ?? preProvisionedSessionId ?? null;
+    setActiveSession(activeSession);
+  }, [existingSessionId, preProvisionedSessionId, setActiveSession]);
 
   // Ref to access InputBar methods
   const inputBarRef = useRef<InputBarHandle>(null);
@@ -221,18 +232,18 @@ export default function BuildChatPanel({
     inputBarRef.current?.setMessage(text);
   }, []);
 
-  // Check if assistant has finished streaming at least one message
-  // Show banner only after first assistant message completes streaming
+  // Check if agent has finished streaming at least one message
+  // Show banner only after first agent message completes streaming
   const shouldShowConnectorBanner = useMemo(() => {
     // Don't show if currently streaming
     if (isRunning) {
       return false;
     }
-    // Check if there's at least one assistant message in the session
-    const hasAssistantMessage = session?.messages?.some(
+    // Check if there's at least one agent message in the session
+    const hasAgentMessage = session?.messages?.some(
       (msg) => msg.type === "assistant"
     );
-    return hasAssistantMessage ?? false;
+    return hasAgentMessage ?? false;
   }, [isRunning, session?.messages]);
 
   const handleSubmit = useCallback(
@@ -242,14 +253,13 @@ export default function BuildChatPanel({
         return;
       }
 
+      track(AnalyticsEvent.SENT_CRAFT_MESSAGE);
+
       if (hasSession && sessionId) {
         // Existing session flow
         // Check if response is still streaming - show toast like main chat does
         if (isRunning) {
-          setPopup({
-            message: "Please wait for the current operation to complete.",
-            type: "error",
-          });
+          toast.error("Please wait for the current operation to complete.");
           return;
         }
 
@@ -273,10 +283,7 @@ export default function BuildChatPanel({
         if (!newSessionId) {
           // This should not happen if UI properly disables input until ready
           console.error("[ChatPanel] No pre-provisioned session available");
-          setPopup({
-            message: "Please wait for sandbox to initialize",
-            type: "error",
-          });
+          toast.error("Please wait for sandbox to initialize");
           return;
         }
 
@@ -328,23 +335,7 @@ export default function BuildChatPanel({
           });
         }
 
-        // Upload any files that need to be uploaded:
-        // - PENDING: Was attached before session existed, needs upload now
-        // - FAILED: Previous upload failed, retry
-        // - No path + not currently uploading: Edge case fallback
-        const currentFiles = currentFilesRef.current;
-        const filesToUpload = currentFiles.filter(
-          (f) =>
-            f.file &&
-            (f.status === UploadFileStatus.PENDING ||
-              f.status === UploadFileStatus.FAILED ||
-              (!f.path && f.status !== UploadFileStatus.UPLOADING))
-        );
-        if (filesToUpload.length > 0) {
-          await Promise.all(
-            filesToUpload.map((f) => uploadFile(newSessionId, f.file!))
-          );
-        }
+        // Note: PENDING files are auto-uploaded by the context when session becomes available
 
         // Navigate to URL - session controller will set currentSessionId
         router.push(
@@ -365,7 +356,6 @@ export default function BuildChatPanel({
       hasSession,
       sessionId,
       isRunning,
-      setPopup,
       appendMessageToCurrent,
       streamMessage,
       consumePreProvisionedSession,
@@ -381,7 +371,6 @@ export default function BuildChatPanel({
 
   return (
     <div className="h-full w-full">
-      {popup}
       <UpgradePlanModal
         open={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
@@ -399,16 +388,18 @@ export default function BuildChatPanel({
           <div className="flex flex-row items-center gap-2 max-w-[75%]">
             {/* Mobile sidebar toggle - only show on mobile when sidebar is folded */}
             {isMobile && leftSidebarFolded && (
-              <IconButton
+              <OpalButton
                 icon={SvgSidebar}
                 onClick={() => setLeftSidebarFolded(false)}
-                internal
+                prominence="tertiary"
+                size="sm"
               />
             )}
             <SandboxStatusIndicator />
           </div>
           {/* Output panel toggle - only show when panel is fully closed (after animation) */}
           {isOutputPanelFullyClosed && (
+            // TODO(@raunakab): migrate to opal Button once className/iconClassName is resolved
             <IconButton
               icon={SvgSidebar}
               onClick={toggleOutputPanel}
@@ -433,7 +424,6 @@ export default function BuildChatPanel({
               onSubmit={handleSubmit}
               isRunning={isRunning}
               sandboxInitializing={sandboxNotReady}
-              preProvisionedSessionId={preProvisionedSessionId}
             />
           ) : (
             <BuildMessageList
@@ -454,7 +444,7 @@ export default function BuildChatPanel({
               {/* Scroll to bottom button - shown when user has scrolled away */}
               {showScrollButton && (
                 <div className="absolute -top-12 left-1/2 -translate-x-1/2 z-10">
-                  <SimpleTooltip tooltip="Scroll to bottom" delayDuration={200}>
+                  <Tooltip tooltip="Scroll to bottom" delayDuration={200}>
                     <button
                       onClick={scrollToBottom}
                       className={cn(
@@ -472,10 +462,10 @@ export default function BuildChatPanel({
                         className="stroke-background-neutral-00"
                       />
                     </button>
-                  </SimpleTooltip>
+                  </Tooltip>
                 </div>
               )}
-              {/* Follow-up suggestion bubbles - show after first assistant message */}
+              {/* Follow-up suggestion bubbles - show after first agent message */}
               {(followupSuggestions || suggestionsLoading) && (
                 <div className="mb-3">
                   <SuggestionBubbles
@@ -485,7 +475,7 @@ export default function BuildChatPanel({
                   />
                 </div>
               )}
-              {/* Connector banners - show after first assistant message finishes streaming */}
+              {/* Connector banners - show after first agent message finishes streaming */}
               {shouldShowConnectorBanner && (
                 <ConnectorBannersRow className="" />
               )}
@@ -494,8 +484,6 @@ export default function BuildChatPanel({
                 onSubmit={handleSubmit}
                 isRunning={isRunning}
                 placeholder="Continue the conversation..."
-                sessionId={sessionId ?? undefined}
-                preProvisionedSessionId={preProvisionedSessionId}
               />
             </div>
           </div>

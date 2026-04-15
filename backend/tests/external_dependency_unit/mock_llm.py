@@ -239,8 +239,7 @@ class MockLLM(LLM, MockLLMController):
 
         if len(tool_calls) != len(responses):
             raise ValueError(
-                "add_responses_together currently only supports "
-                "multiple tool call responses"
+                "add_responses_together currently only supports multiple tool call responses"
             )
 
         # Create combined first item with all tool call initial info
@@ -308,21 +307,21 @@ class MockLLM(LLM, MockLLMController):
         structured_response_format: dict | None = None,
         timeout_override: int | None = None,
         max_tokens: int | None = None,
-        reasoning_effort: ReasoningEffort | None = None,
+        reasoning_effort: ReasoningEffort = ReasoningEffort.AUTO,
         user_identity: LLMUserIdentity | None = None,
     ) -> ModelResponse:
         raise NotImplementedError("We only care about streaming atm")
 
     def stream(
         self,
-        prompt: LanguageModelInput,
-        tools: list[dict] | None = None,
-        tool_choice: ToolChoiceOptions | None = None,
-        structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
-        reasoning_effort: ReasoningEffort | None = None,
-        user_identity: LLMUserIdentity | None = None,
+        prompt: LanguageModelInput,  # noqa: ARG002
+        tools: list[dict] | None = None,  # noqa: ARG002
+        tool_choice: ToolChoiceOptions | None = None,  # noqa: ARG002
+        structured_response_format: dict | None = None,  # noqa: ARG002
+        timeout_override: int | None = None,  # noqa: ARG002
+        max_tokens: int | None = None,  # noqa: ARG002
+        reasoning_effort: ReasoningEffort = ReasoningEffort.AUTO,  # noqa: ARG002
+        user_identity: LLMUserIdentity | None = None,  # noqa: ARG002
     ) -> Iterator[ModelResponseStream]:
         if not self.stream_controller:
             return

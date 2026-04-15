@@ -3,8 +3,8 @@
 import { useState } from "react";
 import Card from "@/refresh-components/cards/Card";
 import Text from "@/refresh-components/texts/Text";
-import { LineItemLayout } from "@/layouts/general-layouts";
-import Separator from "@/refresh-components/Separator";
+import { Content } from "@opal/layouts";
+import { Divider } from "@opal/components";
 import { ValidSources } from "@/lib/types";
 import { getSourceMetadata } from "@/lib/sources";
 import RequestConnectorModal from "@/app/craft/v1/configure/components/RequestConnectorModal";
@@ -43,7 +43,6 @@ const COMING_SOON_CONNECTORS: ValidSources[] = [
   ValidSources.Asana,
   ValidSources.Clickup,
   ValidSources.Productboard,
-  ValidSources.Airtable,
   // Knowledge Base/Wiki
   ValidSources.Outline,
   ValidSources.Slab,
@@ -67,7 +66,7 @@ export default function ComingSoonConnectors() {
 
   return (
     <>
-      <Separator />
+      <Divider />
       <div className="w-full flex items-center justify-between pb-2">
         <div className="flex flex-col gap-0.25">
           <Text mainContentEmphasis text04>
@@ -100,14 +99,15 @@ export default function ComingSoonConnectors() {
           const card = (
             <div key={type} className="opacity-60">
               <Card variant="secondary">
-                <LineItemLayout
+                <Content
                   icon={
                     type === ValidSources.Imap
                       ? OutlookIcon
                       : sourceMetadata.icon
                   }
                   title={displayName}
-                  center
+                  sizePreset="main-ui"
+                  variant="body"
                 />
               </Card>
             </div>
@@ -119,7 +119,12 @@ export default function ComingSoonConnectors() {
               card,
               <div key="onedrive" className="opacity-60">
                 <Card variant="secondary">
-                  <LineItemLayout icon={OneDriveIcon} title="OneDrive" center />
+                  <Content
+                    icon={OneDriveIcon}
+                    title="OneDrive"
+                    sizePreset="main-ui"
+                    variant="body"
+                  />
                 </Card>
               </div>,
             ];
@@ -131,7 +136,12 @@ export default function ComingSoonConnectors() {
               card,
               <div key="box" className="opacity-60">
                 <Card variant="secondary">
-                  <LineItemLayout icon={BoxIcon} title="Box" center />
+                  <Content
+                    icon={BoxIcon}
+                    title="Box"
+                    sizePreset="main-ui"
+                    variant="body"
+                  />
                 </Card>
               </div>,
             ];
@@ -142,13 +152,23 @@ export default function ComingSoonConnectors() {
         {/* Enterprise/ERP */}
         <div className="opacity-60">
           <Card variant="secondary">
-            <LineItemLayout icon={ServiceNowIcon} title="ServiceNow" center />
+            <Content
+              icon={ServiceNowIcon}
+              title="ServiceNow"
+              sizePreset="main-ui"
+              variant="body"
+            />
           </Card>
         </div>
         {/* Project Management */}
         <div className="opacity-60">
           <Card variant="secondary">
-            <LineItemLayout icon={TrelloIcon} title="Trello" center />
+            <Content
+              icon={TrelloIcon}
+              title="Trello"
+              sizePreset="main-ui"
+              variant="body"
+            />
           </Card>
         </div>
       </div>

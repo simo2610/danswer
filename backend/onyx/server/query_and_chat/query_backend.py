@@ -1,26 +1,27 @@
 from fastapi import APIRouter
 from fastapi import Depends
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from onyx.auth.permissions import require_permission
 from onyx.auth.users import current_curator_or_admin_user
-from onyx.auth.users import current_user
 from onyx.configs.constants import DocumentSource
 from onyx.context.search.models import IndexFilters
 from onyx.context.search.models import SearchDoc
 from onyx.context.search.preprocessing.access_filters import (
     build_access_filters_for_user,
 )
+from onyx.context.search.utils import get_query_embedding
 from onyx.db.engine.sql_engine import get_session
+from onyx.db.enums import Permission
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.tag import find_tags
 from onyx.document_index.factory import get_default_document_index
-from onyx.document_index.vespa.index import VespaIndex
 from onyx.server.query_and_chat.models import AdminSearchRequest
 from onyx.server.query_and_chat.models import AdminSearchResponse
 from onyx.server.query_and_chat.models import SourceTag
 from onyx.server.query_and_chat.models import TagResponse
+from onyx.server.utils_vector_db import require_vector_db
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
 
@@ -30,10 +31,10 @@ admin_router = APIRouter(prefix="/admin")
 basic_router = APIRouter(prefix="/query")
 
 
-@admin_router.post("/search")
+@admin_router.post("/search", dependencies=[Depends(require_vector_db)])
 def admin_search(
     question: AdminSearchRequest,
-    user: User | None = Depends(current_curator_or_admin_user),
+    user: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> AdminSearchResponse:
     tenant_id = get_current_tenant_id()
@@ -52,18 +53,14 @@ def admin_search(
     )
     search_settings = get_current_search_settings(db_session)
     # This flow is for search so we do not get all indices.
-    document_index = get_default_document_index(search_settings, None)
+    document_index = get_default_document_index(search_settings, None, db_session)
 
-    if not isinstance(document_index, VespaIndex):
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot use admin-search when using a non-Vespa document index",
-        )
     if not query or query.strip() == "":
         matching_chunks = document_index.random_retrieval(filters=final_filters)
     else:
+        query_embedding = get_query_embedding(query, db_session)
         matching_chunks = document_index.admin_retrieval(
-            query=query, filters=final_filters
+            query=query, query_embedding=query_embedding, filters=final_filters
         )
 
     documents = SearchDoc.from_chunks_or_sections(matching_chunks)
@@ -85,7 +82,7 @@ def get_tags(
     sources: list[DocumentSource] | None = None,
     allow_prefix: bool = True,  # This is currently the only option
     limit: int = 50,
-    _: User = Depends(current_user),
+    _: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> TagResponse:
     if not allow_prefix:

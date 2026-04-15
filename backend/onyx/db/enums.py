@@ -1,4 +1,38 @@
+from __future__ import annotations
+
 from enum import Enum as PyEnum
+from typing import ClassVar
+
+
+class AccountType(str, PyEnum):
+    """
+    What kind of account this is — determines whether the user
+    enters the group-based permission system.
+
+    STANDARD + SERVICE_ACCOUNT → participate in group system
+    BOT, EXT_PERM_USER, ANONYMOUS → fixed behavior
+    """
+
+    STANDARD = "STANDARD"
+    BOT = "BOT"
+    EXT_PERM_USER = "EXT_PERM_USER"
+    SERVICE_ACCOUNT = "SERVICE_ACCOUNT"
+    ANONYMOUS = "ANONYMOUS"
+
+    def is_web_login(self) -> bool:
+        """Whether this account type supports interactive web login."""
+        return self not in (
+            AccountType.BOT,
+            AccountType.EXT_PERM_USER,
+        )
+
+
+class GrantSource(str, PyEnum):
+    """How a permission grant was created."""
+
+    USER = "USER"
+    SCIM = "SCIM"
+    SYSTEM = "SYSTEM"
 
 
 class IndexingStatus(str, PyEnum):
@@ -60,7 +94,8 @@ class ProcessingMode(str, PyEnum):
     """Determines how documents are processed after fetching."""
 
     REGULAR = "REGULAR"  # Full pipeline: chunk → embed → Vespa
-    FILE_SYSTEM = "FILE_SYSTEM"  # Write to file system only
+    FILE_SYSTEM = "FILE_SYSTEM"  # Write to file system only (JSON documents)
+    RAW_BINARY = "RAW_BINARY"  # Write raw binary to S3 (no text extraction)
 
 
 class SyncType(str, PyEnum):
@@ -185,7 +220,9 @@ class EmbeddingPrecision(str, PyEnum):
 
 class UserFileStatus(str, PyEnum):
     PROCESSING = "PROCESSING"
+    INDEXING = "INDEXING"
     COMPLETED = "COMPLETED"
+    SKIPPED = "SKIPPED"
     FAILED = "FAILED"
     CANCELED = "CANCELED"
     DELETING = "DELETING"
@@ -197,10 +234,32 @@ class ThemePreference(str, PyEnum):
     SYSTEM = "system"
 
 
+class DefaultAppMode(str, PyEnum):
+    AUTO = "AUTO"
+    CHAT = "CHAT"
+    SEARCH = "SEARCH"
+
+
 class SwitchoverType(str, PyEnum):
     REINDEX = "reindex"
     ACTIVE_ONLY = "active_only"
     INSTANT = "instant"
+
+
+class OpenSearchDocumentMigrationStatus(str, PyEnum):
+    """Status for Vespa to OpenSearch migration per document."""
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PERMANENTLY_FAILED = "permanently_failed"
+
+
+class OpenSearchTenantMigrationStatus(str, PyEnum):
+    """Status for tenant-level OpenSearch migration."""
+
+    PENDING = "pending"
+    COMPLETED = "completed"
 
 
 # Onyx Build Mode Enums
@@ -209,17 +268,22 @@ class BuildSessionStatus(str, PyEnum):
     IDLE = "idle"
 
 
+class SharingScope(str, PyEnum):
+    PRIVATE = "private"
+    PUBLIC_ORG = "public_org"
+    PUBLIC_GLOBAL = "public_global"
+
+
 class SandboxStatus(str, PyEnum):
     PROVISIONING = "provisioning"
     RUNNING = "running"
-    IDLE = "idle"
     SLEEPING = "sleeping"  # Pod terminated, snapshots saved to S3
     TERMINATED = "terminated"
     FAILED = "failed"
 
     def is_active(self) -> bool:
-        """Check if sandbox is in an active state (running or idle)."""
-        return self in (SandboxStatus.RUNNING, SandboxStatus.IDLE)
+        """Check if sandbox is in an active state (running)."""
+        return self == SandboxStatus.RUNNING
 
     def is_terminal(self) -> bool:
         """Check if sandbox is in a terminal state."""
@@ -269,3 +333,70 @@ class HierarchyNodeType(str, PyEnum):
 
     # Slack
     CHANNEL = "channel"
+
+
+class LLMModelFlowType(str, PyEnum):
+    CHAT = "chat"
+    VISION = "vision"
+    CONTEXTUAL_RAG = "contextual_rag"
+
+
+class HookPoint(str, PyEnum):
+    DOCUMENT_INGESTION = "document_ingestion"
+    QUERY_PROCESSING = "query_processing"
+
+
+class HookFailStrategy(str, PyEnum):
+    HARD = "hard"  # exception propagates, pipeline aborts
+    SOFT = "soft"  # log error, return original input, pipeline continues
+
+
+class Permission(str, PyEnum):
+    """
+    Permission tokens for group-based authorization.
+    19 tokens total. full_admin_panel_access is an override —
+    if present, any permission check passes.
+    """
+
+    # Basic (auto-granted to every new group)
+    BASIC_ACCESS = "basic"
+
+    # Read tokens — implied only, never granted directly
+    READ_CONNECTORS = "read:connectors"
+    READ_DOCUMENT_SETS = "read:document_sets"
+    READ_AGENTS = "read:agents"
+    READ_USERS = "read:users"
+
+    # Add / Manage pairs
+    ADD_AGENTS = "add:agents"
+    MANAGE_AGENTS = "manage:agents"
+    MANAGE_DOCUMENT_SETS = "manage:document_sets"
+    ADD_CONNECTORS = "add:connectors"
+    MANAGE_CONNECTORS = "manage:connectors"
+    MANAGE_LLMS = "manage:llms"
+
+    # Toggle tokens
+    READ_AGENT_ANALYTICS = "read:agent_analytics"
+    MANAGE_ACTIONS = "manage:actions"
+    READ_QUERY_HISTORY = "read:query_history"
+    MANAGE_USER_GROUPS = "manage:user_groups"
+    CREATE_USER_API_KEYS = "create:user_api_keys"
+    CREATE_SERVICE_ACCOUNT_API_KEYS = "create:service_account_api_keys"
+    CREATE_SLACK_DISCORD_BOTS = "create:slack_discord_bots"
+
+    # Override — any permission check passes
+    FULL_ADMIN_PANEL_ACCESS = "admin"
+
+    # Permissions that are implied by other grants and must never be stored
+    # directly in the permission_grant table.
+    IMPLIED: ClassVar[frozenset[Permission]]
+
+
+Permission.IMPLIED = frozenset(
+    {
+        Permission.READ_CONNECTORS,
+        Permission.READ_DOCUMENT_SETS,
+        Permission.READ_AGENTS,
+        Permission.READ_USERS,
+    }
+)

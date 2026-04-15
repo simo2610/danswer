@@ -2,13 +2,15 @@
 
 import { useState, useMemo, useEffect } from "react";
 import useSWR, { KeyedMutator } from "swr";
+import { SWR_KEYS } from "@/lib/swr-keys";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 import Modal from "@/refresh-components/Modal";
 import { FormField } from "@/refresh-components/form/FormField";
 import InputSelect from "@/refresh-components/inputs/InputSelect";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import PasswordInputTypeIn from "@/refresh-components/inputs/PasswordInputTypeIn";
-import Button from "@/refresh-components/buttons/Button";
+import { Button, Divider } from "@opal/components";
+import { markdown } from "@opal/utils";
 import CopyIconButton from "@/refresh-components/buttons/CopyIconButton";
 import Text from "@/refresh-components/texts/Text";
 import { Formik, Form } from "formik";
@@ -22,12 +24,11 @@ import {
   MCPServer,
   MCPServersResponse,
 } from "@/lib/tools/interfaces";
-import Separator from "@/refresh-components/Separator";
 import Tabs from "@/refresh-components/Tabs";
 import { PerUserAuthConfig } from "@/sections/actions/PerUserAuthConfig";
 import { updateMCPServerStatus, upsertMCPServer } from "@/lib/tools/mcpService";
 import Message from "@/refresh-components/messages/Message";
-import { PopupSpec } from "@/components/admin/connectors/Popup";
+import { toast } from "@/hooks/useToast";
 import { SvgArrowExchange } from "@opal/icons";
 import { useAuthType } from "@/lib/hooks";
 import { AuthType } from "@/lib/constants";
@@ -35,7 +36,6 @@ import { AuthType } from "@/lib/constants";
 interface MCPAuthenticationModalProps {
   mcpServer: MCPServer | null;
   skipOverlay?: boolean;
-  setPopup?: (spec: PopupSpec) => void;
   onTriggerFetchTools?: (serverId: number) => Promise<void> | void;
   mutateMcpServers: KeyedMutator<MCPServersResponse>;
 }
@@ -101,7 +101,6 @@ const validationSchema = Yup.object().shape({
 export default function MCPAuthenticationModal({
   mcpServer,
   skipOverlay = false,
-  setPopup,
   onTriggerFetchTools,
   mutateMcpServers,
 }: MCPAuthenticationModalProps) {
@@ -125,7 +124,7 @@ export default function MCPAuthenticationModal({
 
   // Get the current frontend URL for redirect URI
   const { data: fullServer } = useSWR<MCPServer>(
-    mcpServer ? `/api/admin/mcp/servers/${mcpServer.id}` : null,
+    mcpServer ? SWR_KEYS.adminMcpServer(mcpServer.id) : null,
     errorHandlingFetcher
   );
 
@@ -303,13 +302,11 @@ export default function MCPAuthenticationModal({
       console.error("Error saving authentication:", error);
       // Ensure UI reflects latest status after any auth/config failure
       await mutateMcpServers();
-      setPopup?.({
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to save authentication configuration",
-        type: "error",
-      });
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to save authentication configuration"
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -320,7 +317,11 @@ export default function MCPAuthenticationModal({
       <Modal.Content width="sm" height="lg" skipOverlay={skipOverlay}>
         <Modal.Header
           icon={SvgArrowExchange}
-          title={`Authenticate ${mcpServer?.name || "MCP Server"}`}
+          title={
+            mcpServer
+              ? markdown(`Authenticate *${mcpServer.name}*`)
+              : "Authenticate MCP Server"
+          }
           description="Authenticate your connection to start using the MCP server."
         />
 
@@ -430,7 +431,7 @@ export default function MCPAuthenticationModal({
                         }}
                       />
                     </FormField>
-                    <Separator className="py-0" />
+                    <Divider paddingPerpendicular="fit" />
                   </div>
 
                   {/* OAuth Section */}
@@ -531,7 +532,8 @@ export default function MCPAuthenticationModal({
                           <CopyIconButton
                             getCopyText={() => redirectUri}
                             tooltip="Copy redirect URI"
-                            internal
+                            prominence="tertiary"
+                            size="sm"
                           />
                         </div>
                       </div>
@@ -636,18 +638,15 @@ export default function MCPAuthenticationModal({
 
                 <Modal.Footer>
                   <Button
-                    main
-                    tertiary
+                    prominence="tertiary"
                     type="button"
                     onClick={() => toggle(false)}
                   >
                     Cancel
                   </Button>
                   <Button
-                    main
-                    primary
-                    type="submit"
                     disabled={!isValid || isSubmitting}
+                    type="submit"
                     data-testid="mcp-auth-connect-button"
                   >
                     {isSubmitting ? "Connecting..." : "Connect"}

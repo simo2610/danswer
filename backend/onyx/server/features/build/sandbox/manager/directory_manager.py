@@ -195,8 +195,7 @@ class DirectoryManager:
         persona = get_persona_info(user_work_area, user_level)
         if not persona:
             logger.debug(
-                f"No persona found for work_area={user_work_area}, "
-                f"level={user_level}, skipping org_info setup"
+                f"No persona found for work_area={user_work_area}, level={user_level}, skipping org_info setup"
             )
             return
 
@@ -244,8 +243,9 @@ class DirectoryManager:
                 )
 
         # Create additional output directories for generated content
-        (output_dir / "slides").mkdir(parents=True, exist_ok=True)
         (output_dir / "markdown").mkdir(parents=True, exist_ok=True)
+        # TODO: no images for now
+        # (output_dir / "slides").mkdir(parents=True, exist_ok=True)
         # TODO: No graphs for now
         # (output_dir / "graphs").mkdir(parents=True, exist_ok=True)
 
@@ -389,7 +389,7 @@ class DirectoryManager:
             disabled_tools: Optional list of tools to disable (e.g., ["question", "webfetch"])
             overwrite: If True, overwrite existing config. If False, preserve existing config.
             dev_mode: If True, allow all external directories (local dev).
-                      If False (default), only whitelist /workspace/files and /workspace/demo-data.
+                      If False (default), only whitelist /workspace/files and /workspace/demo_data.
         """
         config_path = sandbox_path / "opencode.json"
         if not overwrite and config_path.exists():

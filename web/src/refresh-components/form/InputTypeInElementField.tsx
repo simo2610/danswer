@@ -4,7 +4,7 @@ import { useField } from "formik";
 import InputTypeIn, {
   InputTypeInProps,
 } from "@/refresh-components/inputs/InputTypeIn";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import { Button } from "@opal/components";
 import { SvgMinusCircle } from "@opal/icons";
 import { useOnChangeEvent, useOnBlurEvent } from "@/hooks/formHooks";
 import { Section } from "@/layouts/general-layouts";
@@ -50,10 +50,10 @@ export default function InputTypeInElementField({
         }
         showClearButton={false}
       />
-      <IconButton
-        icon={SvgMinusCircle}
-        tertiary
+      <Button
         disabled={!onRemove || isEmpty}
+        icon={SvgMinusCircle}
+        prominence="tertiary"
         onClick={onRemove}
         tooltip="Remove"
       />

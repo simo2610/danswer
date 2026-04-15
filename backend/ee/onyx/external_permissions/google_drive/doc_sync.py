@@ -13,6 +13,7 @@ from onyx.access.models import DocExternalAccess
 from onyx.access.models import ElementExternalAccess
 from onyx.access.models import ExternalAccess
 from onyx.access.models import NodeExternalAccess
+from onyx.access.utils import build_ext_group_name_for_onyx
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
 from onyx.connectors.google_drive.models import GoogleDriveFileType
@@ -67,11 +68,23 @@ def get_external_access_for_raw_gdrive_file(
     company_domain: str,
     retriever_drive_service: GoogleDriveService | None,
     admin_drive_service: GoogleDriveService,
+    fallback_user_email: str,
+    add_prefix: bool = False,
 ) -> ExternalAccess:
     """
     Get the external access for a raw Google Drive file.
 
     Assumes the file we retrieved has EITHER `permissions` or `permission_ids`
+
+    add_prefix: When this method is called during the initial indexing via the connector,
+                set add_prefix to True so group IDs are prefixed with the source type.
+                When invoked from doc_sync (permission sync), use the default (False)
+                since upsert_document_external_perms handles prefixing.
+    fallback_user_email: When we cannot retrieve any permission info for a file
+                (e.g. externally-owned files where the API returns no permissions
+                and permissions.list returns 403), fall back to granting access
+                to this user. This is typically the impersonated org user whose
+                drive contained the file.
     """
     doc_id = file.get("id")
     if not doc_id:
@@ -102,13 +115,32 @@ def get_external_access_for_raw_gdrive_file(
         )
         if len(permissions_list) != len(permission_ids) and retriever_drive_service:
             logger.warning(
-                f"Failed to get all permissions for file {doc_id} with retriever service, "
-                "trying admin service"
+                f"Failed to get all permissions for file {doc_id} with retriever service, trying admin service"
             )
             backup_permissions_list = _get_permissions(admin_drive_service)
             permissions_list = _merge_permissions_lists(
                 [permissions_list, backup_permissions_list]
             )
+
+    # For externally-owned files, the Drive API may return no permissions
+    # and permissions.list may return 403. In this case, fall back to
+    # granting access to the user who found the file in their drive.
+    # Note, even if other users also have access to this file,
+    # they will not be granted access in Onyx.
+    # We check permissions_list (the final result after all fetch attempts)
+    # rather than the raw fields, because permission_ids may be present
+    # but the actual fetch can still return empty due to a 403.
+    if not permissions_list:
+        logger.info(
+            f"No permission info available for file {doc_id} "
+            f"(likely owned by a user outside of your organization). "
+            f"Falling back to granting access to retriever user: {fallback_user_email}"
+        )
+        return ExternalAccess(
+            external_user_emails={fallback_user_email},
+            external_user_group_ids=set(),
+            is_public=False,
+        )
 
     folder_ids_to_inherit_permissions_from: set[str] = set()
     user_emails: set[str] = set()
@@ -133,9 +165,7 @@ def get_external_access_for_raw_gdrive_file(
                 user_emails.add(permission.email_address)
             else:
                 logger.error(
-                    "Permission is type `user` but no email address is "
-                    f"provided for document {doc_id}"
-                    f"\n {permission}"
+                    f"Permission is type `user` but no email address is provided for document {doc_id}\n {permission}"
                 )
         elif permission.type == PermissionType.GROUP:
             # groups are represented as email addresses within Drive
@@ -143,17 +173,14 @@ def get_external_access_for_raw_gdrive_file(
                 group_emails.add(permission.email_address)
             else:
                 logger.error(
-                    "Permission is type `group` but no email address is "
-                    f"provided for document {doc_id}"
-                    f"\n {permission}"
+                    f"Permission is type `group` but no email address is provided for document {doc_id}\n {permission}"
                 )
         elif permission.type == PermissionType.DOMAIN and company_domain:
             if permission.domain == company_domain:
                 public = True
             else:
                 logger.warning(
-                    "Permission is type domain but does not match company domain:"
-                    f"\n {permission}"
+                    f"Permission is type domain but does not match company domain:\n {permission}"
                 )
         elif permission.type == PermissionType.ANYONE:
             public = True
@@ -163,6 +190,13 @@ def get_external_access_for_raw_gdrive_file(
         | folder_ids_to_inherit_permissions_from
         | ({drive_id} if drive_id is not None else set())
     )
+
+    # Prefix group IDs with source type if requested (for indexing path)
+    if add_prefix:
+        group_ids = {
+            build_ext_group_name_for_onyx(group_id, DocumentSource.GOOGLE_DRIVE)
+            for group_id in group_ids
+        }
 
     return ExternalAccess(
         external_user_emails=user_emails,
@@ -175,6 +209,7 @@ def get_external_access_for_folder(
     folder: GoogleDriveFileType,
     google_domain: str,
     drive_service: GoogleDriveService,
+    add_prefix: bool = False,
 ) -> ExternalAccess:
     """
     Extract ExternalAccess from a folder's permissions.
@@ -186,6 +221,8 @@ def get_external_access_for_folder(
         folder: The folder metadata from Google Drive API (must include permissionIds field)
         google_domain: The company's Google Workspace domain (e.g., "company.com")
         drive_service: Google Drive service for fetching permission details
+        add_prefix: When True, prefix group IDs with source type (for indexing path).
+                   When False (default), leave unprefixed (for permission sync path).
 
     Returns:
         ExternalAccess with extracted permission info
@@ -248,17 +285,25 @@ def get_external_access_for_folder(
             # If allowFileDiscovery is False, it's "link only" access
             is_public = permission.allow_file_discovery is not False
 
+    # Prefix group IDs with source type if requested (for indexing path)
+    group_ids: set[str] = group_emails
+    if add_prefix:
+        group_ids = {
+            build_ext_group_name_for_onyx(group_id, DocumentSource.GOOGLE_DRIVE)
+            for group_id in group_emails
+        }
+
     return ExternalAccess(
         external_user_emails=user_emails,
-        external_user_group_ids=group_emails,
+        external_user_group_ids=group_ids,
         is_public=is_public,
     )
 
 
 def gdrive_doc_sync(
     cc_pair: ConnectorCredentialPair,
-    fetch_all_existing_docs_fn: FetchAllDocumentsFunction,
-    fetch_all_existing_docs_ids_fn: FetchAllDocumentsIdsFunction,
+    fetch_all_existing_docs_fn: FetchAllDocumentsFunction,  # noqa: ARG001
+    fetch_all_existing_docs_ids_fn: FetchAllDocumentsIdsFunction,  # noqa: ARG001
     callback: IndexingHeartbeatInterface | None,
 ) -> Generator[ElementExternalAccess, None, None]:
     """
@@ -270,7 +315,12 @@ def gdrive_doc_sync(
     google_drive_connector = GoogleDriveConnector(
         **cc_pair.connector.connector_specific_config
     )
-    google_drive_connector.load_credentials(cc_pair.credential.credential_json)
+    credential_json = (
+        cc_pair.credential.credential_json.get_value(apply_mask=False)
+        if cc_pair.credential.credential_json
+        else {}
+    )
+    google_drive_connector.load_credentials(credential_json)
 
     slim_doc_generator = _get_slim_doc_generator(cc_pair, google_drive_connector)
 

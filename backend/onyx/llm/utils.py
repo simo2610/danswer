@@ -17,6 +17,7 @@ from onyx.configs.model_configs import GEN_AI_MAX_TOKENS
 from onyx.configs.model_configs import GEN_AI_MODEL_FALLBACK_MAX_TOKENS
 from onyx.configs.model_configs import GEN_AI_NUM_RESERVED_OUTPUT_TOKENS
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.enums import LLMModelFlowType
 from onyx.db.models import LLMProvider
 from onyx.db.models import ModelConfiguration
 from onyx.llm.constants import LlmProviderNames
@@ -84,7 +85,7 @@ def build_litellm_passthrough_kwargs(
     if not (SEND_USER_METADATA_TO_LLM_PROVIDER and user_identity):
         return model_kwargs
 
-    passthrough_kwargs = dict(model_kwargs)
+    passthrough_kwargs = copy.deepcopy(model_kwargs)
 
     if user_identity.user_id:
         passthrough_kwargs["user"] = truncate_litellm_user_id(user_identity.user_id)
@@ -95,7 +96,7 @@ def build_litellm_passthrough_kwargs(
         if existing_metadata is None:
             metadata = {}
         elif isinstance(existing_metadata, dict):
-            metadata = dict(existing_metadata)
+            metadata = copy.deepcopy(existing_metadata)
         else:
             metadata = None
 
@@ -218,13 +219,26 @@ def litellm_exception_to_error_msg(
             "ratelimiterror"
         ):
             upstream_detail = upstream_detail.split(":", 1)[1].strip()
-        error_msg = (
-            f"{provider_name} rate limit: {upstream_detail}"
-            if upstream_detail
-            else f"{provider_name} rate limit exceeded: Please slow down your requests and try again later."
-        )
-        error_code = "RATE_LIMIT"
-        is_retryable = True
+        upstream_detail_lower = upstream_detail.lower()
+        if (
+            "insufficient_quota" in upstream_detail_lower
+            or "exceeded your current quota" in upstream_detail_lower
+        ):
+            error_msg = (
+                f"{provider_name} quota exceeded: {upstream_detail}"
+                if upstream_detail
+                else f"{provider_name} quota exceeded: Verify billing and quota for this API key."
+            )
+            error_code = "BUDGET_EXCEEDED"
+            is_retryable = False
+        else:
+            error_msg = (
+                f"{provider_name} rate limit: {upstream_detail}"
+                if upstream_detail
+                else f"{provider_name} rate limit exceeded: Please slow down your requests and try again later."
+            )
+            error_code = "RATE_LIMIT"
+            is_retryable = True
     elif isinstance(core_exception, ServiceUnavailableError):
         provider_name = (
             llm.config.model_provider
@@ -280,10 +294,7 @@ def litellm_exception_to_error_msg(
         error_code = "CONNECTION_ERROR"
         is_retryable = True
     elif isinstance(core_exception, APIError):
-        error_msg = (
-            "API error: An error occurred while communicating with the API. "
-            f"Details: {str(core_exception)}"
-        )
+        error_msg = f"API error: An error occurred while communicating with the API. Details: {str(core_exception)}"
         error_code = "API_ERROR"
         is_retryable = True
     elif not fallback_to_error_msg:
@@ -321,7 +332,7 @@ def test_llm(llm: LLM) -> str | None:
     error_msg = None
     for _ in range(2):
         try:
-            llm.invoke(UserMessage(content="Do not respond"))
+            llm.invoke(UserMessage(content="Do not respond"), max_tokens=50)
             return None
         except Exception as e:
             error_msg = str(e)
@@ -516,8 +527,7 @@ def llm_max_input_tokens(
     )
     if not model_obj:
         logger.warning(
-            f"Model '{model_name}' not found in LiteLLM. "
-            f"Falling back to {GEN_AI_MODEL_FALLBACK_MAX_TOKENS} tokens."
+            f"Model '{model_name}' not found in LiteLLM. Falling back to {GEN_AI_MODEL_FALLBACK_MAX_TOKENS} tokens."
         )
         return GEN_AI_MODEL_FALLBACK_MAX_TOKENS
 
@@ -528,8 +538,7 @@ def llm_max_input_tokens(
         return model_obj["max_tokens"]
 
     logger.warning(
-        f"No max tokens found for '{model_name}'. "
-        f"Falling back to {GEN_AI_MODEL_FALLBACK_MAX_TOKENS} tokens."
+        f"No max tokens found for '{model_name}'. Falling back to {GEN_AI_MODEL_FALLBACK_MAX_TOKENS} tokens."
     )
     return GEN_AI_MODEL_FALLBACK_MAX_TOKENS
 
@@ -548,8 +557,7 @@ def get_llm_max_output_tokens(
 
     if not model_obj:
         logger.warning(
-            f"Model '{model_name}' not found in LiteLLM. "
-            f"Falling back to {default_output_tokens} output tokens."
+            f"Model '{model_name}' not found in LiteLLM. Falling back to {default_output_tokens} output tokens."
         )
         return default_output_tokens
 
@@ -561,8 +569,7 @@ def get_llm_max_output_tokens(
         return int(model_obj["max_tokens"] * 0.1)
 
     logger.warning(
-        f"No max output tokens found for '{model_name}'. "
-        f"Falling back to {default_output_tokens} output tokens."
+        f"No max output tokens found for '{model_name}'. Falling back to {default_output_tokens} output tokens."
     )
     return default_output_tokens
 
@@ -689,8 +696,11 @@ def model_supports_image_input(model_name: str, model_provider: str) -> bool:
                     LLMProvider.provider == model_provider,
                 )
             )
-            if model_config and model_config.supports_image_input is not None:
-                return model_config.supports_image_input
+            if (
+                model_config
+                and LLMModelFlowType.VISION in model_config.llm_model_flow_types
+            ):
+                return True
     except Exception as e:
         logger.warning(
             f"Failed to query database for {model_provider} model {model_name} image support: {e}"
@@ -710,8 +720,7 @@ def litellm_thinks_model_supports_image_input(
         model_obj = find_model_obj(get_model_map(), model_provider, model_name)
         if not model_obj:
             logger.warning(
-                f"No litellm entry found for {model_provider}/{model_name}, "
-                "this model may or may not support image input."
+                f"No litellm entry found for {model_provider}/{model_name}, this model may or may not support image input."
             )
             return False
         # The or False here is because sometimes the dict contains the key but the value is None

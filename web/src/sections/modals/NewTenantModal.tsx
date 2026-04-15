@@ -2,15 +2,15 @@
 
 import { useState } from "react";
 import Modal, { BasicModalFooter } from "@/refresh-components/Modal";
-import Button from "@/refresh-components/buttons/Button";
-import { usePopup } from "@/components/admin/connectors/Popup";
+import { Button } from "@opal/components";
+import { toast } from "@/hooks/useToast";
 import { SvgArrowRight, SvgUsers, SvgX } from "@opal/icons";
 import { logout } from "@/lib/user";
-import { useUser } from "@/components/user/UserProvider";
+import { useUser } from "@/providers/UserProvider";
 import { NewTenantInfo } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import Text from "@/refresh-components/texts/Text";
-import { ErrorTextLayout } from "@/layouts/input-layouts";
+import { InputErrorText } from "@opal/layouts";
 
 // App domain should not be hardcoded
 const APP_DOMAIN = process.env.NEXT_PUBLIC_APP_DOMAIN || "onyx.app";
@@ -27,7 +27,6 @@ export default function NewTenantModal({
   onClose,
 }: NewTenantModalProps) {
   const router = useRouter();
-  const { setPopup } = usePopup();
   const { user } = useUser();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,19 +48,17 @@ export default function NewTenantModal({
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || "Failed to accept invitation");
+          throw new Error(
+            errorData.detail ||
+              errorData.message ||
+              "Failed to accept invitation"
+          );
         }
 
-        setPopup({
-          message: "You have accepted the invitation.",
-          type: "success",
-        });
+        toast.success("You have accepted the invitation.");
       } else {
         // For non-invite flow, just show success message
-        setPopup({
-          message: "Processing your team join request...",
-          type: "success",
-        });
+        toast.success("Processing your team join request...");
       }
 
       // Common logout and redirect for both flows
@@ -75,10 +72,7 @@ export default function NewTenantModal({
           : "Failed to join the team. Please try again.";
 
       setError(message);
-      setPopup({
-        message,
-        type: "error",
-      });
+      toast.error(message);
     } finally {
       setIsLoading(false);
     }
@@ -102,13 +96,14 @@ export default function NewTenantModal({
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || "Failed to decline invitation");
+        throw new Error(
+          errorData.detail ||
+            errorData.message ||
+            "Failed to decline invitation"
+        );
       }
 
-      setPopup({
-        message: "You have declined the invitation.",
-        type: "info",
-      });
+      toast.info("You have declined the invitation.");
       onClose?.();
     } catch (error) {
       const message =
@@ -117,10 +112,7 @@ export default function NewTenantModal({
           : "Failed to decline the invitation. Please try again.";
 
       setError(message);
-      setPopup({
-        message,
-        type: "error",
-      });
+      toast.error(message);
     } finally {
       setIsLoading(false);
     }
@@ -135,7 +127,7 @@ export default function NewTenantModal({
     : `Your request to join ${tenantInfo.number_of_users} other users of ${APP_DOMAIN} has been approved.`;
 
   const description = isInvite
-    ? `By accepting this invitation, you will join the existing ${APP_DOMAIN} team and lose access to your current team. Note: you will lose access to your current assistants, prompts, chats, and connected sources.`
+    ? `By accepting this invitation, you will join the existing ${APP_DOMAIN} team and lose access to your current team. Note: you will lose access to your current agents, prompts, chats, and connected sources.`
     : `To finish joining your team, please reauthenticate with ${user?.email}.`;
 
   return (
@@ -145,7 +137,7 @@ export default function NewTenantModal({
 
         <Modal.Body>
           <Text>{description}</Text>
-          {error && <ErrorTextLayout>{error}</ErrorTextLayout>}
+          {error && <InputErrorText>{error}</InputErrorText>}
         </Modal.Body>
 
         <Modal.Footer>
@@ -153,10 +145,10 @@ export default function NewTenantModal({
             cancel={
               isInvite ? (
                 <Button
-                  onClick={handleRejectInvite}
-                  secondary
                   disabled={isLoading}
-                  leftIcon={SvgX}
+                  prominence="secondary"
+                  onClick={handleRejectInvite}
+                  icon={SvgX}
                 >
                   Decline
                 </Button>
@@ -164,8 +156,8 @@ export default function NewTenantModal({
             }
             submit={
               <Button
-                onClick={handleJoinTenant}
                 disabled={isLoading}
+                onClick={handleJoinTenant}
                 rightIcon={SvgArrowRight}
               >
                 {isLoading

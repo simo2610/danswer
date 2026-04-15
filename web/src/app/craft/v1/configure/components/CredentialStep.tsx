@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Section } from "@/layouts/general-layouts";
-import Button from "@/refresh-components/buttons/Button";
+import { Button } from "@opal/components";
 import Modal from "@/refresh-components/Modal";
 import { SvgKey } from "@opal/icons";
 import {
@@ -32,9 +32,9 @@ import {
   CRAFT_OAUTH_COOKIE_NAME,
 } from "@/app/craft/v1/constants";
 import Cookies from "js-cookie";
-import { PopupSpec } from "@/components/admin/connectors/Popup";
+import { toast } from "@/hooks/useToast";
 import { createBuildConnector } from "@/app/craft/v1/configure/utils/createBuildConnector";
-import { useUser } from "@/components/user/UserProvider";
+import { useUser } from "@/providers/UserProvider";
 
 interface CredentialStepProps {
   connectorType: ValidSources;
@@ -48,7 +48,6 @@ interface CredentialStepProps {
   refresh?: () => void;
   isSingleStep?: boolean;
   onConnectorSuccess?: () => void;
-  setPopup?: (popup: PopupSpec | null) => void;
 }
 
 export default function CredentialStep({
@@ -63,7 +62,6 @@ export default function CredentialStep({
   refresh = () => {},
   isSingleStep = false,
   onConnectorSuccess,
-  setPopup,
 }: CredentialStepProps) {
   const [createCredentialFormToggle, setCreateCredentialFormToggle] =
     useState(false);
@@ -111,11 +109,9 @@ export default function CredentialStep({
 
       onConnectorSuccess?.();
     } catch (err) {
-      setPopup?.({
-        message:
-          err instanceof Error ? err.message : "Failed to create connector",
-        type: "error",
-      });
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create connector"
+      );
     } finally {
       setIsConnecting(false);
     }
@@ -167,13 +163,11 @@ export default function CredentialStep({
 
                   onConnectorSuccess();
                 } catch (err) {
-                  setPopup?.({
-                    message:
-                      err instanceof Error
-                        ? err.message
-                        : "Failed to create connector",
-                    type: "error",
-                  });
+                  toast.error(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to create connector"
+                  );
                 } finally {
                   setIsConnecting(false);
                 }
@@ -235,9 +229,9 @@ export default function CredentialStep({
                   ) &&
                     (NEXT_PUBLIC_CLOUD_ENABLED || NEXT_PUBLIC_TEST_ENV) && (
                       <Button
-                        action
-                        onClick={handleAuthorize}
                         disabled={isAuthorizing}
+                        variant="action"
+                        onClick={handleAuthorize}
                         hidden={!isAuthorizeVisible}
                       >
                         {isAuthorizing
@@ -250,9 +244,8 @@ export default function CredentialStep({
                 </div>
                 {hasCredentials && (
                   <Button
-                    primary
-                    onClick={isSingleStep ? handleConnect : onContinue}
                     disabled={!selectedCredential || isConnecting}
+                    onClick={isSingleStep ? handleConnect : onContinue}
                   >
                     {isSingleStep
                       ? isConnecting
@@ -269,7 +262,7 @@ export default function CredentialStep({
                 open
                 onOpenChange={() => setCreateCredentialFormToggle(false)}
               >
-                <Modal.Content width="md" height="fit">
+                <Modal.Content width="xl" height="fit">
                   <Modal.Header
                     icon={SvgKey}
                     title={`Create a ${getSourceDisplayName(
@@ -293,7 +286,6 @@ export default function CredentialStep({
                             refresh={refresh}
                             sourceType={connectorType}
                             accessType="public"
-                            setPopup={() => {}}
                             onSwitch={async (cred) => {
                               onCredentialCreated(cred);
                               setCreateCredentialFormToggle(false);

@@ -1,5 +1,5 @@
 import { JSX } from "react";
-import { MinimalPersonaSnapshot } from "@/app/admin/assistants/interfaces";
+import { MinimalPersonaSnapshot } from "@/app/admin/agents/interfaces";
 import { Packet, StopReason } from "../../services/streamingModels";
 import { OnyxDocument, MinimalOnyxDocument } from "@/lib/search/interfaces";
 import { ProjectFile } from "../../projects/projectsService";
@@ -7,15 +7,24 @@ import { LlmDescriptor } from "@/lib/hooks";
 import { IconType } from "react-icons";
 import { OnyxIconType } from "@/components/icons/icons";
 import { CitationMap } from "../../interfaces";
+import { TimelineSurfaceBackground } from "@/app/app/message/messageComponents/timeline/primitives/TimelineSurface";
 
 export enum RenderType {
   HIGHLIGHT = "highlight",
   FULL = "full",
   COMPACT = "compact",
+  INLINE = "inline",
 }
 
+/**
+ * Controls whether a renderer expects to be wrapped by timeline UI.
+ * - timeline: parent should render StepContainer around the result.
+ * - content: renderer already contains its own layout (headers/containers).
+ */
+export type TimelineLayout = "timeline" | "content";
+
 export interface FullChatState {
-  assistant: MinimalPersonaSnapshot;
+  agent: MinimalPersonaSnapshot;
   // Document-related context for citations
   docs?: OnyxDocument[] | null;
   userFiles?: ProjectFile[];
@@ -37,9 +46,20 @@ export interface RendererResult {
   // e.g. ReasoningRenderer
   expandedText?: JSX.Element;
 
-  // Whether this renderer supports compact mode (collapse button shown only when true)
-  supportsCompact?: boolean;
+  // Whether this renderer supports collapsible mode (collapse button shown only when true)
+  supportsCollapsible?: boolean;
+  /** Whether the step should remain collapsible even in single-step timelines */
+  alwaysCollapsible?: boolean;
+  /** Whether the result should be wrapped by timeline UI or rendered as-is */
+  timelineLayout?: TimelineLayout;
+  /** Remove right padding for long-form content (reasoning, deep research, memory). */
+  noPaddingRight?: boolean;
+  /** Override the surface background (e.g. "error" for auth failures). */
+  surfaceBackground?: TimelineSurfaceBackground;
 }
+
+// All renderers return an array of results (even single-step renderers return a 1-element array)
+export type RendererOutput = RendererResult[];
 
 export type MessageRenderer<
   T extends Packet,
@@ -47,6 +67,10 @@ export type MessageRenderer<
 > = React.ComponentType<{
   packets: T[];
   state: S;
+  /** Node id for the message currently being rendered */
+  messageNodeId?: number;
+  /** True when timeline/thinking UI is already shown above this text block */
+  hasTimelineThinking?: boolean;
   onComplete: () => void;
   renderType: RenderType;
   animate: boolean;
@@ -54,5 +78,7 @@ export type MessageRenderer<
   stopReason?: StopReason;
   /** Whether this is the last step in the timeline (for connector line decisions) */
   isLastStep?: boolean;
-  children: (result: RendererResult) => JSX.Element;
+  /** Hover state from parent */
+  isHover?: boolean;
+  children: (result: RendererOutput) => JSX.Element;
 }>;

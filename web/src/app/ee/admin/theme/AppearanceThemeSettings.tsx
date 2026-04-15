@@ -3,13 +3,12 @@
 import { FormField } from "@/refresh-components/form/FormField";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import Tabs from "@/refresh-components/Tabs";
-import Separator from "@/refresh-components/Separator";
 import { Preview } from "./Preview";
 import InputTextArea from "@/refresh-components/inputs/InputTextArea";
 import Switch from "@/refresh-components/inputs/Switch";
 import CharacterCount from "@/refresh-components/CharacterCount";
 import InputImage from "@/refresh-components/inputs/InputImage";
-import Button from "@/refresh-components/buttons/Button";
+import { Button, Divider } from "@opal/components";
 import { useFormikContext } from "formik";
 import {
   forwardRef,
@@ -25,6 +24,7 @@ import { SvgEdit } from "@opal/icons";
 interface AppearanceThemeSettingsProps {
   selectedLogo: File | null;
   setSelectedLogo: (file: File | null) => void;
+  logoVersion: number;
   charLimits: {
     application_name: number;
     custom_greeting_message: number;
@@ -44,7 +44,7 @@ export const AppearanceThemeSettings = forwardRef<
   AppearanceThemeSettingsRef,
   AppearanceThemeSettingsProps
 >(function AppearanceThemeSettings(
-  { selectedLogo, setSelectedLogo, charLimits },
+  { selectedLogo, setSelectedLogo, logoVersion, charLimits },
   ref
 ) {
   const { values, errors, setFieldValue } = useFormikContext<any>();
@@ -173,15 +173,15 @@ export const AppearanceThemeSettings = forwardRef<
     };
   }, [logoObjectUrl]);
 
-  const getLogoSrc = () => {
+  const logoSrc = useMemo(() => {
     if (logoObjectUrl) {
       return logoObjectUrl;
     }
     if (values.use_custom_logo) {
-      return `/api/enterprise-settings/logo?u=${Date.now()}`;
+      return `/api/enterprise-settings/logo?v=${logoVersion}`;
     }
     return undefined;
-  };
+  }, [logoObjectUrl, values.use_custom_logo, logoVersion]);
 
   // Determine which tabs should be enabled
   const hasLogo = Boolean(selectedLogo || values.use_custom_logo);
@@ -301,7 +301,7 @@ export const AppearanceThemeSettings = forwardRef<
           <FormField.Label>Application Logo</FormField.Label>
           <FormField.Control>
             <InputImage
-              src={getLogoSrc()}
+              src={logoSrc}
               onEdit={handleLogoEdit}
               onDrop={(file) => {
                 setSelectedLogo(file);
@@ -313,10 +313,10 @@ export const AppearanceThemeSettings = forwardRef<
           </FormField.Control>
           <div className="mt-2 w-full justify-center items-center flex">
             <Button
-              secondary
               disabled={!hasLogo}
+              prominence="secondary"
               onClick={handleLogoEdit}
-              leftIcon={SvgEdit}
+              icon={SvgEdit}
             >
               Update
             </Button>
@@ -324,7 +324,7 @@ export const AppearanceThemeSettings = forwardRef<
         </FormField>
       </div>
 
-      <Separator className="my-4" />
+      <Divider />
 
       <Preview
         className="mb-8"
@@ -339,7 +339,7 @@ export const AppearanceThemeSettings = forwardRef<
         greeting_message={
           values.custom_greeting_message || "Welcome to Acme Chat"
         }
-        logoSrc={getLogoSrc()}
+        logoSrc={logoSrc}
         highlightTarget={highlightTarget}
       />
 
@@ -441,7 +441,7 @@ export const AppearanceThemeSettings = forwardRef<
         />
       </FormField>
 
-      <Separator className="my-4" />
+      <Divider />
 
       <div className="flex flex-col gap-4 p-4 bg-background-tint-00 rounded-16">
         <FormField state="idle" className="gap-0">

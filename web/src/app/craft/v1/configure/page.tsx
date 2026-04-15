@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import * as SettingsLayouts from "@/layouts/settings-layouts";
 import { Section } from "@/layouts/general-layouts";
-import * as InputLayouts from "@/layouts/input-layouts";
+import { InputHorizontal } from "@opal/layouts";
 import {
   useBuildSessionStore,
   useIsPreProvisioning,
@@ -14,8 +14,12 @@ import { useBuildConnectors } from "@/app/craft/hooks/useBuildConnectors";
 import { BuildLLMPopover } from "@/app/craft/components/BuildLLMPopover";
 import Text from "@/refresh-components/texts/Text";
 import Card from "@/refresh-components/cards/Card";
-import { SvgPlug, SvgSettings, SvgChevronDown } from "@opal/icons";
-import { FiInfo } from "react-icons/fi";
+import {
+  SvgPlug,
+  SvgSettings,
+  SvgChevronDown,
+  SvgInfoSmall,
+} from "@opal/icons";
 import { ValidSources } from "@/lib/types";
 import ConnectorCard, {
   BuildConnectorConfig,
@@ -23,6 +27,7 @@ import ConnectorCard, {
 import ConfigureConnectorModal from "@/app/craft/v1/configure/components/ConfigureConnectorModal";
 import ComingSoonConnectors from "@/app/craft/v1/configure/components/ComingSoonConnectors";
 import DemoDataConfirmModal from "@/app/craft/v1/configure/components/DemoDataConfirmModal";
+import UserLibraryModal from "@/app/craft/v1/configure/components/UserLibraryModal";
 import {
   ConnectorInfoOverlay,
   ReprovisionWarningOverlay,
@@ -30,20 +35,19 @@ import {
 import { ConfirmEntityModal } from "@/components/modals/ConfirmEntityModal";
 import { getSourceMetadata } from "@/lib/sources";
 import { deleteConnector } from "@/app/craft/services/apiServices";
-import Button from "@/refresh-components/buttons/Button";
+import { Button, Divider } from "@opal/components";
 import {
   OAUTH_STATE_KEY,
   getDemoDataEnabled,
   setDemoDataCookie,
 } from "@/app/craft/v1/constants";
-import Separator from "@/refresh-components/Separator";
 import Switch from "@/refresh-components/inputs/Switch";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import { Tooltip } from "@opal/components";
 import NotAllowedModal from "@/app/craft/onboarding/components/NotAllowedModal";
 import { useOnboarding } from "@/app/craft/onboarding/BuildOnboardingProvider";
-import { useLLMProviders } from "@/lib/hooks/useLLMProviders";
-import { useUser } from "@/components/user/UserProvider";
-import { getProviderIcon } from "@/app/admin/configuration/llm/utils";
+import { useLLMProviders } from "@/hooks/useLLMProviders";
+import { useUser } from "@/providers/UserProvider";
+import { getModelIcon } from "@/lib/llmConfig";
 import {
   getBuildUserPersona,
   getPersonaInfo,
@@ -63,6 +67,8 @@ const BUILD_CONNECTORS: ValidSources[] = [
   ValidSources.Linear,
   ValidSources.Fireflies,
   ValidSources.Hubspot,
+  ValidSources.Airtable,
+  ValidSources.CraftFile, // User's uploaded files
 ];
 
 interface SelectedConnectorState {
@@ -87,6 +93,7 @@ export default function BuildConfigPage() {
   const [showNotAllowedModal, setShowNotAllowedModal] = useState(false);
   const [showDemoDataConfirmModal, setShowDemoDataConfirmModal] =
     useState(false);
+  const [showUserLibraryModal, setShowUserLibraryModal] = useState(false);
   const [pendingDemoDataEnabled, setPendingDemoDataEnabled] = useState<
     boolean | null
   >(null);
@@ -95,6 +102,7 @@ export default function BuildConfigPage() {
   const [pendingLlmSelection, setPendingLlmSelection] =
     useState<BuildLlmSelection | null>(null);
   const [pendingDemoData, setPendingDemoData] = useState<boolean | null>(null);
+  const [userLibraryChanged, setUserLibraryChanged] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
   // Track original values (set on mount and after Update)
@@ -152,12 +160,13 @@ export default function BuildConfigPage() {
       originalDemoData !== null &&
       pendingDemoData !== originalDemoData;
 
-    return llmChanged || demoDataChanged;
+    return llmChanged || demoDataChanged || userLibraryChanged;
   }, [
     pendingLlmSelection,
     pendingDemoData,
     originalLlmSelection,
     originalDemoData,
+    userLibraryChanged,
   ]);
 
   // Compute display name for the pending LLM selection
@@ -208,9 +217,12 @@ export default function BuildConfigPage() {
   }, [pendingDemoDataEnabled]);
 
   // Restore changes - revert pending state to original values
+  // Note: User Library changes cannot be reverted (files already uploaded/deleted/toggled)
+  // so we just reset the flag - user needs to manually undo file changes if desired
   const handleRestoreChanges = useCallback(() => {
     setPendingLlmSelection(originalLlmSelection);
     setPendingDemoData(originalDemoData);
+    setUserLibraryChanged(false);
   }, [originalLlmSelection, originalDemoData]);
 
   // Update - apply pending changes and re-provision sandbox
@@ -236,6 +248,9 @@ export default function BuildConfigPage() {
 
       // 3. Start provisioning a new session with updated settings
       ensurePreProvisionedSession();
+
+      // 4. Reset User Library change flag (sandbox now has the updated files)
+      setUserLibraryChanged(false);
     } catch (error) {
       console.error("Failed to update settings:", error);
     } finally {
@@ -361,15 +376,15 @@ export default function BuildConfigPage() {
           rightChildren={
             <div className="flex items-center gap-2">
               <Button
-                secondary
-                onClick={handleRestoreChanges}
                 disabled={!hasChanges || isUpdating}
+                prominence="secondary"
+                onClick={handleRestoreChanges}
               >
                 Restore Changes
               </Button>
               <Button
-                onClick={handleUpdate}
                 disabled={!hasChanges || isUpdating || isPreProvisioning}
+                onClick={handleUpdate}
               >
                 {isUpdating || isPreProvisioning ? "Updating..." : "Update"}
               </Button>
@@ -392,7 +407,7 @@ export default function BuildConfigPage() {
                 height="fit"
               >
                 <Card>
-                  <InputLayouts.Horizontal
+                  <InputHorizontal
                     title="Your Demo Persona"
                     description={
                       firstName && lastName && positionText
@@ -403,13 +418,12 @@ export default function BuildConfigPage() {
                     }
                     center
                   >
-                    <SimpleTooltip
+                    <Tooltip
                       tooltip={
                         !hasLlmProvider
                           ? "Configure an LLM provider first"
                           : undefined
                       }
-                      disabled={hasLlmProvider}
                     >
                       <button
                         type="button"
@@ -419,8 +433,8 @@ export default function BuildConfigPage() {
                       >
                         <SvgSettings className="w-5 h-5" />
                       </button>
-                    </SimpleTooltip>
-                  </InputLayouts.Horizontal>
+                    </Tooltip>
+                  </InputHorizontal>
                 </Card>
                 <Card
                   className={
@@ -439,10 +453,11 @@ export default function BuildConfigPage() {
                         : ""
                     }`}
                   >
-                    <InputLayouts.Horizontal
+                    <InputHorizontal
                       title="Default LLM"
                       description="Select the language model to craft with"
                       center
+                      withLabel
                     >
                       <BuildLLMPopover
                         currentSelection={pendingLlmSelection}
@@ -459,19 +474,19 @@ export default function BuildConfigPage() {
                         >
                           {pendingLlmSelection?.provider &&
                             (() => {
-                              const ProviderIcon = getProviderIcon(
+                              const ModelIcon = getModelIcon(
                                 pendingLlmSelection.provider
                               );
-                              return <ProviderIcon className="w-4 h-4" />;
+                              return <ModelIcon className="w-4 h-4" />;
                             })()}
                           <Text mainUiAction>{pendingLlmDisplayName}</Text>
                           <SvgChevronDown className="w-4 h-4 text-text-03" />
                         </button>
                       </BuildLLMPopover>
-                    </InputLayouts.Horizontal>
+                    </InputHorizontal>
                   </div>
                 </Card>
-                <Separator />
+                <Divider />
                 <div className="w-full flex items-center justify-between">
                   <div className="flex flex-col gap-0.25">
                     <Text mainContentEmphasis text04>
@@ -482,18 +497,13 @@ export default function BuildConfigPage() {
                     </Text>
                   </div>
                   <div className="w-fit flex-shrink-0">
-                    <SimpleTooltip
+                    <Tooltip
                       tooltip={
                         isUpdating || isPreProvisioning
                           ? "Please wait while your session is being provisioned"
                           : !hasConnectorEverSucceeded
                             ? "Connect and sync a data source to disable demo data"
                             : undefined
-                      }
-                      disabled={
-                        hasConnectorEverSucceeded &&
-                        !isUpdating &&
-                        !isPreProvisioning
                       }
                     >
                       <Card
@@ -516,11 +526,14 @@ export default function BuildConfigPage() {
                           }`}
                         >
                           <div className="flex items-center gap-2">
-                            <SimpleTooltip tooltip="The demo dataset contains 1000 files across various connectors">
+                            <Tooltip tooltip="The demo dataset contains 1000 files across various connectors">
                               <span className="inline-flex items-center cursor-help">
-                                <FiInfo size={16} className="text-text-03" />
+                                <SvgInfoSmall
+                                  size={16}
+                                  className="text-text-03"
+                                />
                               </span>
-                            </SimpleTooltip>
+                            </Tooltip>
                             <Text mainUiAction>Use Demo Dataset</Text>
                           </div>
                           <Switch
@@ -537,28 +550,36 @@ export default function BuildConfigPage() {
                           />
                         </div>
                       </Card>
-                    </SimpleTooltip>
+                    </Tooltip>
                   </div>
                 </div>
                 <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-2 pt-2">
-                  {connectorStates.map(({ type, config }) => (
-                    <ConnectorCard
-                      key={type}
-                      connectorType={type}
-                      config={config}
-                      onConfigure={() => {
-                        // Only open modal for unconfigured connectors
-                        if (!config) {
-                          if (isBasicUser) {
-                            setShowNotAllowedModal(true);
-                          } else {
-                            setSelectedConnector({ type, config });
+                  {connectorStates.map(({ type, config }) => {
+                    const metadata = getSourceMetadata(type);
+                    return (
+                      <ConnectorCard
+                        key={type}
+                        connectorType={type}
+                        config={config}
+                        onConfigure={() => {
+                          // Connectors marked as alwaysConnected open their custom modal
+                          if (metadata.alwaysConnected) {
+                            setShowUserLibraryModal(true);
+                            return;
                           }
-                        }
-                      }}
-                      onDelete={() => config && setConnectorToDelete(config)}
-                    />
-                  ))}
+                          // Only open modal for unconfigured connectors
+                          if (!config) {
+                            if (isBasicUser) {
+                              setShowNotAllowedModal(true);
+                            } else {
+                              setSelectedConnector({ type, config });
+                            }
+                          }
+                        }}
+                        onDelete={() => config && setConnectorToDelete(config)}
+                      />
+                    );
+                  })}
                 </div>
                 <ComingSoonConnectors />
               </Section>
@@ -567,7 +588,11 @@ export default function BuildConfigPage() {
 
           {/* Sticky overlay for reprovision warning */}
           <div className="sticky z-toast bottom-10 w-fit mx-auto">
-            <ReprovisionWarningOverlay visible={hasChanges && !isLoading} />
+            <ReprovisionWarningOverlay
+              visible={hasChanges && !isLoading}
+              onUpdate={handleUpdate}
+              isUpdating={isUpdating || isPreProvisioning}
+            />
           </div>
 
           {/* Fixed overlay for connector info - centered on screen like the modal */}
@@ -614,6 +639,12 @@ export default function BuildConfigPage() {
           }}
           pendingDemoDataEnabled={pendingDemoDataEnabled}
           onConfirm={handleDemoDataConfirm}
+        />
+
+        <UserLibraryModal
+          open={showUserLibraryModal}
+          onClose={() => setShowUserLibraryModal(false)}
+          onChanges={() => setUserLibraryChanged(true)}
         />
       </SettingsLayouts.Root>
     </div>

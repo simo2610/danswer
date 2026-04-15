@@ -1,15 +1,14 @@
 "use client";
 
 import { FeedbackType } from "@/app/app/interfaces";
-import Button from "@/refresh-components/buttons/Button";
-import { usePopup } from "@/components/admin/connectors/Popup";
+import { Button } from "@opal/components";
 import useFeedbackController from "@/hooks/useFeedbackController";
 import { useModal } from "@/refresh-components/contexts/ModalContext";
 import { SvgThumbsDown, SvgThumbsUp } from "@opal/icons";
 import Modal from "@/refresh-components/Modal";
 import { Formik } from "formik";
 import * as Yup from "yup";
-import * as InputLayouts from "@/layouts/input-layouts";
+import { InputVertical } from "@opal/layouts";
 import InputTextAreaField from "@/refresh-components/form/InputTextAreaField";
 
 export interface FeedbackModalProps {
@@ -26,8 +25,7 @@ export default function FeedbackModal({
   messageId,
 }: FeedbackModalProps) {
   const modal = useModal();
-  const { popup, setPopup } = usePopup();
-  const { handleFeedbackChange } = useFeedbackController({ setPopup });
+  const { handleFeedbackChange } = useFeedbackController();
 
   const initialValues: FeedbackFormValues = {
     additional_feedback: "",
@@ -58,8 +56,6 @@ export default function FeedbackModal({
 
   return (
     <>
-      {popup}
-
       <Modal open={modal.isOpen} onOpenChange={modal.toggle}>
         <Modal.Content width="sm">
           <Modal.Header
@@ -80,32 +76,32 @@ export default function FeedbackModal({
             }) => (
               <>
                 <Modal.Body>
-                  <InputLayouts.Vertical
-                    name="additional_feedback"
+                  <InputVertical
+                    withLabel="additional_feedback"
                     title="Provide Additional Details"
-                    optional={feedbackType === "like"}
+                    suffix={feedbackType === "like" ? "optional" : undefined}
                   >
                     <InputTextAreaField
                       name="additional_feedback"
                       placeholder={`What did you ${feedbackType} about this response?`}
                     />
-                  </InputLayouts.Vertical>
+                  </InputVertical>
                 </Modal.Body>
 
                 <Modal.Footer>
                   <Button
+                    prominence="secondary"
                     onClick={() => modal.toggle(false)}
-                    secondary
                     type="button"
                   >
                     Cancel
                   </Button>
                   <Button
-                    onClick={() => formikHandleSubmit()}
                     disabled={
                       isSubmitting ||
                       (feedbackType === "dislike" && (!dirty || !isValid))
                     }
+                    onClick={() => formikHandleSubmit()}
                   >
                     {isSubmitting ? "Submitting..." : "Submit"}
                   </Button>

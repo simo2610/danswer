@@ -1,27 +1,26 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import Separator from "@/refresh-components/Separator";
-import { useProjectsContext } from "../../projects/ProjectsContext";
+import { useProjectsContext } from "@/providers/ProjectsContext";
 import FilePickerPopover from "@/refresh-components/popovers/FilePickerPopover";
 import type { ProjectFile } from "../../projects/projectsService";
-import { usePopup } from "@/components/admin/connectors/Popup";
 import { MinimalOnyxDocument } from "@/lib/search/interfaces";
-import Button from "@/refresh-components/buttons/Button";
+import { Button, Divider } from "@opal/components";
 
 import AddInstructionModal from "@/components/modals/AddInstructionModal";
 import UserFilesModal from "@/components/modals/UserFilesModal";
 import { useCreateModal } from "@/refresh-components/contexts/ModalContext";
 import Text from "@/refresh-components/texts/Text";
 import CreateButton from "@/refresh-components/buttons/CreateButton";
-import { FileCard } from "../input/FileCard";
+import { FileCard, FileCardSkeleton } from "@/sections/cards/FileCard";
 import { hasNonImageFiles } from "@/lib/utils";
 import IconButton from "@/refresh-components/buttons/IconButton";
-import { FileCardSkeleton } from "@/app/app/components/input/FileCard";
 import ButtonRenaming from "@/refresh-components/buttons/ButtonRenaming";
 import { UserFileStatus } from "../../projects/projectsService";
 import { SvgAddLines, SvgEdit, SvgFiles, SvgFolderOpen } from "@opal/icons";
+import { Hoverable } from "@opal/core";
+
 export interface ProjectContextPanelProps {
   projectTokenCount?: number;
   availableContextTokens?: number;
@@ -32,8 +31,6 @@ export default function ProjectContextPanel({
   availableContextTokens = 128_000,
   setPresentingDocument,
 }: ProjectContextPanelProps) {
-  const { popup, setPopup } = usePopup();
-
   const addInstructionModal = useCreateModal();
   const projectFilesModal = useCreateModal();
   // Edit project name state
@@ -66,7 +63,7 @@ export default function ProjectContextPanel({
   const handleUploadFiles = useCallback(
     async (files: File[]) => {
       if (!files || files.length === 0) return;
-      beginUpload(Array.from(files), currentProjectId, setPopup);
+      beginUpload(Array.from(files), currentProjectId);
     },
     [currentProjectId, beginUpload]
   );
@@ -116,8 +113,6 @@ export default function ProjectContextPanel({
 
   return (
     <>
-      {popup}
-
       <addInstructionModal.Provider>
         <AddInstructionModal />
       </addInstructionModal.Provider>
@@ -135,39 +130,46 @@ export default function ProjectContextPanel({
           }}
         />
       </projectFilesModal.Provider>
-      <div className="flex flex-col gap-6 w-full max-w-[min(50rem,100%)] mx-auto p-4 pt-14 pb-6">
+      <div className="flex flex-col gap-6 w-full max-w-[var(--app-page-main-content-width)] mx-auto p-4 pt-14 pb-6">
         <div className="flex flex-col gap-1 text-text-04">
           <SvgFolderOpen className="h-8 w-8 text-text-04" />
-          <div className="group flex items-center gap-2">
-            {isEditingName ? (
-              <ButtonRenaming
-                initialName={projectName}
-                onRename={async (newName) => {
-                  if (currentProjectId) {
-                    await renameProject(currentProjectId, newName);
-                  }
-                }}
-                onClose={cancelEditing}
-                className="font-heading-h2 text-text-04"
-              />
-            ) : (
-              <>
-                <Text as="p" headingH2 className="font-heading-h2">
-                  {projectName}
-                </Text>
-                <IconButton
-                  icon={SvgEdit}
-                  internal
-                  onClick={startEditing}
-                  className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
-                  tooltip="Edit project name"
+          <Hoverable.Root group="projectName" widthVariant="fit">
+            <div className="flex items-center gap-2">
+              {isEditingName ? (
+                <ButtonRenaming
+                  initialName={projectName}
+                  onRename={async (newName) => {
+                    if (currentProjectId) {
+                      await renameProject(currentProjectId, newName);
+                    }
+                  }}
+                  onClose={cancelEditing}
+                  className="font-heading-h2 text-text-04"
                 />
-              </>
-            )}
-          </div>
+              ) : (
+                <>
+                  <Text as="p" headingH2 className="font-heading-h2">
+                    {projectName}
+                  </Text>
+                  {/* TODO(@raunakab): migrate to opal Button once className/iconClassName is resolved */}
+                  <Hoverable.Item
+                    group="projectName"
+                    variant="opacity-on-hover"
+                  >
+                    <IconButton
+                      icon={SvgEdit}
+                      internal
+                      onClick={startEditing}
+                      tooltip="Edit project name"
+                    />
+                  </Hoverable.Item>
+                </>
+              )}
+            </div>
+          </Hoverable.Root>
         </div>
 
-        <Separator className="my-0" />
+        <Divider paddingPerpendicular="fit" />
         <div className="flex flex-row gap-2 justify-between">
           <div className="min-w-0 flex-1">
             <Text as="p" headingH3 text04>
@@ -186,9 +188,9 @@ export default function ProjectContextPanel({
             )}
           </div>
           <Button
-            leftIcon={SvgAddLines}
+            prominence="tertiary"
+            icon={SvgAddLines}
             onClick={() => addInstructionModal.toggle(true)}
-            tertiary
           >
             Set Instructions
           </Button>
@@ -283,7 +285,6 @@ export default function ProjectContextPanel({
                         }}
                         onFileClick={handleOnView}
                         compactImages={shouldCompactImages}
-                        className="w-40"
                       />
                     </div>
                   ));

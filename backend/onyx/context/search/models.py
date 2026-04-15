@@ -2,18 +2,15 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import Field
-from pydantic import field_validator
 
 from onyx.configs.constants import DocumentSource
 from onyx.db.models import SearchSettings
 from onyx.indexing.models import BaseChunk
 from onyx.indexing.models import IndexingSetting
 from onyx.tools.tool_implementations.web_search.models import WEB_SEARCH_PREFIX
-from shared_configs.enums import RerankerProvider
 
 
 class QueryExpansions(BaseModel):
@@ -26,48 +23,18 @@ class QueryExpansionType(Enum):
     SEMANTIC = "semantic"
 
 
-# TODO clean up this stuff, reranking is no longer used
-class RerankingDetails(BaseModel):
-    # If model is None (or num_rerank is 0), then reranking is turned off
-    rerank_model_name: str | None
-    rerank_api_url: str | None
-    rerank_provider_type: RerankerProvider | None
-    rerank_api_key: str | None = None
-
-    num_rerank: int
-
-    # For faster flows where the results should start immediately
-    # this more time intensive step can be skipped
-    disable_rerank_for_streaming: bool = False
-
-    @classmethod
-    def from_db_model(cls, search_settings: SearchSettings) -> "RerankingDetails":
-        return cls(
-            rerank_model_name=search_settings.rerank_model_name,
-            rerank_provider_type=search_settings.rerank_provider_type,
-            rerank_api_key=search_settings.rerank_api_key,
-            num_rerank=search_settings.num_rerank,
-            rerank_api_url=search_settings.rerank_api_url,
-        )
-
-
-class InferenceSettings(RerankingDetails):
-    # Empty for no additional expansion
-    multilingual_expansion: list[str]
-
-
-class SearchSettingsCreationRequest(InferenceSettings, IndexingSetting):
+class SearchSettingsCreationRequest(IndexingSetting):
     @classmethod
     def from_db_model(
         cls, search_settings: SearchSettings
     ) -> "SearchSettingsCreationRequest":
-        inference_settings = InferenceSettings.from_db_model(search_settings)
         indexing_setting = IndexingSetting.from_db_model(search_settings)
+        return cls(**indexing_setting.model_dump())
 
-        return cls(**inference_settings.model_dump(), **indexing_setting.model_dump())
 
-
-class SavedSearchSettings(InferenceSettings, IndexingSetting):
+class SavedSearchSettings(IndexingSetting):
+    # Previously this contained also Inference time settings. Keeping this wrapper class around
+    # as there may again be inference time settings that may get added.
     @classmethod
     def from_db_model(cls, search_settings: SearchSettings) -> "SavedSearchSettings":
         return cls(
@@ -86,15 +53,6 @@ class SavedSearchSettings(InferenceSettings, IndexingSetting):
             enable_contextual_rag=search_settings.enable_contextual_rag,
             contextual_rag_llm_name=search_settings.contextual_rag_llm_name,
             contextual_rag_llm_provider=search_settings.contextual_rag_llm_provider,
-            # Reranking Details
-            rerank_model_name=search_settings.rerank_model_name,
-            rerank_provider_type=search_settings.rerank_provider_type,
-            rerank_api_key=search_settings.rerank_api_key,
-            num_rerank=search_settings.num_rerank,
-            # Multilingual Expansion
-            multilingual_expansion=search_settings.multilingual_expansion,
-            rerank_api_url=search_settings.rerank_api_url,
-            disable_rerank_for_streaming=search_settings.disable_rerank_for_streaming,
         )
 
 
@@ -111,30 +69,35 @@ class BaseFilters(BaseModel):
 
 
 class UserFileFilters(BaseModel):
-    user_file_ids: list[UUID] | None = None
-    project_id: int | None = None
+    # Scopes search to user files tagged with a given project/persona in Vespa.
+    # These are NOT simply the IDs of the current project or persona — they are
+    # only set when the persona's/project's user files overflowed the LLM
+    # context window and must be searched via vector DB instead of being loaded
+    # directly into the prompt.
+    project_id_filter: int | None = None
+    persona_id_filter: int | None = None
 
 
-class IndexFilters(BaseFilters, UserFileFilters):
+class AssistantKnowledgeFilters(BaseModel):
+    """Filters for knowledge attached to an assistant (persona).
+
+    These filters scope search to documents/folders explicitly attached
+    to the assistant. When present, only documents matching these criteria
+    are searched (in addition to ACL filtering).
+    """
+
+    # Document IDs explicitly attached to the assistant
+    attached_document_ids: list[str] | None = None
+    # Hierarchy node IDs (folders/spaces) attached to the assistant.
+    # Matches chunks where ancestor_hierarchy_node_ids contains any of these.
+    hierarchy_node_ids: list[int] | None = None
+
+
+class IndexFilters(BaseFilters, UserFileFilters, AssistantKnowledgeFilters):
     # NOTE: These strings must be formatted in the same way as the output of
     # DocumentAccess::to_acl.
     access_control_list: list[str] | None
     tenant_id: str | None = None
-
-
-class ChunkContext(BaseModel):
-    # If not specified (None), picked up from Persona settings if there is space
-    # if specified (even if 0), it always uses the specified number of chunks above and below
-    chunks_above: int | None = None
-    chunks_below: int | None = None
-    full_doc: bool = False
-
-    @field_validator("chunks_above", "chunks_below")
-    @classmethod
-    def check_non_negative(cls, value: int, field: Any) -> int:
-        if value is not None and value < 0:
-            raise ValueError(f"{field.name} must be non-negative")
-        return value
 
 
 class BasicChunkRequest(BaseModel):
@@ -147,7 +110,6 @@ class BasicChunkRequest(BaseModel):
     recency_bias_multiplier: float = 1.0
 
     limit: int | None = None
-    offset: int | None = None  # This one is not set currently
 
 
 class ChunkSearchRequest(BasicChunkRequest):
@@ -439,3 +401,16 @@ class SavedSearchDocWithContent(SavedSearchDoc):
     section in addition to the match_highlights."""
 
     content: str
+
+
+class PersonaSearchInfo(BaseModel):
+    """Snapshot of persona data needed by the search pipeline.
+
+    Extracted from the ORM Persona before the DB session is released so that
+    SearchTool and search_pipeline never lazy-load relationships post-commit.
+    """
+
+    document_set_names: list[str]
+    search_start_date: datetime | None
+    attached_document_ids: list[str]
+    hierarchy_node_ids: list[int]

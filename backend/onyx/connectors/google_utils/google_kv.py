@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from typing import cast
 from urllib.parse import parse_qs
 from urllib.parse import ParseResult
@@ -44,12 +45,28 @@ from onyx.connectors.google_utils.shared_constants import (
 from onyx.db.credentials import update_credential_json
 from onyx.db.models import User
 from onyx.key_value_store.factory import get_kv_store
+from onyx.key_value_store.interface import unwrap_str
 from onyx.server.documents.models import CredentialBase
 from onyx.server.documents.models import GoogleAppCredentials
 from onyx.server.documents.models import GoogleServiceAccountKey
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+
+def _load_google_json(raw: object) -> dict[str, Any]:
+    """Accept both the current (dict) and legacy (JSON string) KV payload shapes.
+
+    Payloads written before the fix for serializing Google credentials into
+    ``EncryptedJson`` columns are stored as JSON strings; new writes store dicts.
+    Once every install has re-uploaded their Google credentials the legacy
+    ``str`` branch can be removed.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        return json.loads(raw)
+    raise ValueError(f"Unexpected Google credential payload type: {type(raw)!r}")
 
 
 def _build_frontend_google_drive_redirect(source: DocumentSource) -> str:
@@ -89,7 +106,7 @@ def _get_current_oauth_user(creds: OAuthCredentials, source: DocumentSource) -> 
 
 
 def verify_csrf(credential_id: int, state: str) -> None:
-    csrf = get_kv_store().load(KV_CRED_KEY.format(str(credential_id)))
+    csrf = unwrap_str(get_kv_store().load(KV_CRED_KEY.format(str(credential_id))))
     if csrf != state:
         raise PermissionError(
             "State from Google Drive Connector callback does not match expected"
@@ -161,12 +178,13 @@ def build_service_account_creds(
 
 def get_auth_url(credential_id: int, source: DocumentSource) -> str:
     if source == DocumentSource.GOOGLE_DRIVE:
-        creds_str = str(get_kv_store().load(KV_GOOGLE_DRIVE_CRED_KEY))
+        credential_json = _load_google_json(
+            get_kv_store().load(KV_GOOGLE_DRIVE_CRED_KEY)
+        )
     elif source == DocumentSource.GMAIL:
-        creds_str = str(get_kv_store().load(KV_GMAIL_CRED_KEY))
+        credential_json = _load_google_json(get_kv_store().load(KV_GMAIL_CRED_KEY))
     else:
         raise ValueError(f"Unsupported source: {source}")
-    credential_json = json.loads(creds_str)
     flow = InstalledAppFlow.from_client_config(
         credential_json,
         scopes=GOOGLE_SCOPES[source],
@@ -178,19 +196,21 @@ def get_auth_url(credential_id: int, source: DocumentSource) -> str:
     params = parse_qs(parsed_url.query)
 
     get_kv_store().store(
-        KV_CRED_KEY.format(credential_id), params.get("state", [None])[0], encrypt=True
+        KV_CRED_KEY.format(credential_id),
+        {"value": params.get("state", [None])[0]},
+        encrypt=True,
     )
     return str(auth_url)
 
 
 def get_google_app_cred(source: DocumentSource) -> GoogleAppCredentials:
     if source == DocumentSource.GOOGLE_DRIVE:
-        creds_str = str(get_kv_store().load(KV_GOOGLE_DRIVE_CRED_KEY))
+        creds = _load_google_json(get_kv_store().load(KV_GOOGLE_DRIVE_CRED_KEY))
     elif source == DocumentSource.GMAIL:
-        creds_str = str(get_kv_store().load(KV_GMAIL_CRED_KEY))
+        creds = _load_google_json(get_kv_store().load(KV_GMAIL_CRED_KEY))
     else:
         raise ValueError(f"Unsupported source: {source}")
-    return GoogleAppCredentials(**json.loads(creds_str))
+    return GoogleAppCredentials(**creds)
 
 
 def upsert_google_app_cred(
@@ -198,10 +218,14 @@ def upsert_google_app_cred(
 ) -> None:
     if source == DocumentSource.GOOGLE_DRIVE:
         get_kv_store().store(
-            KV_GOOGLE_DRIVE_CRED_KEY, app_credentials.json(), encrypt=True
+            KV_GOOGLE_DRIVE_CRED_KEY,
+            app_credentials.model_dump(mode="json"),
+            encrypt=True,
         )
     elif source == DocumentSource.GMAIL:
-        get_kv_store().store(KV_GMAIL_CRED_KEY, app_credentials.json(), encrypt=True)
+        get_kv_store().store(
+            KV_GMAIL_CRED_KEY, app_credentials.model_dump(mode="json"), encrypt=True
+        )
     else:
         raise ValueError(f"Unsupported source: {source}")
 
@@ -217,12 +241,14 @@ def delete_google_app_cred(source: DocumentSource) -> None:
 
 def get_service_account_key(source: DocumentSource) -> GoogleServiceAccountKey:
     if source == DocumentSource.GOOGLE_DRIVE:
-        creds_str = str(get_kv_store().load(KV_GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY))
+        creds = _load_google_json(
+            get_kv_store().load(KV_GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY)
+        )
     elif source == DocumentSource.GMAIL:
-        creds_str = str(get_kv_store().load(KV_GMAIL_SERVICE_ACCOUNT_KEY))
+        creds = _load_google_json(get_kv_store().load(KV_GMAIL_SERVICE_ACCOUNT_KEY))
     else:
         raise ValueError(f"Unsupported source: {source}")
-    return GoogleServiceAccountKey(**json.loads(creds_str))
+    return GoogleServiceAccountKey(**creds)
 
 
 def upsert_service_account_key(
@@ -231,12 +257,14 @@ def upsert_service_account_key(
     if source == DocumentSource.GOOGLE_DRIVE:
         get_kv_store().store(
             KV_GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY,
-            service_account_key.json(),
+            service_account_key.model_dump(mode="json"),
             encrypt=True,
         )
     elif source == DocumentSource.GMAIL:
         get_kv_store().store(
-            KV_GMAIL_SERVICE_ACCOUNT_KEY, service_account_key.json(), encrypt=True
+            KV_GMAIL_SERVICE_ACCOUNT_KEY,
+            service_account_key.model_dump(mode="json"),
+            encrypt=True,
         )
     else:
         raise ValueError(f"Unsupported source: {source}")

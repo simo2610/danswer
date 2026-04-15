@@ -321,7 +321,7 @@ def _full_thread_from_id(
 def _slim_thread_from_id(
     thread_id: str,
     user_email: str,
-    gmail_service: GmailService,
+    gmail_service: GmailService,  # noqa: ARG001
 ) -> SlimDocument:
     return SlimDocument(
         id=thread_id,
@@ -351,9 +351,7 @@ class GmailConnector(
     def primary_admin_email(self) -> str:
         if self._primary_admin_email is None:
             raise RuntimeError(
-                "Primary admin email missing, "
-                "should not call this property "
-                "before calling load_credentials"
+                "Primary admin email missing, should not call this property before calling load_credentials"
             )
         return self._primary_admin_email
 
@@ -361,9 +359,7 @@ class GmailConnector(
     def google_domain(self) -> str:
         if self._primary_admin_email is None:
             raise RuntimeError(
-                "Primary admin email missing, "
-                "should not call this property "
-                "before calling load_credentials"
+                "Primary admin email missing, should not call this property before calling load_credentials"
             )
         return self._primary_admin_email.split("@")[-1]
 
@@ -371,9 +367,7 @@ class GmailConnector(
     def creds(self) -> OAuthCredentials | ServiceAccountCredentials:
         if self._creds is None:
             raise RuntimeError(
-                "Creds missing, "
-                "should not call this property "
-                "before calling load_credentials"
+                "Creds missing, should not call this property before calling load_credentials"
             )
         return self._creds
 
@@ -432,7 +426,7 @@ class GmailConnector(
         time_range_end: SecondsSinceUnixEpoch | None = None,
         callback: IndexingHeartbeatInterface | None = None,
         page_token: str | None = None,
-        set_page_token: Callable[[str | None], None] = lambda x: None,
+        set_page_token: Callable[[str | None], None] = lambda x: None,  # noqa: ARG005
         is_slim: bool = False,
     ) -> Iterator[Document | ConnectorFailure] | GenerateSlimDocumentOutput:
         query = _build_time_range_query(time_range_start, time_range_end)
@@ -504,7 +498,7 @@ class GmailConnector(
         self,
         user_email: str,
         page_token: str | None = None,
-        set_page_token: Callable[[str | None], None] = lambda x: None,
+        set_page_token: Callable[[str | None], None] = lambda x: None,  # noqa: ARG005
         time_range_start: SecondsSinceUnixEpoch | None = None,
         time_range_end: SecondsSinceUnixEpoch | None = None,
         callback: IndexingHeartbeatInterface | None = None,
@@ -526,7 +520,7 @@ class GmailConnector(
         self,
         user_email: str,
         page_token: str | None = None,
-        set_page_token: Callable[[str | None], None] = lambda x: None,
+        set_page_token: Callable[[str | None], None] = lambda x: None,  # noqa: ARG005
         time_range_start: SecondsSinceUnixEpoch | None = None,
         time_range_end: SecondsSinceUnixEpoch | None = None,
         callback: IndexingHeartbeatInterface | None = None,

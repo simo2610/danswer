@@ -3,7 +3,7 @@
 import React, { useMemo } from "react";
 import type { IconProps } from "@opal/types";
 import { cn } from "@/lib/utils";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import { Tooltip } from "@opal/components";
 
 const buttonClasses = (transient: boolean | undefined) =>
   ({
@@ -36,6 +36,15 @@ const buttonClasses = (transient: boolean | undefined) =>
         disabled: ["bg-transparent"],
       },
       internal: {
+        enabled: [
+          "bg-transparent",
+          "hover:bg-background-tint-00",
+          transient && "bg-background-tint-00",
+          "active:bg-background-tint-00",
+        ],
+        disabled: ["bg-transparent"],
+      },
+      small: {
         enabled: [
           "bg-transparent",
           "hover:bg-background-tint-00",
@@ -82,6 +91,15 @@ const buttonClasses = (transient: boolean | undefined) =>
         ],
         disabled: ["bg-transparent"],
       },
+      small: {
+        enabled: [
+          "bg-transparent",
+          "hover:bg-background-tint-00",
+          transient && "bg-background-tint-00",
+          "active:bg-background-tint-00",
+        ],
+        disabled: ["bg-transparent"],
+      },
     },
     danger: {
       primary: {
@@ -112,6 +130,15 @@ const buttonClasses = (transient: boolean | undefined) =>
         disabled: ["bg-background-neutral-02"],
       },
       internal: {
+        enabled: [
+          "bg-transparent",
+          "hover:bg-background-tint-00",
+          transient && "bg-background-tint-00",
+          "active:bg-background-tint-00",
+        ],
+        disabled: ["bg-transparent"],
+      },
+      small: {
         enabled: [
           "bg-transparent",
           "hover:bg-background-tint-00",
@@ -157,6 +184,15 @@ const iconClasses = (transient: boolean | undefined) =>
         ],
         disabled: ["stroke-text-01"],
       },
+      small: {
+        enabled: [
+          "stroke-text-02",
+          "group-hover/IconButton:stroke-text-04",
+          transient && "stroke-text-04",
+          "group-active/IconButton:stroke-text-05",
+        ],
+        disabled: ["stroke-text-01"],
+      },
     },
     action: {
       primary: {
@@ -182,6 +218,15 @@ const iconClasses = (transient: boolean | undefined) =>
         disabled: ["stroke-action-link-02"],
       },
       internal: {
+        enabled: [
+          "stroke-action-link-05",
+          "group-hover/IconButton:stroke-action-link-05",
+          transient && "stroke-action-link-05",
+          "group-active/IconButton:stroke-action-link-06",
+        ],
+        disabled: ["stroke-action-link-02"],
+      },
+      small: {
         enabled: [
           "stroke-action-link-05",
           "group-hover/IconButton:stroke-action-link-05",
@@ -223,6 +268,15 @@ const iconClasses = (transient: boolean | undefined) =>
         ],
         disabled: ["stroke-action-danger-02"],
       },
+      small: {
+        enabled: [
+          "stroke-action-danger-05",
+          "group-hover/IconButton:stroke-action-danger-05",
+          transient && "stroke-action-danger-05",
+          "group-active/IconButton:stroke-action-danger-06",
+        ],
+        disabled: ["stroke-action-danger-02"],
+      },
     },
   }) as const;
 
@@ -240,7 +294,7 @@ export interface IconButtonProps
   internal?: boolean;
 
   // Button size
-  large?: boolean;
+  small?: boolean;
 
   // Button states
   transient?: boolean;
@@ -252,7 +306,6 @@ export interface IconButtonProps
   icon: React.FunctionComponent<IconProps>;
   tooltip?: string;
   toolTipPosition?: "top" | "bottom" | "left" | "right";
-  tooltipSize?: "sm" | "md" | "lg";
   /** Additional className to apply to the icon element */
   iconClassName?: string;
 }
@@ -266,6 +319,7 @@ export default function IconButton({
   secondary,
   tertiary,
   internal,
+  small,
 
   transient,
   disabled,
@@ -277,7 +331,6 @@ export default function IconButton({
   iconClassName,
   tooltip,
   toolTipPosition = "top",
-  tooltipSize = "lg",
   ...props
 }: IconButtonProps) {
   const variant = main
@@ -295,7 +348,9 @@ export default function IconButton({
         ? "tertiary"
         : internal
           ? "internal"
-          : "primary";
+          : small
+            ? "small"
+            : "primary";
   const abled = disabled ? "disabled" : "enabled";
 
   const buttonClass = useMemo(
@@ -312,9 +367,9 @@ export default function IconButton({
       type="button"
       className={cn(
         "flex items-center justify-center h-fit w-fit group/IconButton",
-        internal ? "p-1" : "p-2",
+        small || internal ? "p-1" : "p-2",
         disabled && "cursor-not-allowed",
-        internal ? "rounded-08" : "rounded-12",
+        small || internal ? "rounded-08" : "rounded-12",
         buttonClass,
         className
       )}
@@ -330,15 +385,21 @@ export default function IconButton({
       disabled={disabled}
       {...props}
     >
-      <Icon className={cn("h-[1rem] w-[1rem]", iconClass, iconClassName)} />
+      <Icon
+        className={cn(
+          small ? "h-[0.75rem] w-[0.75rem]" : "h-[1rem] w-[1rem]",
+          iconClass,
+          iconClassName
+        )}
+      />
     </button>
   );
 
   if (!tooltip) return buttonElement;
 
   return (
-    <SimpleTooltip side={toolTipPosition} size={tooltipSize} tooltip={tooltip}>
+    <Tooltip side={toolTipPosition} tooltip={tooltip}>
       {buttonElement}
-    </SimpleTooltip>
+    </Tooltip>
   );
 }

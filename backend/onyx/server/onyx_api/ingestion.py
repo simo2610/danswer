@@ -31,6 +31,7 @@ from onyx.indexing.indexing_pipeline import run_indexing_pipeline
 from onyx.server.onyx_api.models import DocMinimalInfo
 from onyx.server.onyx_api.models import IngestionDocument
 from onyx.server.onyx_api.models import IngestionResult
+from onyx.server.utils_vector_db import require_vector_db
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
 
@@ -43,7 +44,7 @@ router = APIRouter(prefix="/onyx-api", tags=PUBLIC_API_TAGS)
 @router.get("/connector-docs/{cc_pair_id}")
 def get_docs_by_connector_credential_pair(
     cc_pair_id: int,
-    _: User | None = Depends(current_curator_or_admin_user),
+    _: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> list[DocMinimalInfo]:
     db_docs = get_documents_by_cc_pair(cc_pair_id=cc_pair_id, db_session=db_session)
@@ -59,7 +60,7 @@ def get_docs_by_connector_credential_pair(
 
 @router.get("/ingestion")
 def get_ingestion_docs(
-    _: User | None = Depends(current_curator_or_admin_user),
+    _: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> list[DocMinimalInfo]:
     db_docs = get_ingestion_documents(db_session)
@@ -73,10 +74,10 @@ def get_ingestion_docs(
     ]
 
 
-@router.post("/ingestion")
+@router.post("/ingestion", dependencies=[Depends(require_vector_db)])
 def upsert_ingestion_doc(
     doc_info: IngestionDocument,
-    _: User | None = Depends(current_curator_or_admin_user),
+    _: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> IngestionResult:
     tenant_id = get_current_tenant_id()
@@ -175,10 +176,10 @@ def upsert_ingestion_doc(
     )
 
 
-@router.delete("/ingestion/{document_id}")
+@router.delete("/ingestion/{document_id}", dependencies=[Depends(require_vector_db)])
 def delete_ingestion_doc(
     document_id: str,
-    _: User | None = Depends(current_curator_or_admin_user),
+    _: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> None:
     tenant_id = get_current_tenant_id()

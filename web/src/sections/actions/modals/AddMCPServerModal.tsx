@@ -4,10 +4,9 @@ import { useState } from "react";
 import { Formik, Form } from "formik";
 import * as Yup from "yup";
 import Modal from "@/refresh-components/Modal";
-import * as InputLayouts from "@/layouts/input-layouts";
+import { InputVertical } from "@opal/layouts";
 import InputTypeInField from "@/refresh-components/form/InputTypeInField";
 import InputTextAreaField from "@/refresh-components/form/InputTextAreaField";
-import Button from "@/refresh-components/buttons/Button";
 import { createMCPServer, updateMCPServer } from "@/lib/tools/mcpService";
 import {
   MCPServerCreateRequest,
@@ -15,9 +14,8 @@ import {
   MCPServer,
 } from "@/lib/tools/interfaces";
 import { useModal } from "@/refresh-components/contexts/ModalContext";
-import Separator from "@/refresh-components/Separator";
-import IconButton from "@/refresh-components/buttons/IconButton";
-import { PopupSpec } from "@/components/admin/connectors/Popup";
+import { Button, Divider } from "@opal/components";
+import { toast } from "@/hooks/useToast";
 import { ModalCreationInterface } from "@/refresh-components/contexts/ModalContext";
 import { SvgCheckCircle, SvgServer, SvgUnplug } from "@opal/icons";
 import { Section } from "@/layouts/general-layouts";
@@ -31,7 +29,6 @@ interface AddMCPServerModalProps {
   manageServerModal: ModalCreationInterface;
   onServerCreated?: (server: MCPServer) => void;
   handleAuthenticate: (serverId: number) => void;
-  setPopup?: (spec: PopupSpec) => void;
   mutateMcpServers?: () => Promise<void>;
 }
 
@@ -50,7 +47,6 @@ export default function AddMCPServerModal({
   manageServerModal,
   onServerCreated,
   handleAuthenticate,
-  setPopup,
   mutateMcpServers,
 }: AddMCPServerModalProps) {
   const { isOpen, toggle } = useModal();
@@ -84,19 +80,13 @@ export default function AddMCPServerModal({
       if (isEditMode && server) {
         // Update existing server
         await updateMCPServer(server.id, values);
-        setPopup?.({
-          message: "MCP Server updated successfully",
-          type: "success",
-        });
+        toast.success("MCP Server updated successfully");
         await mutateMcpServers?.();
       } else {
         // Create new server
         const createdServer = await createMCPServer(values);
 
-        setPopup?.({
-          message: "MCP Server created successfully",
-          type: "success",
-        });
+        toast.success("MCP Server created successfully");
 
         await mutateMcpServers?.();
 
@@ -113,13 +103,11 @@ export default function AddMCPServerModal({
         `Error ${isEditMode ? "updating" : "creating"} MCP server:`,
         error
       );
-      setPopup?.({
-        message:
-          error instanceof Error
-            ? error.message
-            : `Failed to ${isEditMode ? "update" : "create"} MCP server`,
-        type: "error",
-      });
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : `Failed to ${isEditMode ? "update" : "create"} MCP server`
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -157,30 +145,30 @@ export default function AddMCPServerModal({
               />
 
               <Modal.Body>
-                <InputLayouts.Vertical name="name" title="Server Name">
+                <InputVertical withLabel="name" title="Server Name">
                   <InputTypeInField
                     name="name"
                     placeholder="Name your MCP server"
                     autoFocus
                   />
-                </InputLayouts.Vertical>
+                </InputVertical>
 
-                <InputLayouts.Vertical
-                  name="description"
+                <InputVertical
+                  withLabel="description"
                   title="Description"
-                  optional
+                  suffix="optional"
                 >
                   <InputTextAreaField
                     name="description"
                     placeholder="More details about the MCP server"
                     rows={3}
                   />
-                </InputLayouts.Vertical>
+                </InputVertical>
 
-                <Separator noPadding />
+                <Divider paddingParallel="fit" paddingPerpendicular="fit" />
 
-                <InputLayouts.Vertical
-                  name="server_url"
+                <InputVertical
+                  withLabel="server_url"
                   title="MCP Server URL"
                   subDescription="Only connect to servers you trust. You are responsible for actions taken with this connection and keeping your tools updated."
                 >
@@ -188,7 +176,7 @@ export default function AddMCPServerModal({
                     name="server_url"
                     placeholder="https://your-mcp-server.com/mcp"
                   />
-                </InputLayouts.Vertical>
+                </InputVertical>
 
                 {/* Authentication Status Section - Only show in edit mode when authenticated */}
                 {isEditMode &&
@@ -224,15 +212,15 @@ export default function AddMCPServerModal({
                         alignItems="center"
                         width="fit"
                       >
-                        <IconButton
+                        <Button
                           icon={SvgUnplug}
-                          tertiary
+                          prominence="tertiary"
                           type="button"
                           tooltip="Disconnect Server"
                           onClick={handleDisconnectClick}
                         />
                         <Button
-                          secondary
+                          prominence="secondary"
                           type="button"
                           onClick={() => {
                             // Close this modal and open the auth modal for this server
@@ -249,17 +237,16 @@ export default function AddMCPServerModal({
 
               <Modal.Footer>
                 <Button
-                  secondary
+                  disabled={isSubmitting}
+                  prominence="secondary"
                   type="button"
                   onClick={() => handleModalClose(false)}
-                  disabled={isSubmitting}
                 >
                   Cancel
                 </Button>
                 <Button
-                  primary
-                  type="submit"
                   disabled={isSubmitting || !isValid || !dirty}
+                  type="submit"
                 >
                   {isSubmitting
                     ? isEditMode

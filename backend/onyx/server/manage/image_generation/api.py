@@ -3,8 +3,9 @@ from fastapi import Depends
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from onyx.auth.users import current_admin_user
+from onyx.auth.permissions import require_permission
 from onyx.db.engine.sql_engine import get_session
+from onyx.db.enums import Permission
 from onyx.db.image_generation import create_image_generation_config__no_commit
 from onyx.db.image_generation import delete_image_generation_config__no_commit
 from onyx.db.image_generation import get_all_image_generation_configs
@@ -25,6 +26,7 @@ from onyx.server.manage.image_generation.models import ImageGenerationConfigUpda
 from onyx.server.manage.image_generation.models import ImageGenerationConfigView
 from onyx.server.manage.image_generation.models import ImageGenerationCredentials
 from onyx.server.manage.image_generation.models import TestImageGenerationRequest
+from onyx.server.manage.llm.api import _validate_llm_provider_change
 from onyx.server.manage.llm.models import LLMProviderUpsertRequest
 from onyx.server.manage.llm.models import ModelConfigurationUpsertRequest
 from onyx.utils.logger import setup_logger
@@ -78,13 +80,24 @@ def _build_llm_provider_request(
                 detail=f"Source LLM provider with id {source_llm_provider_id} not found",
             )
 
+        _validate_llm_provider_change(
+            existing_api_base=source_provider.api_base,
+            existing_custom_config=source_provider.custom_config,
+            new_api_base=api_base,
+            new_custom_config=custom_config,
+            api_key_changed=False,  # Using stored key from source provider
+        )
+
         return LLMProviderUpsertRequest(
             name=f"Image Gen - {image_provider_id}",
             provider=source_provider.provider,
-            api_key=source_provider.api_key,  # Only this from source
+            api_key=(
+                source_provider.api_key.get_value(apply_mask=False)
+                if source_provider.api_key
+                else None
+            ),  # Only this from source
             api_base=api_base,  # From request
             api_version=api_version,  # From request
-            default_model_name=model_name,
             deployment_name=deployment_name,  # From request
             is_public=True,
             groups=[],
@@ -123,7 +136,6 @@ def _build_llm_provider_request(
         api_key=api_key,
         api_base=api_base,
         api_version=api_version,
-        default_model_name=model_name,
         deployment_name=deployment_name,
         is_public=True,
         groups=[],
@@ -155,7 +167,6 @@ def _create_image_gen_llm_provider__no_commit(
         api_key=provider_request.api_key,
         api_base=provider_request.api_base,
         api_version=provider_request.api_version,
-        default_model_name=provider_request.default_model_name,
         deployment_name=provider_request.deployment_name,
         is_public=provider_request.is_public,
         custom_config=provider_request.custom_config,
@@ -184,7 +195,7 @@ def _create_image_gen_llm_provider__no_commit(
 @admin_router.post("/test")
 def test_image_generation(
     test_request: TestImageGenerationRequest,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> None:
     """Test if an API key is valid for image generation.
@@ -210,7 +221,19 @@ def test_image_generation(
                 detail=f"Source LLM provider with id {test_request.source_llm_provider_id} not found",
             )
 
-        api_key = source_provider.api_key
+        _validate_llm_provider_change(
+            existing_api_base=source_provider.api_base,
+            existing_custom_config=source_provider.custom_config,
+            new_api_base=test_request.api_base,
+            new_custom_config=test_request.custom_config,
+            api_key_changed=False,  # Using stored key from source provider
+        )
+
+        api_key = (
+            source_provider.api_key.get_value(apply_mask=False)
+            if source_provider.api_key
+            else None
+        )
         provider = source_provider.provider
 
     if provider is None:
@@ -269,7 +292,7 @@ def test_image_generation(
 @admin_router.post("/config")
 def create_config(
     config_create: ImageGenerationConfigCreate,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> ImageGenerationConfigView:
     """Create a new image generation configuration.
@@ -331,7 +354,7 @@ def create_config(
 
 @admin_router.get("/config")
 def get_all_configs(
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> list[ImageGenerationConfigView]:
     """Get all image generation configurations."""
@@ -342,7 +365,7 @@ def get_all_configs(
 @admin_router.get("/config/{image_provider_id}/credentials")
 def get_config_credentials(
     image_provider_id: str,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> ImageGenerationCredentials:
     """Get the credentials for an image generation config (for edit mode).
@@ -363,7 +386,7 @@ def get_config_credentials(
 def update_config(
     image_provider_id: str,
     config_update: ImageGenerationConfigUpdate,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> ImageGenerationConfigView:
     """Update an image generation configuration.
@@ -406,8 +429,19 @@ def update_config(
             if not config_update.api_key_changed and (
                 not config_update.api_key or provided_key_is_masked
             ):
+                _validate_llm_provider_change(
+                    existing_api_base=old_provider.api_base,
+                    existing_custom_config=old_provider.custom_config,
+                    new_api_base=config_update.api_base,
+                    new_custom_config=config_update.custom_config,
+                    api_key_changed=False,
+                )
                 # Preserve existing API key when user didn't change it
-                actual_api_key = old_provider.api_key
+                actual_api_key = (
+                    old_provider.api_key.get_value(apply_mask=False)
+                    if old_provider.api_key
+                    else None
+                )
 
         # 3. Build and create new LLM provider
         provider_request = _build_llm_provider_request(
@@ -448,7 +482,7 @@ def update_config(
 @admin_router.delete("/config/{image_provider_id}")
 def delete_config(
     image_provider_id: str,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> None:
     """Delete an image generation configuration and its associated LLM provider."""
@@ -479,7 +513,7 @@ def delete_config(
 @admin_router.post("/config/{image_provider_id}/default")
 def set_config_as_default(
     image_provider_id: str,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> None:
     """Set a configuration as the default for image generation."""
@@ -492,7 +526,7 @@ def set_config_as_default(
 @admin_router.delete("/config/{image_provider_id}/default")
 def unset_config_as_default(
     image_provider_id: str,
-    _: User | None = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> None:
     """Unset a configuration as the default for image generation."""

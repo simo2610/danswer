@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.engine.sql_engine import SqlEngine
+from onyx.db.enums import AccountType
 from onyx.db.enums import BuildSessionStatus
 from onyx.db.models import BuildSession
 from onyx.db.models import User
@@ -36,7 +37,7 @@ def tenant_context() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="function")
-def test_user(db_session: Session, tenant_context: None) -> User:
+def test_user(db_session: Session, tenant_context: None) -> User:  # noqa: ARG001
     """Create a test user for build session tests."""
     unique_email = f"build_test_{uuid4().hex[:8]}@example.com"
 
@@ -52,6 +53,7 @@ def test_user(db_session: Session, tenant_context: None) -> User:
         is_superuser=False,
         is_verified=True,
         role=UserRole.EXT_PERM_USER,
+        account_type=AccountType.EXT_PERM_USER,
     )
     db_session.add(user)
     db_session.commit()
@@ -61,7 +63,9 @@ def test_user(db_session: Session, tenant_context: None) -> User:
 
 @pytest.fixture(scope="function")
 def build_session(
-    db_session: Session, test_user: User, tenant_context: None
+    db_session: Session,
+    test_user: User,
+    tenant_context: None,  # noqa: ARG001
 ) -> BuildSession:
     """Create a test build session."""
     session = BuildSession(

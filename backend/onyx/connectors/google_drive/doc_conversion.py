@@ -231,8 +231,7 @@ def onyx_document_id_from_drive_file(file: GoogleDriveFileType) -> str:
         else:
             link = template.format(file_id)
         logger.debug(
-            "Missing webViewLink for Google Drive file with id %s. "
-            "Falling back to constructed link %s",
+            "Missing webViewLink for Google Drive file with id %s. Falling back to constructed link %s",
             file_id,
             link,
         )
@@ -258,6 +257,9 @@ def download_request(
     return _download_request(request, file_id, size_threshold)
 
 
+_DOWNLOAD_NUM_RETRIES = 3
+
+
 def _download_request(request: Any, file_id: str, size_threshold: int) -> bytes:
     response_bytes = io.BytesIO()
     downloader = MediaIoBaseDownload(
@@ -265,7 +267,10 @@ def _download_request(request: Any, file_id: str, size_threshold: int) -> bytes:
     )
     done = False
     while not done:
-        download_progress, done = downloader.next_chunk()
+        # num_retries enables automatic retry with exponential backoff for transient errors
+        download_progress, done = downloader.next_chunk(
+            num_retries=_DOWNLOAD_NUM_RETRIES
+        )
         if download_progress.resumable_progress > size_threshold:
             logger.warning(
                 f"File {file_id} exceeds size threshold of {size_threshold}. Skipping2."
@@ -470,13 +475,28 @@ def _get_external_access_for_raw_gdrive_file(
     company_domain: str,
     retriever_drive_service: GoogleDriveService | None,
     admin_drive_service: GoogleDriveService,
+    fallback_user_email: str,
+    add_prefix: bool = False,
 ) -> ExternalAccess:
     """
     Get the external access for a raw Google Drive file.
+
+    add_prefix: When True, prefix group IDs with source type (for indexing path).
+               When False (default), leave unprefixed (for permission sync path
+               where upsert_document_external_perms handles prefixing).
+    fallback_user_email: When permission info can't be retrieved (e.g. externally-owned
+               files), fall back to granting access to this user.
     """
     external_access_fn = cast(
         Callable[
-            [GoogleDriveFileType, str, GoogleDriveService | None, GoogleDriveService],
+            [
+                GoogleDriveFileType,
+                str,
+                GoogleDriveService | None,
+                GoogleDriveService,
+                str,
+                bool,
+            ],
             ExternalAccess,
         ],
         fetch_versioned_implementation_with_fallback(
@@ -490,6 +510,8 @@ def _get_external_access_for_raw_gdrive_file(
         company_domain,
         retriever_drive_service,
         admin_drive_service,
+        fallback_user_email,
+        add_prefix,
     )
 
 
@@ -620,8 +642,7 @@ def _convert_drive_item_to_document(
                     sections = cast(list[TextSection | ImageSection], doc_sections)
                     if any(SMART_CHIP_CHAR in section.text for section in doc_sections):
                         logger.debug(
-                            f"found smart chips in {file.get('name')},"
-                            " aligning with basic sections"
+                            f"found smart chips in {file.get('name')}, aligning with basic sections"
                         )
                         basic_sections = _download_and_extract_sections_basic(
                             file, _get_drive_service(), allow_images, size_threshold
@@ -653,6 +674,8 @@ def _convert_drive_item_to_document(
                 admin_drive_service=get_drive_service(
                     creds, user_email=permission_sync_context.primary_admin_email
                 ),
+                add_prefix=True,  # Indexing path - prefix here
+                fallback_user_email=retriever_email,
             )
             if permission_sync_context
             else None
@@ -694,7 +717,7 @@ def _convert_drive_item_to_document(
                 file.get("modifiedTime", "").replace("Z", "+00:00")
             ),
             external_access=external_access,
-            parent_hierarchy_raw_node_id=file.get("parents", [None])[0],
+            parent_hierarchy_raw_node_id=(file.get("parents") or [None])[0],
         )
     except Exception as e:
         doc_id = "unknown"
@@ -734,6 +757,7 @@ def build_slim_document(
     # if not specified, we will not sync permissions
     # will also be a no-op if EE is not enabled
     permission_sync_context: PermissionSyncContext | None,
+    retriever_email: str,
 ) -> SlimDocument | None:
     if file.get("mimeType") in [DRIVE_FOLDER_TYPE, DRIVE_SHORTCUT_TYPE]:
         return None
@@ -755,6 +779,7 @@ def build_slim_document(
                 creds,
                 user_email=permission_sync_context.primary_admin_email,
             ),
+            fallback_user_email=retriever_email,
         )
         if permission_sync_context
         else None
@@ -762,4 +787,5 @@ def build_slim_document(
     return SlimDocument(
         id=onyx_document_id_from_drive_file(file),
         external_access=external_access,
+        parent_hierarchy_raw_node_id=(file.get("parents") or [None])[0],
     )

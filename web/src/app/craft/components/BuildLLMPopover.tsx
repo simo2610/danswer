@@ -11,14 +11,14 @@ import Text from "@/refresh-components/texts/Text";
 import Popover, { PopoverMenu } from "@/refresh-components/Popover";
 import Switch from "@/refresh-components/inputs/Switch";
 import LineItem from "@/refresh-components/buttons/LineItem";
-import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
+import { LLMProviderDescriptor } from "@/interfaces/llm";
 import {
   BuildLlmSelection,
   BUILD_MODE_PROVIDERS,
   isRecommendedModel,
 } from "@/app/craft/onboarding/constants";
 import { ToggleWarningModal } from "./ToggleWarningModal";
-import { getProviderIcon } from "@/app/admin/configuration/llm/utils";
+import { getModelIcon } from "@/lib/llmConfig";
 import { Section } from "@/layouts/general-layouts";
 import {
   Accordion,
@@ -365,9 +365,7 @@ export function BuildLLMPopover({
                             const isExpanded = expandedGroups.includes(
                               group.providerKey
                             );
-                            const ProviderIcon = getProviderIcon(
-                              group.providerKey
-                            );
+                            const ModelIcon = getModelIcon(group.providerKey);
 
                             return (
                               <AccordionItem
@@ -379,7 +377,7 @@ export function BuildLLMPopover({
                                 <AccordionTrigger className="flex items-center rounded-08 hover:no-underline hover:bg-background-tint-02 group [&>svg]:hidden w-full py-1">
                                   <div className="flex items-center gap-1 shrink-0">
                                     <div className="flex items-center justify-center size-5 shrink-0">
-                                      <ProviderIcon size={16} />
+                                      <ModelIcon size={16} />
                                     </div>
                                     <Text
                                       secondaryBody

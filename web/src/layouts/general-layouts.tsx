@@ -2,13 +2,14 @@ import { cn } from "@/lib/utils";
 import Text from "@/refresh-components/texts/Text";
 import Truncated from "@/refresh-components/texts/Truncated";
 import { WithoutStyles } from "@/types";
+import { Content } from "@opal/layouts";
 import { IconProps } from "@opal/types";
 import React from "react";
 
 export type FlexDirection = "row" | "column";
 export type JustifyContent = "start" | "center" | "end" | "between";
 export type AlignItems = "start" | "center" | "end" | "stretch";
-export type Length = "auto" | "fit" | "full";
+export type Length = "auto" | "fit" | "full" | number;
 
 const flexDirectionClassMap: Record<FlexDirection, string> = {
   row: "flex-row",
@@ -26,15 +27,15 @@ const alignClassMap: Record<AlignItems, string> = {
   end: "items-end",
   stretch: "items-stretch",
 };
-const widthClassmap: Record<Length, string> = {
+export const widthClassmap: Record<Length, string> = {
   auto: "w-auto flex-shrink-0",
   fit: "w-fit flex-shrink-0",
   full: "w-full",
 };
-const heightClassmap: Record<Length, string> = {
+export const heightClassmap: Record<Length, string> = {
   auto: "h-auto",
   fit: "h-fit",
-  full: "h-full",
+  full: "h-full min-h-0",
 };
 
 /**
@@ -89,11 +90,12 @@ const heightClassmap: Record<Length, string> = {
  * @remarks
  * - The component defaults to column layout when no direction is specified
  * - Full width and height by default
- * - Prevents style overrides (className and style props are not available)
+ * - Accepts className for additional styling; style prop is not available
  * - Import using namespace import for consistent usage: `import * as GeneralLayouts from "@/layouts/general-layouts"`
  */
 export interface SectionProps
   extends WithoutStyles<React.HtmlHTMLAttributes<HTMLDivElement>> {
+  className?: string;
   flexDirection?: FlexDirection;
   justifyContent?: JustifyContent;
   alignItems?: AlignItems;
@@ -109,7 +111,13 @@ export interface SectionProps
 
   ref?: React.Ref<HTMLDivElement>;
 }
+
+/**
+ * `<Disabled>` from `@opal/core` uses `display: contents` — it can safely
+ * wrap a `Section` without affecting layout.
+ */
 function Section({
+  className,
   flexDirection = "column",
   justifyContent = "center",
   alignItems = "center",
@@ -131,166 +139,31 @@ function Section({
         flexDirectionClassMap[flexDirection],
         justifyClassMap[justifyContent],
         alignClassMap[alignItems],
-        widthClassmap[width],
-        heightClassmap[height],
+        typeof width === "string" && widthClassmap[width],
+        typeof height === "string" && heightClassmap[height],
+        typeof height === "number" && "overflow-hidden",
 
         wrap && "flex-wrap",
-        dbg && "dbg-red"
+        dbg && "dbg-red",
+        className
       )}
-      style={{ gap: `${gap}rem`, padding: `${padding}rem` }}
+      style={{
+        gap: `${gap}rem`,
+        padding: `${padding}rem`,
+        ...(typeof width === "number" && { width: `${width}rem` }),
+        ...(typeof height === "number" && { height: `${height}rem` }),
+      }}
       {...rest}
     />
   );
 }
 
-/**
- * LineItemLayout - A layout for icon + title + description rows
- *
- * Structure:
- *   Flexbox Row [
- *     Grid [
- *       [Icon] [Title      ]
- *       [    ] [Description]
- *     ],
- *     rightChildren
- *   ]
- *
- * - Icon column auto-sizes to icon width
- * - Icon vertically centers with title
- * - Description aligns with title's left edge (both in grid column 2)
- * - rightChildren is outside the grid, in the outer flexbox
- *
- * Variants:
- * - `primary`: Standard size (20px icon) with emphasized text. The default for prominent list items.
- * - `secondary`: Compact size (16px icon) with standard text. Use for denser lists or nested items.
- * - `tertiary`: Compact size (16px icon) with standard text. Use for less prominent items in tight layouts.
- * - `tertiary-muted`: Compact size (16px icon) with muted text styling. Use for de-emphasized or secondary information.
- * - `mini`: Smallest size (12px icon) with muted secondary text. Use for metadata labels (e.g., owner, action count).
- *
- * @param icon - Optional icon component to display on the left
- * @param title - The main title text (required)
- * @param description - Optional description content below the title (string or ReactNode)
- * @param rightChildren - Optional content to render on the right side
- * @param variant - Visual variant. Default: "primary"
- * @param strikethrough - If true, applies line-through style to title. Default: false
- * @param loading - If true, renders skeleton placeholders instead of content. Default: false
- * @param center - If true, vertically centers items; otherwise aligns to start. Default: false
- */
-type LineItemLayoutVariant =
-  | "primary"
-  | "secondary"
-  | "tertiary"
-  | "tertiary-muted"
-  | "mini";
-export interface LineItemLayoutProps {
-  icon?: React.FunctionComponent<IconProps>;
+export interface AttachmentItemLayoutProps {
   title: string;
-  description?: React.ReactNode;
-  middleText?: string;
-  rightChildren?: React.ReactNode;
-
-  variant?: LineItemLayoutVariant;
-  strikethrough?: boolean;
-  loading?: boolean;
-  center?: boolean;
-  reducedPadding?: boolean;
-}
-function LineItemLayout({
-  icon: Icon,
-  title,
-  description,
-  middleText,
-  rightChildren,
-
-  variant = "primary",
-  strikethrough,
-  loading,
-  center,
-  reducedPadding,
-}: LineItemLayoutProps) {
-  // Derive styling from variant
-  const isMini = variant === "mini";
-  const isCompact =
-    variant === "secondary" ||
-    variant === "tertiary" ||
-    variant === "tertiary-muted";
-  const isMuted = variant === "tertiary-muted" || isMini;
-
-  // Determine icon size: mini=12px, compact=16px, primary=20px
-  const iconSize = isMini ? 12 : isCompact ? 16 : 20;
-
-  // Determine gap: mini=0.25rem, others=1.5rem
-  const gap = isMini ? 0.25 : 1.5;
-
-  return (
-    <Section
-      flexDirection="row"
-      justifyContent="between"
-      alignItems={center || isMini ? "center" : "start"}
-      gap={gap}
-    >
-      <div
-        className="line-item-layout"
-        data-variant={variant}
-        data-has-icon={Icon ? "true" : undefined}
-        data-loading={loading ? "true" : undefined}
-        data-strikethrough={strikethrough ? "true" : undefined}
-        data-reduced-padding={reducedPadding ? "true" : undefined}
-      >
-        {/* Row 1: Icon, Title */}
-        {Icon && <Icon size={iconSize} className="line-item-layout-icon" />}
-        {loading ? (
-          <div className="line-item-layout-skeleton-title" />
-        ) : (
-          <Text
-            mainContentEmphasis={!isCompact && !isMini}
-            secondaryBody={isMini}
-            text03={isMuted}
-            className="line-item-layout-title"
-          >
-            {title}
-          </Text>
-        )}
-
-        {/* Row 2: Description (column 2, or column 1 if no icon) */}
-        {loading && description ? (
-          <div className="line-item-layout-skeleton-description" />
-        ) : description ? (
-          <div className="line-item-layout-description">
-            {typeof description === "string" ? (
-              <Text secondaryBody text03>
-                {description}
-              </Text>
-            ) : (
-              description
-            )}
-          </div>
-        ) : undefined}
-      </div>
-
-      {!loading && middleText && (
-        <div className="flex-1">
-          <Truncated text03 secondaryBody>
-            {middleText}
-          </Truncated>
-        </div>
-      )}
-
-      {loading && rightChildren ? (
-        <div className="line-item-layout-skeleton-right" />
-      ) : rightChildren ? (
-        <div className="flex-shrink-0">{rightChildren}</div>
-      ) : undefined}
-    </Section>
-  );
-}
-
-export interface AttachmentItemLayoutProps
-  // Omitted because this interface mandates them to be defined.
-  extends Omit<LineItemLayoutProps, "description" | "icon"> {
   description: string;
   icon: React.FunctionComponent<IconProps>;
-  variant?: "primary" | "secondary";
+  middleText?: string;
+  rightChildren?: React.ReactNode;
 }
 function AttachmentItemLayout({
   title,
@@ -298,39 +171,52 @@ function AttachmentItemLayout({
   icon: Icon,
   middleText,
   rightChildren,
-  variant = "primary",
 }: AttachmentItemLayoutProps) {
-  const content = (
-    <Section flexDirection="row" gap={0.25} padding={0.25}>
-      <div
-        className={cn(
-          "h-[2.25rem] aspect-square",
-          variant === "primary" && "bg-background-tint-02 rounded-08"
-        )}
-      >
+  return (
+    <Section
+      flexDirection="row"
+      justifyContent="start"
+      gap={0.25}
+      padding={0.25}
+    >
+      <div className={cn("h-[2.25rem] aspect-square rounded-08 flex-shrink-0")}>
         <Section>
-          <Icon className="attachment-button__icon" />
+          <div
+            className="attachment-button__icon-wrapper"
+            data-testid="attachment-item-icon-wrapper"
+          >
+            <Icon className="attachment-button__icon" />
+          </div>
         </Section>
       </div>
-      <LineItemLayout
-        title={title}
-        description={description}
-        middleText={middleText}
-        rightChildren={
-          rightChildren ? (
-            <div className="px-1">{rightChildren}</div>
-          ) : undefined
-        }
-        center
-        variant="secondary"
-      />
+      <Section
+        flexDirection="row"
+        justifyContent="between"
+        alignItems="center"
+        gap={1.5}
+        className="min-w-0"
+      >
+        <div data-testid="attachment-item-title" className="flex-1 min-w-0">
+          <Content
+            title={title}
+            description={description}
+            sizePreset="main-ui"
+            variant="section"
+            widthVariant="full"
+          />
+        </div>
+        {middleText && (
+          <div className="flex-1 min-w-0">
+            <Truncated text03 secondaryBody>
+              {middleText}
+            </Truncated>
+          </div>
+        )}
+        {rightChildren && (
+          <div className="flex-shrink-0 px-1">{rightChildren}</div>
+        )}
+      </Section>
     </Section>
-  );
-
-  if (variant === "primary") return content;
-
-  return (
-    <div className="w-full bg-background-tint-01 rounded-12">{content}</div>
   );
 }
 
@@ -402,5 +288,4 @@ function CardItemLayout({
     </div>
   );
 }
-
-export { Section, LineItemLayout, AttachmentItemLayout, CardItemLayout };
+export { Section, CardItemLayout, AttachmentItemLayout };

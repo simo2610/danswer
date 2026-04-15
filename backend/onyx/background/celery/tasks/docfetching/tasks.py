@@ -9,6 +9,7 @@ from celery import Celery
 from celery import shared_task
 from celery import Task
 
+from onyx import __version__
 from onyx.background.celery.apps.app_base import task_logger
 from onyx.background.celery.memory_monitoring import emit_process_memory
 from onyx.background.celery.tasks.docprocessing.heartbeat import start_heartbeat
@@ -60,15 +61,13 @@ def _verify_indexing_attempt(
 
         if attempt.connector_credential_pair_id != cc_pair_id:
             raise SimpleJobException(
-                f"docfetching_task - CC pair mismatch: "
-                f"expected={cc_pair_id} actual={attempt.connector_credential_pair_id}",
+                f"docfetching_task - CC pair mismatch: expected={cc_pair_id} actual={attempt.connector_credential_pair_id}",
                 code=IndexingWatchdogTerminalStatus.FENCE_MISMATCH.code,
             )
 
         if attempt.search_settings_id != search_settings_id:
             raise SimpleJobException(
-                f"docfetching_task - Search settings mismatch: "
-                f"expected={search_settings_id} actual={attempt.search_settings_id}",
+                f"docfetching_task - Search settings mismatch: expected={search_settings_id} actual={attempt.search_settings_id}",
                 code=IndexingWatchdogTerminalStatus.FENCE_MISMATCH.code,
             )
 
@@ -77,8 +76,7 @@ def _verify_indexing_attempt(
             IndexingStatus.IN_PROGRESS,
         ]:
             raise SimpleJobException(
-                f"docfetching_task - Invalid attempt status: "
-                f"attempt_id={index_attempt_id} status={attempt.status}",
+                f"docfetching_task - Invalid attempt status: attempt_id={index_attempt_id} status={attempt.status}",
                 code=IndexingWatchdogTerminalStatus.FENCE_MISMATCH.code,
             )
 
@@ -137,9 +135,13 @@ def _docfetching_task(
     # Since connector_indexing_proxy_task spawns a new process using this function as
     # the entrypoint, we init Sentry here.
     if SENTRY_DSN:
+        from onyx.configs.sentry import _add_instance_tags
+
         sentry_sdk.init(
             dsn=SENTRY_DSN,
             traces_sample_rate=0.1,
+            release=__version__,
+            before_send=_add_instance_tags,
         )
         logger.info("Sentry initialized")
     else:
@@ -248,9 +250,7 @@ def _docfetching_task(
             raise e
 
     logger.info(
-        f"Indexing spawned task finished: attempt={index_attempt_id} "
-        f"cc_pair={cc_pair_id} "
-        f"search_settings={search_settings_id}"
+        f"Indexing spawned task finished: attempt={index_attempt_id} cc_pair={cc_pair_id} search_settings={search_settings_id}"
     )
     os._exit(0)  # ensure process exits cleanly
 
@@ -286,8 +286,7 @@ def process_job_result(
         result.status = IndexingWatchdogTerminalStatus.SUCCEEDED
         task_logger.warning(
             log_builder.build(
-                "Indexing watchdog - spawned task has non-zero exit code "
-                "but completion signal is OK. Continuing...",
+                "Indexing watchdog - spawned task has non-zero exit code but completion signal is OK. Continuing...",
                 exit_code=str(result.exit_code),
             )
         )
@@ -296,10 +295,7 @@ def process_job_result(
             result.status = IndexingWatchdogTerminalStatus.from_code(result.exit_code)
 
         job_level_exception = job.exception()
-        result.exception_str = (
-            f"Docfetching returned exit code {result.exit_code} "
-            f"with exception: {job_level_exception}"
-        )
+        result.exception_str = f"Docfetching returned exit code {result.exit_code} with exception: {job_level_exception}"
 
     return result
 

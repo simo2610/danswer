@@ -14,13 +14,12 @@ import requests
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import File
-from fastapi import HTTPException
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
-from ee.onyx.auth.users import current_admin_user
 from ee.onyx.configs.app_configs import CLOUD_DATA_PLANE_URL
 from ee.onyx.db.license import delete_license as db_delete_license
+from ee.onyx.db.license import get_license
 from ee.onyx.db.license import get_license_metadata
 from ee.onyx.db.license import invalidate_license_cache
 from ee.onyx.db.license import refresh_license_cache
@@ -32,8 +31,12 @@ from ee.onyx.server.license.models import LicenseStatusResponse
 from ee.onyx.server.license.models import LicenseUploadResponse
 from ee.onyx.server.license.models import SeatUsageResponse
 from ee.onyx.utils.license import verify_license_signature
+from onyx.auth.permissions import require_permission
 from onyx.auth.users import User
 from onyx.db.engine.sql_engine import get_session
+from onyx.db.enums import Permission
+from onyx.error_handling.error_codes import OnyxErrorCode
+from onyx.error_handling.exceptions import OnyxError
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
 
@@ -41,10 +44,24 @@ logger = setup_logger()
 
 router = APIRouter(prefix="/license")
 
+# PEM-style delimiters used in license file format
+_PEM_BEGIN = "-----BEGIN ONYX LICENSE-----"
+_PEM_END = "-----END ONYX LICENSE-----"
+
+
+def _strip_pem_delimiters(content: str) -> str:
+    """Strip PEM-style delimiters from license content if present."""
+    content = content.strip()
+    if content.startswith(_PEM_BEGIN) and content.endswith(_PEM_END):
+        # Remove first and last lines (the delimiters)
+        lines = content.split("\n")
+        return "\n".join(lines[1:-1]).strip()
+    return content
+
 
 @router.get("")
 async def get_license_status(
-    _: User = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> LicenseStatusResponse:
     """Get current license status and seat usage."""
@@ -68,7 +85,7 @@ async def get_license_status(
 
 @router.get("/seats")
 async def get_seat_usage(
-    _: User = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> SeatUsageResponse:
     """Get detailed seat usage information."""
@@ -90,47 +107,76 @@ async def get_seat_usage(
 
 @router.post("/claim")
 async def claim_license(
-    session_id: str,
-    _: User = Depends(current_admin_user),
+    session_id: str | None = None,
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> LicenseResponse:
     """
-    Claim a license after Stripe checkout (self-hosted only).
+    Claim a license from the control plane (self-hosted only).
 
-    After a user completes Stripe checkout, they're redirected back with a
-    session_id. This endpoint exchanges that session_id for a signed license
-    via the cloud data plane proxy.
+    Two modes:
+    1. With session_id: After Stripe checkout, exchange session_id for license
+    2. Without session_id: Re-claim using existing license for auth
 
-    Flow:
-    1. Self-hosted frontend redirects to Stripe checkout (via cloud proxy)
-    2. User completes payment
-    3. Stripe redirects back to self-hosted instance with session_id
-    4. Frontend calls this endpoint with session_id
-    5. We call cloud data plane /proxy/claim-license to get the signed license
-    6. License is stored locally and cached
+    Use without session_id after:
+    - Updating seats via the billing API
+    - Returning from the Stripe customer portal
+    - Any operation that regenerates the license on control plane
+    Claim a license from the control plane (self-hosted only).
+
+    Two modes:
+    1. With session_id: After Stripe checkout, exchange session_id for license
+    2. Without session_id: Re-claim using existing license for auth
     """
     if MULTI_TENANT:
-        raise HTTPException(
-            status_code=400,
-            detail="License claiming is only available for self-hosted deployments",
+        raise OnyxError(
+            OnyxErrorCode.VALIDATION_ERROR,
+            "License claiming is only available for self-hosted deployments",
         )
 
     try:
-        # Call cloud data plane to claim the license
-        url = f"{CLOUD_DATA_PLANE_URL}/proxy/claim-license"
-        response = requests.post(
-            url,
-            json={"session_id": session_id},
-            headers={"Content-Type": "application/json"},
-            timeout=30,
-        )
+        if session_id:
+            # Claim license after checkout using session_id
+            url = f"{CLOUD_DATA_PLANE_URL}/proxy/claim-license"
+            response = requests.post(
+                url,
+                json={"session_id": session_id},
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+        else:
+            # Re-claim using existing license for auth
+            metadata = get_license_metadata(db_session)
+            if not metadata or not metadata.tenant_id:
+                raise OnyxError(
+                    OnyxErrorCode.VALIDATION_ERROR,
+                    "No license found. Provide session_id after checkout.",
+                )
+
+            license_row = get_license(db_session)
+            if not license_row or not license_row.license_data:
+                raise OnyxError(
+                    OnyxErrorCode.VALIDATION_ERROR,
+                    "No license found in database",
+                )
+
+            url = f"{CLOUD_DATA_PLANE_URL}/proxy/license/{metadata.tenant_id}"
+            response = requests.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {license_row.license_data}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30,
+            )
+
         response.raise_for_status()
 
         data = response.json()
         license_data = data.get("license")
 
         if not license_data:
-            raise HTTPException(status_code=404, detail="No license in response")
+            raise OnyxError(OnyxErrorCode.NOT_FOUND, "No license in response")
 
         # Verify signature before persisting
         payload = verify_license_signature(license_data)
@@ -156,19 +202,21 @@ async def claim_license(
             detail = error_data.get("detail", detail)
         except Exception:
             pass
-        raise HTTPException(status_code=status_code, detail=detail)
+        raise OnyxError(
+            OnyxErrorCode.BAD_GATEWAY, detail, status_code_override=status_code
+        )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise OnyxError(OnyxErrorCode.VALIDATION_ERROR, str(e))
     except requests.RequestException:
-        raise HTTPException(
-            status_code=502, detail="Failed to connect to license server"
+        raise OnyxError(
+            OnyxErrorCode.BAD_GATEWAY, "Failed to connect to license server"
         )
 
 
 @router.post("/upload")
 async def upload_license(
     license_file: UploadFile = File(...),
-    _: User = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> LicenseUploadResponse:
     """
@@ -178,23 +226,27 @@ async def upload_license(
     The license file must be cryptographically signed by Onyx.
     """
     if MULTI_TENANT:
-        raise HTTPException(
-            status_code=400,
-            detail="License upload is only available for self-hosted deployments",
+        raise OnyxError(
+            OnyxErrorCode.VALIDATION_ERROR,
+            "License upload is only available for self-hosted deployments",
         )
 
     try:
         content = await license_file.read()
         license_data = content.decode("utf-8").strip()
+        # Strip PEM-style delimiters if present (used in .lic file format)
+        license_data = _strip_pem_delimiters(license_data)
+        # Remove any stray whitespace/newlines from user input
+        license_data = license_data.strip()
     except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid license file format")
+        raise OnyxError(OnyxErrorCode.INVALID_INPUT, "Invalid license file format")
 
     # Verify cryptographic signature - this is the only validation needed
     # The license's tenant_id identifies the customer in control plane, not locally
     try:
         payload = verify_license_signature(license_data)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise OnyxError(OnyxErrorCode.VALIDATION_ERROR, str(e))
 
     # Persist to DB and update cache
     upsert_license(db_session, license_data)
@@ -212,7 +264,7 @@ async def upload_license(
 
 @router.post("/refresh")
 async def refresh_license_cache_endpoint(
-    _: User = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> LicenseStatusResponse:
     """
@@ -241,7 +293,7 @@ async def refresh_license_cache_endpoint(
 
 @router.delete("")
 async def delete_license(
-    _: User = Depends(current_admin_user),
+    _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> dict[str, bool]:
     """
@@ -250,9 +302,9 @@ async def delete_license(
     Admin only - removes license from database and invalidates cache.
     """
     if MULTI_TENANT:
-        raise HTTPException(
-            status_code=400,
-            detail="License deletion is only available for self-hosted deployments",
+        raise OnyxError(
+            OnyxErrorCode.VALIDATION_ERROR,
+            "License deletion is only available for self-hosted deployments",
         )
 
     try:

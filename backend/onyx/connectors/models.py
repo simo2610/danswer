@@ -1,10 +1,14 @@
 import sys
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from typing import Any
 from typing import cast
+from typing import Literal
 
 from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
 from pydantic import model_validator
 
 from onyx.access.models import ExternalAccess
@@ -31,9 +35,18 @@ class ConnectorMissingCredentialError(PermissionError):
         )
 
 
+class SectionType(str, Enum):
+    """Discriminator for Section subclasses."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    TABULAR = "tabular"
+
+
 class Section(BaseModel):
     """Base section class with common attributes"""
 
+    type: SectionType
     link: str | None = None
     text: str | None = None
     image_file_id: str | None = None
@@ -42,6 +55,7 @@ class Section(BaseModel):
 class TextSection(Section):
     """Section containing text content"""
 
+    type: Literal[SectionType.TEXT] = SectionType.TEXT
     text: str
 
     def __sizeof__(self) -> int:
@@ -51,10 +65,23 @@ class TextSection(Section):
 class ImageSection(Section):
     """Section containing an image reference"""
 
+    type: Literal[SectionType.IMAGE] = SectionType.IMAGE
     image_file_id: str
 
     def __sizeof__(self) -> int:
         return sys.getsizeof(self.image_file_id) + sys.getsizeof(self.link)
+
+
+class TabularSection(Section):
+    """Section containing tabular data (csv/tsv content, or one sheet of
+    an xlsx workbook rendered as CSV)."""
+
+    type: Literal[SectionType.TABULAR] = SectionType.TABULAR
+    text: str  # CSV representation in a string
+    link: str
+
+    def __sizeof__(self) -> int:
+        return sys.getsizeof(self.text) + sys.getsizeof(self.link)
 
 
 class BasicExpertInfo(BaseModel):
@@ -132,7 +159,6 @@ class BasicExpertInfo(BaseModel):
 
     @classmethod
     def from_dict(cls, model_dict: dict[str, Any]) -> "BasicExpertInfo":
-
         first_name = cast(str, model_dict.get("FirstName"))
         last_name = cast(str, model_dict.get("LastName"))
         email = cast(str, model_dict.get("Email"))
@@ -159,12 +185,20 @@ class DocumentBase(BaseModel):
     """Used for Onyx ingestion api, the ID is inferred before use if not provided"""
 
     id: str | None = None
-    sections: list[TextSection | ImageSection]
+    sections: Sequence[TextSection | ImageSection | TabularSection]
     source: DocumentSource | None = None
     semantic_identifier: str  # displayed in the UI as the main identifier for the doc
     # TODO(andrei): Ideally we could improve this to where each value is just a
     # list of strings.
     metadata: dict[str, str | list[str]]
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _coerce_metadata_values(cls, v: dict[str, Any]) -> dict[str, str | list[str]]:
+        return {
+            key: [str(item) for item in val] if isinstance(val, list) else str(val)
+            for key, val in v.items()
+        }
 
     # UTC time
     doc_updated_at: datetime | None = None
@@ -191,6 +225,10 @@ class DocumentBase(BaseModel):
     # Parent hierarchy node raw ID - the folder/space/page containing this document
     # If None, document's hierarchy position is unknown or connector doesn't support hierarchy
     parent_hierarchy_raw_node_id: str | None = None
+
+    # Resolved database ID of the parent hierarchy node
+    # Set during docfetching after hierarchy nodes are cached
+    parent_hierarchy_node_id: int | None = None
 
     def get_title_for_document_index(
         self,
@@ -357,12 +395,9 @@ class IndexingDocument(Document):
             )
         else:
             section_len = sum(
-                (
-                    len(section.text)
-                    if isinstance(section, TextSection) and section.text is not None
-                    else 0
-                )
+                len(section.text) if section.text is not None else 0
                 for section in self.sections
+                if isinstance(section, (TextSection, TabularSection))
             )
 
         return title_len + section_len
@@ -371,6 +406,7 @@ class IndexingDocument(Document):
 class SlimDocument(BaseModel):
     id: str
     external_access: ExternalAccess | None = None
+    parent_hierarchy_raw_node_id: str | None = None
 
 
 class HierarchyNode(BaseModel):
@@ -398,9 +434,11 @@ class HierarchyNode(BaseModel):
     # What kind of structural node this is (folder, space, page, etc.)
     node_type: HierarchyNodeType
 
-    # Optional: if this hierarchy node represents a document (e.g., Confluence page),
-    # this is the document ID. Set by the connector when the node IS a document.
-    document_id: str | None = None
+    # If this hierarchy node represents a document (e.g., Confluence page),
+    # The db model stores that doc's document_id. This gets set during docprocessing
+    # after the document row is created. Matching is done by raw_node_id matching document.id.
+    # so, we don't allow connectors to specify this as it would be unused
+    # document_id: str | None = None
 
     # External access information for the node
     external_access: ExternalAccess | None = None
@@ -445,7 +483,7 @@ class ConnectorFailure(BaseModel):
     failed_document: DocumentFailure | None = None
     failed_entity: EntityFailure | None = None
     failure_message: str
-    exception: Exception | None = None
+    exception: Exception | None = Field(default=None, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -467,8 +505,9 @@ class ConnectorStopSignal(Exception):
 
 
 class OnyxMetadata(BaseModel):
-    # Note that doc_id cannot be overriden here as it may cause issues
-    # with the display functionalities in the UI. Ask @chris if clarification is needed.
+    # Careful overriding the document_id, may cause visual issues in the UI.
+    # Kept here for API based use cases mostly
+    document_id: str | None = None
     source_type: DocumentSource | None = None
     link: str | None = None
     file_display_name: str | None = None

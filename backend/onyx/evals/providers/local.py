@@ -73,15 +73,14 @@ class LocalEvalProvider(EvalProvider):
     def eval(
         self,
         task: Callable[[dict[str, Any]], EvalToolResult],
-        configuration: EvalConfigurationOptions,
+        configuration: EvalConfigurationOptions,  # noqa: ARG002
         data: list[dict[str, Any]] | None = None,
         remote_dataset_name: str | None = None,
         multi_turn_task: Callable[[dict[str, Any]], MultiTurnEvalResult] | None = None,
     ) -> EvalationAck:
         if remote_dataset_name is not None:
             raise ValueError(
-                "LocalEvalProvider does not support remote datasets. "
-                "Use --local-data-path with a local JSON file."
+                "LocalEvalProvider does not support remote datasets. Use --local-data-path with a local JSON file."
             )
 
         if data is None:

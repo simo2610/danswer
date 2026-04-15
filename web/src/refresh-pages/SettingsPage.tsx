@@ -2,12 +2,14 @@
 
 import { useRef, useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import * as InputLayouts from "@/layouts/input-layouts";
+import { Section, AttachmentItemLayout } from "@/layouts/general-layouts";
 import {
-  LineItemLayout,
-  Section,
-  AttachmentItemLayout,
-} from "@/layouts/general-layouts";
+  Content,
+  ContentAction,
+  InputHorizontal,
+  InputVertical,
+} from "@opal/layouts";
+import { markdown } from "@opal/utils";
 import { Formik, Form } from "formik";
 import * as Yup from "yup";
 import {
@@ -24,34 +26,35 @@ import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import PasswordInputTypeIn from "@/refresh-components/inputs/PasswordInputTypeIn";
 import InputSelect from "@/refresh-components/inputs/InputSelect";
 import InputTextArea from "@/refresh-components/inputs/InputTextArea";
-import Button from "@/refresh-components/buttons/Button";
 import Switch from "@/refresh-components/inputs/Switch";
-import { useUser } from "@/components/user/UserProvider";
+import { useUser } from "@/providers/UserProvider";
 import { useTheme } from "next-themes";
-import { ThemePreference } from "@/lib/types";
+import { MemoryItem, ThemePreference } from "@/lib/types";
 import useUserPersonalization from "@/hooks/useUserPersonalization";
-import { usePopup } from "@/components/admin/connectors/Popup";
+import { toast } from "@/hooks/useToast";
 import LLMPopover from "@/refresh-components/popovers/LLMPopover";
 import { deleteAllChatSessions } from "@/app/app/services/lib";
 import { useAuthType, useLlmManager } from "@/lib/hooks";
 import useChatSessions from "@/hooks/useChatSessions";
-import { AuthType } from "@/lib/constants";
 import useSWR from "swr";
+import { SWR_KEYS } from "@/lib/swr-keys";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 import useFilter from "@/hooks/useFilter";
 import CreateButton from "@/refresh-components/buttons/CreateButton";
-import IconButton from "@/refresh-components/buttons/IconButton";
+import { Button, Divider } from "@opal/components";
 import useFederatedOAuthStatus from "@/hooks/useFederatedOAuthStatus";
 import useCCPairs from "@/hooks/useCCPairs";
 import { ValidSources } from "@/lib/types";
-import Separator from "@/refresh-components/Separator";
+import { ConnectorCredentialPairStatus } from "@/app/admin/connector/[ccPairId]/types";
 import Text from "@/refresh-components/texts/Text";
 import ConfirmationModalLayout from "@/refresh-components/layouts/ConfirmationModalLayout";
 import Code from "@/refresh-components/Code";
+import CharacterCount from "@/refresh-components/CharacterCount";
 import { InputPrompt } from "@/app/app/interfaces";
 import usePromptShortcuts from "@/hooks/usePromptShortcuts";
 import ColorSwatch from "@/refresh-components/ColorSwatch";
 import EmptyMessage from "@/refresh-components/EmptyMessage";
+import Memories from "@/sections/settings/Memories";
 import { FederatedConnectorOAuthStatus } from "@/components/chat/FederatedOAuthModal";
 import {
   CHAT_BACKGROUND_OPTIONS,
@@ -59,6 +62,11 @@ import {
 } from "@/lib/constants/chatBackgrounds";
 import { SvgCheck } from "@opal/icons";
 import { cn } from "@/lib/utils";
+import { Interactive } from "@opal/core";
+import { usePaidEnterpriseFeaturesEnabled } from "@/components/settings/usePaidEnterpriseFeaturesEnabled";
+import { useSettingsContext } from "@/providers/SettingsProvider";
+import { Tooltip } from "@opal/components";
+import { useCloudSubscription } from "@/hooks/useCloudSubscription";
 
 interface PAT {
   id: number;
@@ -107,8 +115,8 @@ function PATModal({
           <Button onClick={onClose}>Done</Button>
         ) : (
           <Button
-            onClick={onCreate}
             disabled={isCreating || !newTokenName.trim()}
+            onClick={onCreate}
           >
             {isCreating ? "Creating Token..." : "Create Token"}
           </Button>
@@ -119,12 +127,12 @@ function PATModal({
       <Section gap={1}>
         {/* Token Creation*/}
         {!!createdToken?.token ? (
-          <InputLayouts.Vertical title="Token Value">
+          <InputVertical title="Token Value" withLabel>
             <Code>{createdToken.token}</Code>
-          </InputLayouts.Vertical>
+          </InputVertical>
         ) : (
           <>
-            <InputLayouts.Vertical title="Token Name">
+            <InputVertical title="Token Name" withLabel>
               <InputTypeIn
                 placeholder="Name your token"
                 value={newTokenName}
@@ -132,8 +140,8 @@ function PATModal({
                 variant={isCreating ? "disabled" : undefined}
                 autoComplete="new-password"
               />
-            </InputLayouts.Vertical>
-            <InputLayouts.Vertical
+            </InputVertical>
+            <InputVertical
               title="Expires in"
               subDescription={
                 expirationDays === "null"
@@ -150,6 +158,7 @@ function PATModal({
                         .replace(".999Z", " UTC")}`;
                     })()
               }
+              withLabel
             >
               <InputSelect
                 value={expirationDays}
@@ -166,7 +175,7 @@ function PATModal({
                   </InputSelect.Item>
                 </InputSelect.Content>
               </InputSelect>
-            </InputLayouts.Vertical>
+            </InputVertical>
           </>
         )}
       </Section>
@@ -182,7 +191,6 @@ function GeneralSettings() {
     updateUserChatBackground,
   } = useUser();
   const { theme, setTheme, systemTheme } = useTheme();
-  const { popup, setPopup } = usePopup();
   const { refreshChatSessions } = useChatSessions();
   const router = useRouter();
   const pathname = usePathname();
@@ -194,16 +202,8 @@ function GeneralSettings() {
     updatePersonalizationField,
     handleSavePersonalization,
   } = useUserPersonalization(user, updateUserPersonalization, {
-    onSuccess: () =>
-      setPopup({
-        message: "Personalization updated successfully",
-        type: "success",
-      }),
-    onError: () =>
-      setPopup({
-        message: "Failed to update personalization",
-        type: "error",
-      }),
+    onSuccess: () => toast.success("Personalization updated successfully"),
+    onError: () => toast.error("Failed to update personalization"),
   });
 
   // Track initial values to detect changes
@@ -221,29 +221,21 @@ function GeneralSettings() {
     try {
       const response = await deleteAllChatSessions();
       if (response.ok) {
-        setPopup({
-          message: "All your chat sessions have been deleted.",
-          type: "success",
-        });
+        toast.success("All your chat sessions have been deleted.");
         await refreshChatSessions();
         setShowDeleteConfirmation(false);
       } else {
         throw new Error("Failed to delete all chat sessions");
       }
     } catch (error) {
-      setPopup({
-        message: "Failed to delete all chat sessions",
-        type: "error",
-      });
+      toast.error("Failed to delete all chat sessions");
     } finally {
       setIsDeleting(false);
     }
-  }, [pathname, router, setPopup, refreshChatSessions]);
+  }, [pathname, router, refreshChatSessions]);
 
   return (
     <>
-      {popup}
-
       {showDeleteConfirmation && (
         <ConfirmationModalLayout
           icon={SvgTrash}
@@ -251,11 +243,11 @@ function GeneralSettings() {
           onClose={() => setShowDeleteConfirmation(false)}
           submit={
             <Button
-              danger
+              disabled={isDeleting}
+              variant="danger"
               onClick={() => {
                 void handleDeleteAllChats();
               }}
-              disabled={isDeleting}
             >
               {isDeleting ? "Deleting..." : "Delete"}
             </Button>
@@ -273,12 +265,18 @@ function GeneralSettings() {
 
       <Section gap={2}>
         <Section gap={0.75}>
-          <InputLayouts.Label title="Profile" />
+          <Content
+            title="Profile"
+            sizePreset="main-content"
+            variant="section"
+            widthVariant="full"
+          />
           <Card>
-            <InputLayouts.Horizontal
+            <InputHorizontal
               title="Full Name"
               description="We'll display this name in the app."
               center
+              withLabel
             >
               <InputTypeIn
                 placeholder="Your name"
@@ -299,11 +297,12 @@ function GeneralSettings() {
                   }
                 }}
               />
-            </InputLayouts.Horizontal>
-            <InputLayouts.Horizontal
+            </InputHorizontal>
+            <InputHorizontal
               title="Work Role"
               description="Share your role to better tailor responses."
               center
+              withLabel
             >
               <InputTypeIn
                 placeholder="Your role"
@@ -324,17 +323,23 @@ function GeneralSettings() {
                   }
                 }}
               />
-            </InputLayouts.Horizontal>
+            </InputHorizontal>
           </Card>
         </Section>
 
         <Section gap={0.75}>
-          <InputLayouts.Label title="Appearance" />
+          <Content
+            title="Appearance"
+            sizePreset="main-content"
+            variant="section"
+            widthVariant="full"
+          />
           <Card>
-            <InputLayouts.Horizontal
+            <InputHorizontal
               title="Color Mode"
               description="Select your preferred color mode for the UI."
               center
+              withLabel
             >
               <InputSelect
                 value={theme}
@@ -377,14 +382,14 @@ function GeneralSettings() {
                   </InputSelect.Item>
                 </InputSelect.Content>
               </InputSelect>
-            </InputLayouts.Horizontal>
-            <InputLayouts.Vertical title="Chat Background">
+            </InputHorizontal>
+            <InputVertical title="Chat Background">
               <div className="flex flex-wrap gap-2">
                 {CHAT_BACKGROUND_OPTIONS.map((bg) => {
                   const currentBackgroundId =
                     user?.preferences?.chat_background ?? "none";
                   const isSelected = currentBackgroundId === bg.id;
-                  const isNone = bg.url === CHAT_BACKGROUND_NONE;
+                  const isNone = bg.src === CHAT_BACKGROUND_NONE;
 
                   return (
                     <button
@@ -427,30 +432,35 @@ function GeneralSettings() {
                   );
                 })}
               </div>
-            </InputLayouts.Vertical>
+            </InputVertical>
           </Card>
         </Section>
 
-        <Separator noPadding />
+        <Divider paddingParallel="fit" paddingPerpendicular="fit" />
 
         <Section gap={0.75}>
-          <InputLayouts.Label title="Danger Zone" />
+          <Content
+            title="Danger Zone"
+            sizePreset="main-content"
+            variant="section"
+            widthVariant="full"
+          />
           <Card>
-            <InputLayouts.Horizontal
+            <InputHorizontal
               title="Delete All Chats"
               description="Permanently delete all your chat sessions."
               center
             >
               <Button
-                danger
-                secondary
+                variant="danger"
+                prominence="secondary"
                 onClick={() => setShowDeleteConfirmation(true)}
-                leftIcon={SvgTrash}
-                transient={showDeleteConfirmation}
+                icon={SvgTrash}
+                interaction={showDeleteConfirmation ? "hover" : "rest"}
               >
                 Delete All Chats
               </Button>
-            </InputLayouts.Horizontal>
+            </InputHorizontal>
           </Card>
         </Section>
       </Section>
@@ -463,7 +473,6 @@ interface LocalShortcut extends InputPrompt {
 }
 
 function PromptShortcuts() {
-  const { popup, setPopup } = usePopup();
   const { promptShortcuts, isLoading, error, refresh } = usePromptShortcuts();
   const [shortcuts, setShortcuts] = useState<LocalShortcut[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -499,68 +508,55 @@ function PromptShortcuts() {
   // Show error popup if fetch fails
   useEffect(() => {
     if (!error) return;
-    setPopup({ message: "Failed to load shortcuts", type: "error" });
-  }, [error, setPopup]);
-
-  // Auto-add empty row when user starts typing in the last row
-  useEffect(() => {
-    // Skip during initial load - the fetch useEffect handles the initial empty row
-    if (isInitialLoad) return;
-
-    // Only manage new/unsaved rows (isNew: true) - never touch existing shortcuts
-    const newShortcuts = shortcuts.filter((s) => s.isNew);
-    const emptyNewRows = newShortcuts.filter(
-      (s) => !s.prompt.trim() && !s.content.trim()
-    );
-    const emptyNewRowsCount = emptyNewRows.length;
-
-    // If we have no empty new rows, add one
-    if (emptyNewRowsCount === 0) {
-      setShortcuts((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          prompt: "",
-          content: "",
-          active: true,
-          is_public: false,
-          isNew: true,
-        },
-      ]);
-    }
-    // If we have more than one empty new row, keep only one
-    else if (emptyNewRowsCount > 1) {
-      setShortcuts((prev) => {
-        // Keep all existing shortcuts regardless of their state
-        // Keep all new shortcuts that have at least one field filled
-        // Add one empty new shortcut
-        const existingShortcuts = prev.filter((s) => !s.isNew);
-        const filledNewShortcuts = prev.filter(
-          (s) => s.isNew && (s.prompt.trim() || s.content.trim())
-        );
-        return [
-          ...existingShortcuts,
-          ...filledNewShortcuts,
-          {
-            id: Date.now(),
-            prompt: "",
-            content: "",
-            active: true,
-            is_public: false,
-            isNew: true,
-          },
-        ];
-      });
-    }
-  }, [shortcuts, isInitialLoad]);
+    toast.error("Failed to load shortcuts");
+  }, [error]);
 
   const handleUpdateShortcut = useCallback(
     (index: number, field: "prompt" | "content", value: string) => {
-      setShortcuts((prev) =>
-        prev.map((shortcut, i) =>
+      setShortcuts((prev) => {
+        const next = prev.map((shortcut, i) =>
           i === index ? { ...shortcut, [field]: value } : shortcut
-        )
-      );
+        );
+
+        const isEmptyNew = (s: LocalShortcut) =>
+          s.isNew && !s.prompt.trim() && !s.content.trim();
+
+        const emptyCount = next.filter(isEmptyNew).length;
+
+        if (emptyCount === 0) {
+          return [
+            ...next,
+            {
+              id: Date.now(),
+              prompt: "",
+              content: "",
+              active: true,
+              is_public: false,
+              isNew: true,
+            },
+          ];
+        }
+
+        if (emptyCount > 1) {
+          const userRow = next[index];
+          const userRowEmpty = userRow !== undefined && isEmptyNew(userRow);
+          let keepIndex = -1;
+          if (userRowEmpty) {
+            keepIndex = index;
+          } else {
+            for (let i = next.length - 1; i >= 0; i--) {
+              const row = next[i];
+              if (row !== undefined && isEmptyNew(row)) {
+                keepIndex = i;
+                break;
+              }
+            }
+          }
+          return next.filter((s, i) => !isEmptyNew(s) || i === keepIndex);
+        }
+
+        return next;
+      });
     },
     []
   );
@@ -585,25 +581,22 @@ function PromptShortcuts() {
         if (response.ok) {
           setShortcuts((prev) => prev.filter((_, i) => i !== index));
           await refresh();
-          setPopup({ message: "Shortcut deleted", type: "success" });
+          toast.success("Shortcut deleted");
         } else {
           throw new Error("Failed to delete shortcut");
         }
       } catch (error) {
-        setPopup({ message: "Failed to delete shortcut", type: "error" });
+        toast.error("Failed to delete shortcut");
       }
     },
-    [shortcuts, setPopup, refresh]
+    [shortcuts, refresh]
   );
 
   const handleSaveShortcut = useCallback(
     async (index: number) => {
       const shortcut = shortcuts[index];
       if (!shortcut || !shortcut.prompt.trim() || !shortcut.content.trim()) {
-        setPopup({
-          message: "Both shortcut and expansion are required",
-          type: "error",
-        });
+        toast.error("Both shortcut and expansion are required");
         return;
       }
 
@@ -623,7 +616,7 @@ function PromptShortcuts() {
 
           if (response.ok) {
             await refresh();
-            setPopup({ message: "Shortcut created", type: "success" });
+            toast.success("Shortcut created");
           } else {
             throw new Error("Failed to create shortcut");
           }
@@ -642,19 +635,16 @@ function PromptShortcuts() {
 
           if (response.ok) {
             await refresh();
-            setPopup({ message: "Shortcut updated", type: "success" });
+            toast.success("Shortcut updated");
           } else {
             throw new Error("Failed to update shortcut");
           }
         }
       } catch (error) {
-        setPopup({
-          message: "Failed to save shortcut",
-          type: "error",
-        });
+        toast.error("Failed to save shortcut");
       }
     },
-    [shortcuts, setPopup, refresh]
+    [shortcuts, refresh]
   );
 
   const handleBlurShortcut = useCallback(
@@ -677,8 +667,6 @@ function PromptShortcuts() {
 
   return (
     <>
-      {popup}
-
       {shortcuts.length > 0 && (
         <Section gap={0.75}>
           {shortcuts.map((shortcut, index) => {
@@ -718,11 +706,11 @@ function PromptShortcuts() {
                   }
                 />
                 <Section>
-                  <IconButton
+                  <Button
+                    disabled={(shortcut.isNew && isEmpty) || shortcut.is_public}
                     icon={SvgMinusCircle}
                     onClick={() => void handleRemoveShortcut(index)}
-                    tertiary
-                    disabled={(shortcut.isNew && isEmpty) || shortcut.is_public}
+                    prominence="tertiary"
                     aria-label="Remove shortcut"
                     tooltip={
                       shortcut.is_public
@@ -761,179 +749,6 @@ function PromptShortcuts() {
   );
 }
 
-interface Memory {
-  id: number;
-  content: string;
-}
-
-interface LocalMemory extends Memory {
-  isNew: boolean;
-}
-
-interface MemoriesProps {
-  memories: string[];
-  onSaveMemories: (memories: string[]) => Promise<boolean>;
-}
-
-function Memories({ memories, onSaveMemories }: MemoriesProps) {
-  const { popup, setPopup } = usePopup();
-  const [localMemories, setLocalMemories] = useState<LocalMemory[]>([]);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const initialMemoriesRef = useRef<string[]>([]);
-
-  // Initialize local memories from props
-  useEffect(() => {
-    // Convert string[] to LocalMemory[] with isNew: false for existing items
-    const existingMemories: LocalMemory[] = memories.map((content, index) => ({
-      id: index + 1,
-      content,
-      isNew: false,
-    }));
-
-    // Always ensure there's at least one empty row
-    setLocalMemories([
-      ...existingMemories,
-      { id: Date.now(), content: "", isNew: true },
-    ]);
-    initialMemoriesRef.current = memories;
-    setIsInitialLoad(false);
-  }, [memories]);
-
-  // Auto-add empty row when user starts typing in the last row
-  useEffect(() => {
-    if (isInitialLoad) return;
-
-    // Only manage new/unsaved rows (isNew: true)
-    const newMemories = localMemories.filter((m) => m.isNew);
-    const emptyNewRows = newMemories.filter((m) => !m.content.trim());
-    const emptyNewRowsCount = emptyNewRows.length;
-
-    // If we have no empty new rows, add one
-    if (emptyNewRowsCount === 0) {
-      setLocalMemories((prev) => [
-        ...prev,
-        { id: Date.now(), content: "", isNew: true },
-      ]);
-    }
-    // If we have more than one empty new row, keep only one
-    else if (emptyNewRowsCount > 1) {
-      setLocalMemories((prev) => {
-        const existingMemories = prev.filter((m) => !m.isNew);
-        const filledNewMemories = prev.filter(
-          (m) => m.isNew && m.content.trim()
-        );
-        return [
-          ...existingMemories,
-          ...filledNewMemories,
-          { id: Date.now(), content: "", isNew: true },
-        ];
-      });
-    }
-  }, [localMemories, isInitialLoad]);
-
-  const handleUpdateMemory = useCallback((index: number, value: string) => {
-    setLocalMemories((prev) =>
-      prev.map((memory, i) =>
-        i === index ? { ...memory, content: value } : memory
-      )
-    );
-  }, []);
-
-  const handleRemoveMemory = useCallback(
-    async (index: number) => {
-      const memory = localMemories[index];
-      if (!memory) return;
-
-      // If it's a new memory (isNew: true), just remove from state
-      if (memory.isNew) {
-        setLocalMemories((prev) => prev.filter((_, i) => i !== index));
-        return;
-      }
-
-      // For existing memories, remove and save
-      const newMemories = localMemories
-        .filter((_, i) => i !== index)
-        .filter((m) => !m.isNew || m.content.trim())
-        .map((m) => m.content);
-
-      const success = await onSaveMemories(newMemories);
-      if (success) {
-        setPopup({ message: "Memory deleted", type: "success" });
-      } else {
-        setPopup({ message: "Failed to delete memory", type: "error" });
-      }
-    },
-    [localMemories, onSaveMemories, setPopup]
-  );
-
-  const handleBlurMemory = useCallback(
-    async (index: number) => {
-      const memory = localMemories[index];
-      if (!memory || !memory.content.trim()) return;
-
-      // Build the new memories array from current state
-      const newMemories = localMemories
-        .filter((m) => m.content.trim())
-        .map((m) => m.content);
-
-      // Check if anything actually changed
-      const memoriesChanged =
-        JSON.stringify(newMemories) !==
-        JSON.stringify(initialMemoriesRef.current);
-
-      if (!memoriesChanged) return;
-
-      const success = await onSaveMemories(newMemories);
-      if (success) {
-        initialMemoriesRef.current = newMemories;
-        setPopup({ message: "Memory saved", type: "success" });
-      } else {
-        setPopup({ message: "Failed to save memory", type: "error" });
-      }
-    },
-    [localMemories, onSaveMemories, setPopup]
-  );
-
-  return (
-    <>
-      {popup}
-
-      {localMemories.length > 0 && (
-        <Section gap={0.5}>
-          {localMemories.map((memory, index) => {
-            const isEmpty = !memory.content.trim();
-            const isExisting = !memory.isNew;
-
-            return (
-              <Section
-                key={memory.id}
-                flexDirection="row"
-                alignItems="start"
-                gap={0.5}
-              >
-                <InputTextArea
-                  placeholder="Type or paste in a personal note or memory"
-                  value={memory.content}
-                  onChange={(e) => handleUpdateMemory(index, e.target.value)}
-                  onBlur={() => void handleBlurMemory(index)}
-                  rows={2}
-                />
-                <IconButton
-                  icon={SvgMinusCircle}
-                  onClick={() => void handleRemoveMemory(index)}
-                  tertiary
-                  disabled={isEmpty && !isExisting}
-                  aria-label="Remove memory"
-                />
-              </Section>
-            );
-          })}
-        </Section>
-      )}
-    </>
-  );
-}
-
 function ChatPreferencesSettings() {
   const {
     user,
@@ -941,19 +756,69 @@ function ChatPreferencesSettings() {
     updateUserAutoScroll,
     updateUserShortcuts,
     updateUserDefaultModel,
+    updateUserDefaultAppMode,
+    updateUserVoiceSettings,
   } = useUser();
+  const isPaidEnterpriseFeaturesEnabled = usePaidEnterpriseFeaturesEnabled();
+  const settings = useSettingsContext();
+  const { isSearchModeAvailable: searchUiEnabled } = settings;
   const llmManager = useLlmManager();
 
   const {
     personalizationValues,
     toggleUseMemories,
+    toggleEnableMemoryTool,
+    updateUserPreferences,
     handleSavePersonalization,
-  } = useUserPersonalization(user, updateUserPersonalization, {});
+  } = useUserPersonalization(user, updateUserPersonalization, {
+    onSuccess: () => toast.success("Preferences saved"),
+    onError: () => toast.error("Failed to save preferences"),
+  });
+  const [draftVoicePlaybackSpeed, setDraftVoicePlaybackSpeed] = useState(
+    user?.preferences.voice_playback_speed ?? 1
+  );
+
+  useEffect(() => {
+    setDraftVoicePlaybackSpeed(user?.preferences.voice_playback_speed ?? 1);
+  }, [user?.preferences.voice_playback_speed]);
+
+  const saveVoiceSettings = useCallback(
+    async (settings: {
+      auto_send?: boolean;
+      auto_playback?: boolean;
+      playback_speed?: number;
+    }) => {
+      try {
+        await updateUserVoiceSettings(settings);
+        toast.success("Preferences saved");
+      } catch {
+        toast.error("Failed to save preferences");
+      }
+    },
+    [updateUserVoiceSettings]
+  );
+
+  const commitVoicePlaybackSpeed = useCallback(() => {
+    const currentSpeed = user?.preferences.voice_playback_speed ?? 1;
+    if (Math.abs(currentSpeed - draftVoicePlaybackSpeed) < 0.001) {
+      return;
+    }
+    void saveVoiceSettings({
+      playback_speed: draftVoicePlaybackSpeed,
+    });
+  }, [
+    draftVoicePlaybackSpeed,
+    saveVoiceSettings,
+    user?.preferences.voice_playback_speed,
+  ]);
 
   // Wrapper to save memories and return success/failure
   const handleSaveMemories = useCallback(
-    async (newMemories: string[]): Promise<boolean> => {
-      const result = await handleSavePersonalization({ memories: newMemories });
+    async (newMemories: MemoryItem[]): Promise<boolean> => {
+      const result = await handleSavePersonalization(
+        { memories: newMemories },
+        true
+      );
       return !!result;
     },
     [handleSavePersonalization]
@@ -962,11 +827,17 @@ function ChatPreferencesSettings() {
   return (
     <Section gap={2}>
       <Section gap={0.75}>
-        <InputLayouts.Label title="Chats" />
+        <Content
+          title="Chats"
+          sizePreset="main-content"
+          variant="section"
+          widthVariant="full"
+        />
         <Card>
-          <InputLayouts.Horizontal
+          <InputHorizontal
             title="Default Model"
             description="This model will be used by Onyx by default in your chats."
+            withLabel
           >
             <LLMPopover
               llmManager={llmManager}
@@ -974,11 +845,12 @@ function ChatPreferencesSettings() {
                 void updateUserDefaultModel(selected);
               }}
             />
-          </InputLayouts.Horizontal>
+          </InputHorizontal>
 
-          <InputLayouts.Horizontal
+          <InputHorizontal
             title="Chat Auto-scroll"
             description="Automatically scroll to new content as chat generates response."
+            withLabel
           >
             <Switch
               checked={user?.preferences.auto_scroll}
@@ -986,35 +858,75 @@ function ChatPreferencesSettings() {
                 updateUserAutoScroll(checked);
               }}
             />
-          </InputLayouts.Horizontal>
+          </InputHorizontal>
+
+          {isPaidEnterpriseFeaturesEnabled && (
+            <Tooltip
+              tooltip={
+                searchUiEnabled
+                  ? undefined
+                  : "Search UI is disabled and can only be enabled by an admin."
+              }
+              side="top"
+            >
+              <InputHorizontal
+                title="Default App Mode"
+                description="Choose whether new sessions start in Search or Chat mode."
+                center
+                disabled={!searchUiEnabled}
+                withLabel
+              >
+                <InputSelect
+                  value={user?.preferences.default_app_mode ?? "CHAT"}
+                  onValueChange={(value) => {
+                    void updateUserDefaultAppMode(value as "CHAT" | "SEARCH");
+                  }}
+                  disabled={!searchUiEnabled}
+                >
+                  <InputSelect.Trigger />
+                  <InputSelect.Content>
+                    <InputSelect.Item value="CHAT">Chat</InputSelect.Item>
+                    <InputSelect.Item value="SEARCH">Search</InputSelect.Item>
+                  </InputSelect.Content>
+                </InputSelect>
+              </InputHorizontal>
+            </Tooltip>
+          )}
         </Card>
       </Section>
 
       <Section gap={0.75}>
-        <InputLayouts.Label title="Prompt Shortcuts" />
+        <InputVertical
+          title="Personal Preferences"
+          description="Provide your custom preferences in natural language."
+          withLabel
+        >
+          <InputTextArea
+            placeholder="Describe how you want the system to behave and the tone it should use."
+            value={personalizationValues.user_preferences}
+            onChange={(e) => updateUserPreferences(e.target.value)}
+            onBlur={() => void handleSavePersonalization()}
+            rows={4}
+            maxRows={10}
+            autoResize
+            maxLength={500}
+          />
+          <CharacterCount
+            value={personalizationValues.user_preferences || ""}
+            limit={500}
+          />
+        </InputVertical>
+        <Content
+          title="Memory"
+          sizePreset="main-content"
+          variant="section"
+          widthVariant="full"
+        />
         <Card>
-          <InputLayouts.Horizontal
-            title="Use Prompt Shortcuts"
-            description="Enable shortcuts to quickly insert common prompts."
-          >
-            <Switch
-              checked={user?.preferences?.shortcut_enabled}
-              onCheckedChange={(checked) => {
-                updateUserShortcuts(checked);
-              }}
-            />
-          </InputLayouts.Horizontal>
-
-          {user?.preferences?.shortcut_enabled && <PromptShortcuts />}
-        </Card>
-      </Section>
-
-      <Section gap={0.75}>
-        <InputLayouts.Label title="Personalization" />
-        <Card>
-          <InputLayouts.Horizontal
+          <InputHorizontal
             title="Reference Stored Memories"
             description="Let Onyx reference stored memories in chats."
+            withLabel
           >
             <Switch
               checked={personalizationValues.use_memories}
@@ -1023,14 +935,122 @@ function ChatPreferencesSettings() {
                 void handleSavePersonalization({ use_memories: checked });
               }}
             />
-          </InputLayouts.Horizontal>
+          </InputHorizontal>
+          <InputHorizontal
+            title="Update Memories"
+            description="Let Onyx generate and update stored memories."
+            withLabel
+          >
+            <Switch
+              checked={personalizationValues.enable_memory_tool}
+              onCheckedChange={(checked) => {
+                toggleEnableMemoryTool(checked);
+                void handleSavePersonalization({
+                  enable_memory_tool: checked,
+                });
+              }}
+            />
+          </InputHorizontal>
 
-          {personalizationValues.use_memories && (
+          {(personalizationValues.use_memories ||
+            personalizationValues.enable_memory_tool ||
+            personalizationValues.memories.length > 0) && (
             <Memories
               memories={personalizationValues.memories}
               onSaveMemories={handleSaveMemories}
             />
           )}
+        </Card>
+      </Section>
+
+      <Section gap={0.75}>
+        <Content
+          title="Prompt Shortcuts"
+          sizePreset="main-content"
+          variant="section"
+          widthVariant="full"
+        />
+        <Card>
+          <InputHorizontal
+            title="Use Prompt Shortcuts"
+            description="Enable shortcuts to quickly insert common prompts."
+            withLabel
+          >
+            <Switch
+              checked={user?.preferences?.shortcut_enabled}
+              onCheckedChange={(checked) => {
+                updateUserShortcuts(checked);
+              }}
+            />
+          </InputHorizontal>
+
+          {user?.preferences?.shortcut_enabled && <PromptShortcuts />}
+        </Card>
+      </Section>
+
+      <Section gap={0.75}>
+        <Content
+          title="Voice"
+          sizePreset="main-content"
+          variant="section"
+          widthVariant="full"
+        />
+        <Card>
+          <InputHorizontal
+            title="Auto-Send on Pause"
+            description="Automatically send voice input when you stop speaking."
+            withLabel
+          >
+            <Switch
+              checked={user?.preferences.voice_auto_send ?? false}
+              onCheckedChange={(checked) => {
+                void saveVoiceSettings({ auto_send: checked });
+              }}
+            />
+          </InputHorizontal>
+
+          <InputHorizontal
+            title="Auto-Playback"
+            description="Automatically play voice responses."
+            withLabel
+          >
+            <Switch
+              checked={user?.preferences.voice_auto_playback ?? false}
+              onCheckedChange={(checked) => {
+                void saveVoiceSettings({ auto_playback: checked });
+              }}
+            />
+          </InputHorizontal>
+
+          <InputHorizontal
+            title="Playback Speed"
+            description="Adjust the speed of voice playback."
+            withLabel
+          >
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.1"
+                value={draftVoicePlaybackSpeed}
+                onChange={(e) => {
+                  setDraftVoicePlaybackSpeed(parseFloat(e.target.value));
+                }}
+                onMouseUp={commitVoicePlaybackSpeed}
+                onTouchEnd={commitVoicePlaybackSpeed}
+                onKeyUp={(e) => {
+                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                    commitVoicePlaybackSpeed();
+                  }
+                }}
+                className="w-24 h-2 rounded-lg appearance-none cursor-pointer bg-background-neutral-02"
+              />
+              <span className="text-sm text-text-02 w-10">
+                {draftVoicePlaybackSpeed.toFixed(1)}x
+              </span>
+            </div>
+          </InputHorizontal>
         </Card>
       </Section>
     </Section>
@@ -1039,7 +1059,6 @@ function ChatPreferencesSettings() {
 
 function AccountsAccessSettings() {
   const { user, authTypeMetadata } = useUser();
-  const { popup, setPopup } = usePopup();
   const authType = useAuthType();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
@@ -1065,8 +1084,10 @@ function AccountsAccessSettings() {
     useState<CreatedTokenState | null>(null);
   const [tokenToDelete, setTokenToDelete] = useState<PAT | null>(null);
 
+  const canCreateTokens = useCloudSubscription();
+
   const showPasswordSection = Boolean(user?.password_configured);
-  const showTokensSection = authType && authType !== AuthType.DISABLED;
+  const showTokensSection = authType !== null;
 
   // Fetch PATs with SWR
   const {
@@ -1075,7 +1096,7 @@ function AccountsAccessSettings() {
     error,
     isLoading,
   } = useSWR<PAT[]>(
-    showTokensSection ? "/api/user/pats" : null,
+    showTokensSection ? SWR_KEYS.userPats : null,
     errorHandlingFetcher,
     {
       revalidateOnFocus: true,
@@ -1094,13 +1115,13 @@ function AccountsAccessSettings() {
   // Show error popup if SWR fetch fails
   useEffect(() => {
     if (error) {
-      setPopup({ message: "Failed to load tokens", type: "error" });
+      toast.error("Failed to load tokens");
     }
-  }, [error, setPopup]);
+  }, [error]);
 
   const createPAT = useCallback(async () => {
     if (!newTokenName.trim()) {
-      setPopup({ message: "Token name is required", type: "error" });
+      toast.error("Token name is required");
       return;
     }
 
@@ -1124,22 +1145,19 @@ function AccountsAccessSettings() {
           token: data.token,
           name: newTokenName,
         });
-        setPopup({ message: "Token created successfully", type: "success" });
+        toast.success("Token created successfully");
         // Revalidate the token list
         await mutate();
       } else {
         const errorData = await response.json();
-        setPopup({
-          message: errorData.detail || "Failed to create token",
-          type: "error",
-        });
+        toast.error(errorData.detail || "Failed to create token");
       }
     } catch (error) {
-      setPopup({ message: "Network error creating token", type: "error" });
+      toast.error("Network error creating token");
     } finally {
       setIsCreating(false);
     }
-  }, [newTokenName, expirationDays, mutate, setPopup]);
+  }, [newTokenName, expirationDays, mutate]);
 
   const deletePAT = useCallback(
     async (patId: number) => {
@@ -1154,16 +1172,16 @@ function AccountsAccessSettings() {
             setNewlyCreatedToken(null);
           }
           await mutate();
-          setPopup({ message: "Token deleted successfully", type: "success" });
+          toast.success("Token deleted successfully");
           setTokenToDelete(null);
         } else {
-          setPopup({ message: "Failed to delete token", type: "error" });
+          toast.error("Failed to delete token");
         }
       } catch (error) {
-        setPopup({ message: "Network error deleting token", type: "error" });
+        toast.error("Network error deleting token");
       }
     },
-    [newlyCreatedToken, mutate, setPopup]
+    [newlyCreatedToken, mutate]
   );
 
   const handleChangePassword = useCallback(
@@ -1185,32 +1203,21 @@ function AccountsAccessSettings() {
         });
 
         if (response.ok) {
-          setPopup({
-            type: "success",
-            message: "Password updated successfully",
-          });
+          toast.success("Password updated successfully");
           setShowPasswordModal(false);
         } else {
           const errorData = await response.json();
-          setPopup({
-            message: errorData.detail || "Failed to change password",
-            type: "error",
-          });
+          toast.error(errorData.detail || "Failed to change password");
         }
       } catch (error) {
-        setPopup({
-          message: "An error occurred while changing the password",
-          type: "error",
-        });
+        toast.error("An error occurred while changing the password");
       }
     },
-    [setPopup]
+    []
   );
 
   return (
     <>
-      {popup}
-
       {showCreateModal && (
         <PATModal
           isCreating={isCreating}
@@ -1235,7 +1242,10 @@ function AccountsAccessSettings() {
           title="Revoke Access Token"
           onClose={() => setTokenToDelete(null)}
           submit={
-            <Button danger onClick={() => deletePAT(tokenToDelete.id)}>
+            <Button
+              variant="danger"
+              onClick={() => deletePAT(tokenToDelete.id)}
+            >
               Revoke
             </Button>
           }
@@ -1300,8 +1310,8 @@ function AccountsAccessSettings() {
               >
                 <Section gap={1}>
                   <Section gap={0.25} alignItems="start">
-                    <InputLayouts.Vertical
-                      name="currentPassword"
+                    <InputVertical
+                      withLabel="currentPassword"
                       title="Current Password"
                     >
                       <PasswordInputTypeIn
@@ -1313,13 +1323,10 @@ function AccountsAccessSettings() {
                           touched.currentPassword && !!errors.currentPassword
                         }
                       />
-                    </InputLayouts.Vertical>
+                    </InputVertical>
                   </Section>
                   <Section gap={0.25} alignItems="start">
-                    <InputLayouts.Vertical
-                      name="newPassword"
-                      title="New Password"
-                    >
+                    <InputVertical withLabel="newPassword" title="New Password">
                       <PasswordInputTypeIn
                         name="newPassword"
                         value={values.newPassword}
@@ -1327,11 +1334,11 @@ function AccountsAccessSettings() {
                         onBlur={handleBlur}
                         error={touched.newPassword && !!errors.newPassword}
                       />
-                    </InputLayouts.Vertical>
+                    </InputVertical>
                   </Section>
                   <Section gap={0.25} alignItems="start">
-                    <InputLayouts.Vertical
-                      name="confirmPassword"
+                    <InputVertical
+                      withLabel="confirmPassword"
                       title="Confirm New Password"
                     >
                       <PasswordInputTypeIn
@@ -1343,7 +1350,7 @@ function AccountsAccessSettings() {
                           touched.confirmPassword && !!errors.confirmPassword
                         }
                       />
-                    </InputLayouts.Vertical>
+                    </InputVertical>
                   </Section>
                 </Section>
               </ConfirmationModalLayout>
@@ -1354,119 +1361,146 @@ function AccountsAccessSettings() {
 
       <Section gap={2}>
         <Section gap={0.75}>
-          <InputLayouts.Label title="Accounts" />
+          <Content
+            title="Accounts"
+            sizePreset="main-content"
+            variant="section"
+            widthVariant="full"
+          />
           <Card>
-            <InputLayouts.Horizontal
+            <InputHorizontal
               title="Email"
               description="Your account email address."
               center
-              cursorPointer={false}
             >
               <Text>{user?.email ?? "anonymous"}</Text>
-            </InputLayouts.Horizontal>
+            </InputHorizontal>
 
             {showPasswordSection && (
-              <InputLayouts.Horizontal
+              <InputHorizontal
                 title="Password"
                 description="Update your account password."
                 center
               >
                 <Button
-                  secondary
-                  leftIcon={SvgLock}
+                  prominence="secondary"
+                  icon={SvgLock}
                   onClick={() => setShowPasswordModal(true)}
-                  transient={showPasswordModal}
+                  interaction={showPasswordModal ? "hover" : "rest"}
                 >
                   Change Password
                 </Button>
-              </InputLayouts.Horizontal>
+              </InputHorizontal>
             )}
           </Card>
         </Section>
 
         {showTokensSection && (
           <Section gap={0.75}>
-            <InputLayouts.Label title="Access Tokens" />
-            <Card padding={0.25}>
-              <Section gap={0}>
-                {/* Header with search/empty state and create button */}
-                <Section flexDirection="row" padding={0.25} gap={0.5}>
-                  {pats.length === 0 ? (
-                    <Section padding={0.5} alignItems="start">
-                      <Text as="span" text03 secondaryBody>
-                        {isLoading
-                          ? "Loading tokens..."
-                          : "No access tokens created."}
-                      </Text>
-                    </Section>
-                  ) : (
-                    <InputTypeIn
-                      placeholder="Search..."
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      leftSearchIcon
-                      variant="internal"
-                    />
-                  )}
-                  <CreateButton
-                    onClick={() => setShowCreateModal(true)}
-                    secondary={false}
-                    internal
-                    transient={showCreateModal}
-                    rightIcon
-                  >
-                    New Access Token
-                  </CreateButton>
-                </Section>
+            <Content
+              title="Access Tokens"
+              sizePreset="main-content"
+              variant="section"
+              widthVariant="full"
+            />
+            {canCreateTokens ? (
+              <Card padding={0.25}>
+                <Section gap={0}>
+                  <Section flexDirection="row" padding={0.25} gap={0.5}>
+                    {pats.length === 0 ? (
+                      <Section padding={0.5} alignItems="start">
+                        <Text text03 secondaryBody>
+                          {isLoading
+                            ? "Loading tokens..."
+                            : "No access tokens created."}
+                        </Text>
+                      </Section>
+                    ) : (
+                      <InputTypeIn
+                        placeholder="Search..."
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        leftSearchIcon
+                        variant="internal"
+                      />
+                    )}
+                    <CreateButton
+                      onClick={() => setShowCreateModal(true)}
+                      secondary={false}
+                      internal
+                      transient={showCreateModal}
+                      rightIcon
+                    >
+                      New Access Token
+                    </CreateButton>
+                  </Section>
 
-                {/* Token List */}
-                <Section gap={0.25}>
-                  {filteredPats.map((pat) => {
-                    const now = new Date();
-                    const createdDate = new Date(pat.created_at);
-                    const daysSinceCreation = Math.floor(
-                      (now.getTime() - createdDate.getTime()) /
-                        (1000 * 60 * 60 * 24)
-                    );
-
-                    let expiryText = "Never expires";
-                    if (pat.expires_at) {
-                      const expiresDate = new Date(pat.expires_at);
-                      const daysUntilExpiry = Math.ceil(
-                        (expiresDate.getTime() - now.getTime()) /
+                  <Section gap={0.25}>
+                    {filteredPats.map((pat) => {
+                      const now = new Date();
+                      const createdDate = new Date(pat.created_at);
+                      const daysSinceCreation = Math.floor(
+                        (now.getTime() - createdDate.getTime()) /
                           (1000 * 60 * 60 * 24)
                       );
-                      expiryText = `Expires in ${daysUntilExpiry} day${
-                        daysUntilExpiry === 1 ? "" : "s"
-                      }`;
-                    }
 
-                    const middleText = `Created ${daysSinceCreation} day${
-                      daysSinceCreation === 1 ? "" : "s"
-                    } ago - ${expiryText}`;
+                      let expiryText = "Never expires";
+                      if (pat.expires_at) {
+                        const expiresDate = new Date(pat.expires_at);
+                        const daysUntilExpiry = Math.ceil(
+                          (expiresDate.getTime() - now.getTime()) /
+                            (1000 * 60 * 60 * 24)
+                        );
+                        expiryText = `Expires in ${daysUntilExpiry} day${
+                          daysUntilExpiry === 1 ? "" : "s"
+                        }`;
+                      }
 
-                    return (
-                      <AttachmentItemLayout
-                        key={pat.id}
-                        icon={SvgKey}
-                        title={pat.name}
-                        description={pat.token_display}
-                        middleText={middleText}
-                        rightChildren={
-                          <IconButton
-                            icon={SvgTrash}
-                            onClick={() => setTokenToDelete(pat)}
-                            internal
-                            aria-label={`Delete token ${pat.name}`}
-                          />
-                        }
-                        variant="secondary"
-                      />
-                    );
-                  })}
+                      const middleText = `Created ${daysSinceCreation} day${
+                        daysSinceCreation === 1 ? "" : "s"
+                      } ago - ${expiryText}`;
+
+                      return (
+                        <Interactive.Container
+                          key={pat.id}
+                          heightVariant="fit"
+                          widthVariant="full"
+                        >
+                          <div className="w-full bg-background-tint-01">
+                            <AttachmentItemLayout
+                              icon={SvgKey}
+                              title={pat.name}
+                              description={pat.token_display}
+                              middleText={middleText}
+                              rightChildren={
+                                <Button
+                                  icon={SvgTrash}
+                                  onClick={() => setTokenToDelete(pat)}
+                                  prominence="tertiary"
+                                  size="sm"
+                                  aria-label={`Delete token ${pat.name}`}
+                                />
+                              }
+                            />
+                          </div>
+                        </Interactive.Container>
+                      );
+                    })}
+                  </Section>
                 </Section>
-              </Section>
-            </Card>
+              </Card>
+            ) : (
+              <Card>
+                <Section flexDirection="row" justifyContent="between">
+                  <Text text03 secondaryBody>
+                    Access tokens require an active paid subscription.
+                  </Text>
+                  <Button prominence="secondary" href="/admin/billing">
+                    Upgrade Plan
+                  </Button>
+                </Section>
+              </Card>
+            )}
           </Section>
         )}
       </Section>
@@ -1476,18 +1510,20 @@ function AccountsAccessSettings() {
 
 interface IndexedConnectorCardProps {
   source: ValidSources;
-  count: number;
+  isActive: boolean;
 }
 
-function IndexedConnectorCard({ source, count }: IndexedConnectorCardProps) {
+function IndexedConnectorCard({ source, isActive }: IndexedConnectorCardProps) {
   const sourceMetadata = getSourceMetadata(source);
 
   return (
     <Card>
-      <LineItemLayout
+      <Content
         icon={sourceMetadata.icon}
         title={sourceMetadata.displayName}
-        description={count > 1 ? `${count} connectors active` : "Connected"}
+        description={isActive ? "Connected" : "Paused"}
+        sizePreset="main-content"
+        variant="section"
       />
     </Card>
   );
@@ -1502,7 +1538,6 @@ function FederatedConnectorCard({
   connector,
   onDisconnectSuccess,
 }: FederatedConnectorCardProps) {
-  const { popup, setPopup } = usePopup();
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [showDisconnectConfirmation, setShowDisconnectConfirmation] =
     useState(false);
@@ -1517,39 +1552,31 @@ function FederatedConnectorCard({
       );
 
       if (response.ok) {
-        setPopup({
-          message: "Disconnected successfully",
-          type: "success",
-        });
+        toast.success("Disconnected successfully");
         setShowDisconnectConfirmation(false);
         onDisconnectSuccess();
       } else {
         throw new Error("Failed to disconnect");
       }
     } catch (error) {
-      setPopup({
-        message: "Failed to disconnect",
-        type: "error",
-      });
+      toast.error("Failed to disconnect");
     } finally {
       setIsDisconnecting(false);
     }
-  }, [connector.federated_connector_id, onDisconnectSuccess, setPopup]);
+  }, [connector.federated_connector_id, onDisconnectSuccess]);
 
   return (
     <>
-      {popup}
-
       {showDisconnectConfirmation && (
         <ConfirmationModalLayout
           icon={SvgUnplug}
-          title={`Disconnect ${sourceMetadata.displayName}`}
+          title={markdown(`Disconnect *${sourceMetadata.displayName}*`)}
           onClose={() => setShowDisconnectConfirmation(false)}
           submit={
             <Button
-              danger
-              onClick={() => void handleDisconnect()}
               disabled={isDisconnecting}
+              variant="danger"
+              onClick={() => void handleDisconnect()}
             >
               {isDisconnecting ? "Disconnecting..." : "Disconnect"}
             </Button>
@@ -1570,32 +1597,35 @@ function FederatedConnectorCard({
       )}
 
       <Card padding={0.5}>
-        <LineItemLayout
+        <ContentAction
           icon={sourceMetadata.icon}
           title={sourceMetadata.displayName}
           description={
             connector.has_oauth_token ? "Connected" : "Not connected"
           }
+          sizePreset="main-content"
+          variant="section"
+          paddingVariant="sm"
           rightChildren={
             connector.has_oauth_token ? (
-              <IconButton
-                icon={SvgUnplug}
-                internal
-                onClick={() => setShowDisconnectConfirmation(true)}
+              <Button
                 disabled={isDisconnecting}
+                icon={SvgUnplug}
+                prominence="tertiary"
+                size="sm"
+                onClick={() => setShowDisconnectConfirmation(true)}
               />
             ) : connector.authorize_url ? (
               <Button
+                prominence="internal"
                 href={connector.authorize_url}
                 target="_blank"
-                internal
                 rightIcon={SvgArrowExchange}
               >
                 Connect
               </Button>
             ) : undefined
           }
-          reducedPadding
         />
       </Card>
     </>
@@ -1609,19 +1639,23 @@ function ConnectorsSettings() {
   } = useFederatedOAuthStatus();
   const { ccPairs } = useCCPairs();
 
+  const ACTIVE_STATUSES: ConnectorCredentialPairStatus[] = [
+    ConnectorCredentialPairStatus.ACTIVE,
+    ConnectorCredentialPairStatus.SCHEDULED,
+    ConnectorCredentialPairStatus.INITIAL_INDEXING,
+  ];
+
   // Group indexed connectors by source
   const groupedConnectors = ccPairs.reduce(
     (acc, ccPair) => {
       if (!acc[ccPair.source]) {
         acc[ccPair.source] = {
           source: ccPair.source,
-          count: 0,
-          hasSuccessfulRun: false,
+          hasActiveConnector: false,
         };
       }
-      acc[ccPair.source]!.count++;
-      if (ccPair.has_successful_run) {
-        acc[ccPair.source]!.hasSuccessfulRun = true;
+      if (ACTIVE_STATUSES.includes(ccPair.status)) {
+        acc[ccPair.source]!.hasActiveConnector = true;
       }
       return acc;
     },
@@ -1629,8 +1663,7 @@ function ConnectorsSettings() {
       string,
       {
         source: ValidSources;
-        count: number;
-        hasSuccessfulRun: boolean;
+        hasActiveConnector: boolean;
       }
     >
   );
@@ -1641,7 +1674,12 @@ function ConnectorsSettings() {
   return (
     <Section gap={2}>
       <Section gap={0.75} justifyContent="start">
-        <InputLayouts.Label title="Connectors" />
+        <Content
+          title="Connectors"
+          sizePreset="main-content"
+          variant="section"
+          widthVariant="full"
+        />
         {hasConnectors ? (
           <>
             {/* Indexed Connectors */}
@@ -1649,7 +1687,7 @@ function ConnectorsSettings() {
               <IndexedConnectorCard
                 key={connector.source}
                 source={connector.source}
-                count={connector.count}
+                isActive={connector.hasActiveConnector}
               />
             ))}
 

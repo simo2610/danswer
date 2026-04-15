@@ -88,14 +88,12 @@ WEB_CONNECTOR_MAX_SCROLL_ATTEMPTS = 20
 IFRAME_TEXT_LENGTH_THRESHOLD = 700
 # Message indicating JavaScript is disabled, which often appears when scraping fails
 JAVASCRIPT_DISABLED_MESSAGE = "You have JavaScript disabled in your browser"
-# Grace period after page navigation to allow bot-detection challenges to complete
-BOT_DETECTION_GRACE_PERIOD_MS = 5000
+# Grace period after page navigation to allow bot-detection challenges
+# and SPA content rendering to complete
+PAGE_RENDER_TIMEOUT_MS = 5000
 
 # Define common headers that mimic a real browser
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-)
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 DEFAULT_HEADERS = {
     "User-Agent": DEFAULT_USER_AGENT,
     "Accept": (
@@ -450,7 +448,7 @@ class WebConnector(LoadConnector):
         mintlify_cleanup: bool = True,  # Mostly ok to apply to other websites as well
         batch_size: int = INDEX_BATCH_SIZE,
         scroll_before_scraping: bool = False,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002
     ) -> None:
         self.mintlify_cleanup = mintlify_cleanup
         self.batch_size = batch_size
@@ -476,14 +474,13 @@ class WebConnector(LoadConnector):
                 )
 
             logger.warning(
-                "This is not a UI supported Web Connector flow, "
-                "are you sure you want to do this?"
+                "This is not a UI supported Web Connector flow, are you sure you want to do this?"
             )
             self.to_visit_list = _read_urls_file(base_url)
 
         else:
             raise ValueError(
-                "Invalid Web Connector Config, must choose a valid type between: " ""
+                "Invalid Web Connector Config, must choose a valid type between: "
             )
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
@@ -551,7 +548,15 @@ class WebConnector(LoadConnector):
             )
             # Give the page a moment to start rendering after navigation commits.
             # Allows CloudFlare and other bot-detection challenges to complete.
-            page.wait_for_timeout(BOT_DETECTION_GRACE_PERIOD_MS)
+            page.wait_for_timeout(PAGE_RENDER_TIMEOUT_MS)
+
+            # Wait for network activity to settle so SPAs that fetch content
+            # asynchronously after the initial JS bundle have time to render.
+            try:
+                # A bit of extra time to account for long-polling, websockets, etc.
+                page.wait_for_load_state("networkidle", timeout=PAGE_RENDER_TIMEOUT_MS)
+            except TimeoutError:
+                pass
 
             last_modified = (
                 page_response.header_value("Last-Modified") if page_response else None
@@ -580,7 +585,7 @@ class WebConnector(LoadConnector):
                     # (e.g., CloudFlare protection keeps making requests)
                     try:
                         page.wait_for_load_state(
-                            "networkidle", timeout=BOT_DETECTION_GRACE_PERIOD_MS
+                            "networkidle", timeout=PAGE_RENDER_TIMEOUT_MS
                         )
                     except TimeoutError:
                         # If networkidle times out, just give it a moment for content to render

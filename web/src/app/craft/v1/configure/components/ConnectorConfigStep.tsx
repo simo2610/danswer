@@ -3,11 +3,10 @@
 import { useState } from "react";
 import { Formik, Form, useFormikContext } from "formik";
 import { Section } from "@/layouts/general-layouts";
-import Button from "@/refresh-components/buttons/Button";
-import { PopupSpec } from "@/components/admin/connectors/Popup";
+import { Button, Divider } from "@opal/components";
+import { toast } from "@/hooks/useToast";
 import { ValidSources } from "@/lib/types";
 import { Credential } from "@/lib/connectors/credentials";
-import Separator from "@/refresh-components/Separator";
 import {
   connectorConfigs,
   createConnectorInitialValues,
@@ -15,14 +14,13 @@ import {
 import CardSection from "@/components/admin/CardSection";
 import { RenderField } from "@/app/admin/connectors/[connector]/pages/FieldRendering";
 import { createBuildConnector } from "@/app/craft/v1/configure/utils/createBuildConnector";
-import { useUser } from "@/components/user/UserProvider";
+import { useUser } from "@/providers/UserProvider";
 
 interface ConnectorConfigStepProps {
   connectorType: ValidSources;
   credential: Credential<any>;
   onSuccess: () => void;
   onBack: () => void;
-  setPopup: (popupSpec: PopupSpec | null) => void;
 }
 
 function ConnectorConfigForm({
@@ -30,7 +28,6 @@ function ConnectorConfigForm({
   credential,
   onSuccess,
   onBack,
-  setPopup,
 }: ConnectorConfigStepProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { values } = useFormikContext<Record<string, any>>();
@@ -61,11 +58,9 @@ function ConnectorConfigForm({
 
       onSuccess();
     } catch (err) {
-      setPopup({
-        message:
-          err instanceof Error ? err.message : "Failed to create connector",
-        type: "error",
-      });
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create connector"
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -86,7 +81,7 @@ function ConnectorConfigForm({
               currentCredential={credential}
             />
           ))}
-        <Separator />
+        <Divider />
         {config?.advanced_values &&
           config.advanced_values.length > 0 &&
           config.advanced_values.map((field) => (
@@ -99,15 +94,14 @@ function ConnectorConfigForm({
             />
           ))}
         <Section flexDirection="row" justifyContent="between" height="fit">
-          <Button secondary onClick={onBack} disabled={isSubmitting}>
+          <Button
+            disabled={isSubmitting}
+            prominence="secondary"
+            onClick={onBack}
+          >
             Back
           </Button>
-          <Button
-            primary
-            type="button"
-            onClick={handleSubmit}
-            disabled={isSubmitting}
-          >
+          <Button disabled={isSubmitting} type="button" onClick={handleSubmit}>
             {isSubmitting ? "Creating..." : "Create Connector"}
           </Button>
         </Section>
@@ -127,7 +121,6 @@ export default function ConnectorConfigStep({
   credential,
   onSuccess,
   onBack,
-  setPopup,
 }: ConnectorConfigStepProps) {
   const { user } = useUser();
   const baseInitialValues = createConnectorInitialValues(connectorType as any);
@@ -148,7 +141,6 @@ export default function ConnectorConfigStep({
         credential={credential}
         onSuccess={onSuccess}
         onBack={onBack}
-        setPopup={setPopup}
       />
     </Formik>
   );

@@ -2,6 +2,7 @@ import copy
 import json
 import os
 from collections.abc import Callable
+from collections.abc import Generator
 from collections.abc import Iterable
 from collections.abc import Iterator
 from datetime import datetime
@@ -9,6 +10,7 @@ from datetime import timedelta
 from datetime import timezone
 from typing import Any
 
+import requests
 from jira import JIRA
 from jira.exceptions import JIRAError
 from jira.resources import Issue
@@ -40,7 +42,6 @@ from onyx.connectors.jira.utils import build_jira_client
 from onyx.connectors.jira.utils import build_jira_url
 from onyx.connectors.jira.utils import extract_text_from_adf
 from onyx.connectors.jira.utils import get_comment_strs
-from onyx.connectors.jira.utils import get_jira_project_key_from_issue
 from onyx.connectors.jira.utils import JIRA_CLOUD_API_VERSION
 from onyx.connectors.models import ConnectorCheckpoint
 from onyx.connectors.models import ConnectorFailure
@@ -50,6 +51,7 @@ from onyx.connectors.models import DocumentFailure
 from onyx.connectors.models import HierarchyNode
 from onyx.connectors.models import SlimDocument
 from onyx.connectors.models import TextSection
+from onyx.db.enums import HierarchyNodeType
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
 
@@ -58,8 +60,10 @@ logger = setup_logger()
 
 ONE_HOUR = 3600
 
-_MAX_RESULTS_FETCH_IDS = 5000  # 5000
+_MAX_RESULTS_FETCH_IDS = 5000
 _JIRA_FULL_PAGE_SIZE = 50
+# https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/
+_JIRA_BULK_FETCH_LIMIT = 100
 
 # Constants for Jira field names
 _FIELD_REPORTER = "reporter"
@@ -192,8 +196,7 @@ def _handle_jira_search_error(e: Exception, jql: str) -> None:
     if status_code == 400:
         if "does not exist for the field 'project'" in error_text:
             raise ConnectorValidationError(
-                f"The specified Jira project does not exist or you don't have access to it. "
-                f"JQL query: {jql}. Error: {error_text}"
+                f"The specified Jira project does not exist or you don't have access to it. JQL query: {jql}. Error: {error_text}"
             )
         raise ConnectorValidationError(
             f"Invalid JQL query. JQL: {jql}. Error: {error_text}"
@@ -239,29 +242,64 @@ def enhanced_search_ids(
     )
 
 
-def bulk_fetch_issues(
-    jira_client: JIRA, issue_ids: list[str], fields: str | None = None
-) -> list[Issue]:
-    # TODO: move away from this jira library if they continue to not support
-    # the endpoints we need. Using private fields is not ideal, but
-    # is likely fine for now since we pin the library version
+def _bulk_fetch_request(
+    jira_client: JIRA, issue_ids: list[str], fields: str | None
+) -> list[dict[str, Any]]:
+    """Raw POST to the bulkfetch endpoint. Returns the list of raw issue dicts."""
     bulk_fetch_path = jira_client._get_url("issue/bulkfetch")
-
     # Prepare the payload according to Jira API v3 specification
     payload: dict[str, Any] = {"issueIdsOrKeys": issue_ids}
-
     # Only restrict fields if specified, might want to explicitly do this in the future
     # to avoid reading unnecessary data
     payload["fields"] = fields.split(",") if fields else ["*all"]
 
+    resp = jira_client._session.post(bulk_fetch_path, json=payload)
+    return resp.json()["issues"]
+
+
+def _bulk_fetch_batch(
+    jira_client: JIRA, issue_ids: list[str], fields: str | None
+) -> list[dict[str, Any]]:
+    """Fetch a single batch (must be <= _JIRA_BULK_FETCH_LIMIT).
+    On JSONDecodeError, recursively bisects until it succeeds or reaches size 1."""
     try:
-        response = jira_client._session.post(bulk_fetch_path, json=payload).json()
-    except Exception as e:
-        logger.error(f"Error fetching issues: {e}")
-        raise e
+        return _bulk_fetch_request(jira_client, issue_ids, fields)
+    except requests.exceptions.JSONDecodeError:
+        if len(issue_ids) <= 1:
+            logger.exception(
+                f"Jira bulk-fetch response for issue(s) {issue_ids} could not "
+                f"be decoded as JSON (response too large or truncated)."
+            )
+            raise
+
+        mid = len(issue_ids) // 2
+        logger.warning(
+            f"Jira bulk-fetch JSON decode failed for batch of {len(issue_ids)} issues. "
+            f"Splitting into sub-batches of {mid} and {len(issue_ids) - mid}."
+        )
+        left = _bulk_fetch_batch(jira_client, issue_ids[:mid], fields)
+        right = _bulk_fetch_batch(jira_client, issue_ids[mid:], fields)
+        return left + right
+
+
+def bulk_fetch_issues(
+    jira_client: JIRA, issue_ids: list[str], fields: str | None = None
+) -> list[Issue]:
+    # TODO(evan): move away from this jira library if they continue to not support
+    # the endpoints we need. Using private fields is not ideal, but
+    # is likely fine for now since we pin the library version
+
+    raw_issues: list[dict[str, Any]] = []
+    for batch in chunked(issue_ids, _JIRA_BULK_FETCH_LIMIT):
+        try:
+            raw_issues.extend(_bulk_fetch_batch(jira_client, list(batch), fields))
+        except Exception as e:
+            logger.error(f"Error fetching issues: {e}")
+            raise
+
     return [
         Issue(jira_client._options, jira_client._session, raw=issue)
-        for issue in response["issues"]
+        for issue in raw_issues
     ]
 
 
@@ -313,8 +351,7 @@ def _perform_jql_search_v2(
     Unfortunately, jira server/data center will forever use the v2 APIs that are now deprecated.
     """
     logger.debug(
-        f"Fetching Jira issues with JQL: {jql}, "
-        f"starting at {start}, max results: {max_results}"
+        f"Fetching Jira issues with JQL: {jql}, starting at {start}, max results: {max_results}"
     )
     try:
         issues = jira_client.search_issues(
@@ -339,6 +376,7 @@ def process_jira_issue(
     issue: Issue,
     comment_email_blacklist: tuple[str, ...] = (),
     labels_to_skip: set[str] | None = None,
+    parent_hierarchy_raw_node_id: str | None = None,
 ) -> Document | None:
     if labels_to_skip:
         if any(label in issue.fields.labels for label in labels_to_skip):
@@ -364,8 +402,7 @@ def process_jira_issue(
     # Check ticket size
     if len(ticket_content.encode("utf-8")) > JIRA_CONNECTOR_MAX_TICKET_SIZE:
         logger.info(
-            f"Skipping {issue.key} because it exceeds the maximum size of "
-            f"{JIRA_CONNECTOR_MAX_TICKET_SIZE} bytes."
+            f"Skipping {issue.key} because it exceeds the maximum size of {JIRA_CONNECTOR_MAX_TICKET_SIZE} bytes."
         )
         return None
 
@@ -434,6 +471,7 @@ def process_jira_issue(
         doc_updated_at=time_str_to_utc(issue.fields.updated),
         primary_owners=list(people) or None,
         metadata=metadata_dict,
+        parent_hierarchy_raw_node_id=parent_hierarchy_raw_node_id,
     )
 
 
@@ -445,6 +483,8 @@ class JiraConnectorCheckpoint(ConnectorCheckpoint):
     # deprecated
     # Used for v2 endpoint (server/data center)
     offset: int | None = None
+    # Track hierarchy nodes we've already yielded to avoid duplicates across restarts
+    seen_hierarchy_node_ids: list[str] = []
 
 
 class JiraConnector(
@@ -498,20 +538,145 @@ class JiraConnector(
             return ""
         return f'"{self.jira_project}"'
 
-    def _get_project_permissions(self, project_key: str) -> Any:
+    def _get_project_permissions(
+        self, project_key: str, add_prefix: bool = False
+    ) -> Any:
         """Get project permissions with caching.
 
         Args:
             project_key: The Jira project key
+            add_prefix: When True, prefix group IDs with source type (for indexing path).
+                       When False (default), leave unprefixed (for permission sync path).
 
         Returns:
             The external access permissions for the project
         """
-        if project_key not in self._project_permissions_cache:
-            self._project_permissions_cache[project_key] = get_project_permissions(
-                jira_client=self.jira_client, jira_project=project_key
+        # Use different cache keys for prefixed vs unprefixed to avoid mixing
+        cache_key = f"{project_key}:{'prefixed' if add_prefix else 'unprefixed'}"
+        if cache_key not in self._project_permissions_cache:
+            self._project_permissions_cache[cache_key] = get_project_permissions(
+                jira_client=self.jira_client,
+                jira_project=project_key,
+                add_prefix=add_prefix,
             )
-        return self._project_permissions_cache[project_key]
+        return self._project_permissions_cache[cache_key]
+
+    def _is_epic(self, issue: Issue) -> bool:
+        """Check if issue is an Epic."""
+        issuetype = best_effort_get_field_from_issue(issue, _FIELD_ISSUETYPE)
+        if issuetype is None:
+            return False
+        return issuetype.name.lower() == "epic"
+
+    def _is_parent_epic(self, parent: Any) -> bool:
+        """Check if a parent reference is an Epic.
+
+        The parent object from issue.fields.parent has a different structure
+        than a full Issue, so we handle it separately.
+        """
+        parent_issuetype = (
+            getattr(parent.fields, "issuetype", None)
+            if hasattr(parent, "fields")
+            else None
+        )
+        if parent_issuetype is None:
+            return False
+        return parent_issuetype.name.lower() == "epic"
+
+    def _yield_project_hierarchy_node(
+        self,
+        project_key: str,
+        project_name: str | None,
+        seen_hierarchy_node_ids: set[str],
+    ) -> Generator[HierarchyNode, None, None]:
+        """Yield a hierarchy node for a project if not already yielded."""
+        if project_key in seen_hierarchy_node_ids:
+            return
+
+        seen_hierarchy_node_ids.add(project_key)
+
+        yield HierarchyNode(
+            raw_node_id=project_key,
+            raw_parent_id=None,  # Parent is SOURCE
+            display_name=project_name or project_key,
+            link=f"{self.jira_base}/projects/{project_key}",
+            node_type=HierarchyNodeType.PROJECT,
+        )
+
+    def _yield_epic_hierarchy_node(
+        self,
+        issue: Issue,
+        project_key: str,
+        seen_hierarchy_node_ids: set[str],
+    ) -> Generator[HierarchyNode, None, None]:
+        """Yield a hierarchy node for an Epic issue."""
+        issue_key = issue.key
+        if issue_key in seen_hierarchy_node_ids:
+            return
+
+        seen_hierarchy_node_ids.add(issue_key)
+
+        yield HierarchyNode(
+            raw_node_id=issue_key,
+            raw_parent_id=project_key,
+            display_name=f"{issue_key}: {issue.fields.summary}",
+            link=build_jira_url(self.jira_base, issue_key),
+            node_type=HierarchyNodeType.FOLDER,  # don't have a separate epic node type
+        )
+
+    def _yield_parent_hierarchy_node_if_epic(
+        self,
+        parent: Any,
+        project_key: str,
+        seen_hierarchy_node_ids: set[str],
+    ) -> Generator[HierarchyNode, None, None]:
+        """Yield hierarchy node for parent issue if it's an Epic we haven't seen."""
+        parent_key = parent.key
+        if parent_key in seen_hierarchy_node_ids:
+            return
+
+        if not self._is_parent_epic(parent):
+            # Not an epic, don't create hierarchy node for it
+            return
+
+        seen_hierarchy_node_ids.add(parent_key)
+
+        # Get summary if available
+        parent_summary = (
+            getattr(parent.fields, "summary", None)
+            if hasattr(parent, "fields")
+            else None
+        )
+        display_name = (
+            f"{parent_key}: {parent_summary}" if parent_summary else parent_key
+        )
+
+        yield HierarchyNode(
+            raw_node_id=parent_key,
+            raw_parent_id=project_key,
+            display_name=display_name,
+            link=build_jira_url(self.jira_base, parent_key),
+            node_type=HierarchyNodeType.FOLDER,  # don't have a separate epic node type
+        )
+
+    def _get_parent_hierarchy_raw_node_id(self, issue: Issue, project_key: str) -> str:
+        """Determine the parent hierarchy node ID for an issue.
+
+        Returns:
+            - Epic key if issue's parent is an Epic
+            - Project key otherwise (for top-level issues or non-epic parents)
+        """
+        parent = best_effort_get_field_from_issue(issue, _FIELD_PARENT)
+        if parent is None:
+            # No parent, directly under project
+            return project_key
+
+        if self._is_parent_epic(parent):
+            return parent.key
+
+        # For non-epic parents (e.g., story with subtasks),
+        # the document belongs directly under the project in the hierarchy
+        return project_key
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         self._jira_client = build_jira_client(
@@ -594,6 +759,9 @@ class JiraConnector(
         current_offset = starting_offset
         new_checkpoint = copy.deepcopy(checkpoint)
 
+        # Convert checkpoint list to set for efficient lookups
+        seen_hierarchy_node_ids = set(new_checkpoint.seen_hierarchy_node_ids)
+
         checkpoint_callback = make_checkpoint_callback(new_checkpoint)
 
         for issue in _perform_jql_search(
@@ -608,19 +776,51 @@ class JiraConnector(
         ):
             issue_key = issue.key
             try:
+                # Get project info for hierarchy
+                project = best_effort_get_field_from_issue(issue, _FIELD_PROJECT)
+                project_key = project.key if project else None
+                project_name = project.name if project else None
+
+                # Yield hierarchy nodes BEFORE the document (parent-before-child)
+                if project_key:
+                    # 1. Yield project hierarchy node (if not already yielded)
+                    yield from self._yield_project_hierarchy_node(
+                        project_key, project_name, seen_hierarchy_node_ids
+                    )
+
+                    # 2. If parent is an Epic, yield hierarchy node for it
+                    parent = best_effort_get_field_from_issue(issue, _FIELD_PARENT)
+                    if parent:
+                        yield from self._yield_parent_hierarchy_node_if_epic(
+                            parent, project_key, seen_hierarchy_node_ids
+                        )
+
+                    # 3. If this issue IS an Epic, yield it as hierarchy node
+                    if self._is_epic(issue):
+                        yield from self._yield_epic_hierarchy_node(
+                            issue, project_key, seen_hierarchy_node_ids
+                        )
+
+                # Determine parent hierarchy node ID for the document
+                parent_hierarchy_raw_node_id = (
+                    self._get_parent_hierarchy_raw_node_id(issue, project_key)
+                    if project_key
+                    else None
+                )
+
                 if document := process_jira_issue(
                     jira_base_url=self.jira_base,
                     issue=issue,
                     comment_email_blacklist=self.comment_email_blacklist,
                     labels_to_skip=self.labels_to_skip,
+                    parent_hierarchy_raw_node_id=parent_hierarchy_raw_node_id,
                 ):
                     # Add permission information to the document if requested
                     if include_permissions:
-                        project_key = get_jira_project_key_from_issue(issue=issue)
-                        if project_key:
-                            document.external_access = self._get_project_permissions(
-                                project_key
-                            )
+                        document.external_access = self._get_project_permissions(
+                            project_key,
+                            add_prefix=True,  # Indexing path - prefix here
+                        )
                     yield document
 
             except Exception as e:
@@ -634,6 +834,9 @@ class JiraConnector(
                 )
 
             current_offset += 1
+
+        # Update checkpoint with seen hierarchy nodes
+        new_checkpoint.seen_hierarchy_node_ids = list(seen_hierarchy_node_ids)
 
         # Update checkpoint
         self.update_checkpoint_for_next_run(
@@ -663,7 +866,7 @@ class JiraConnector(
         self,
         start: SecondsSinceUnixEpoch | None = None,
         end: SecondsSinceUnixEpoch | None = None,
-        callback: IndexingHeartbeatInterface | None = None,
+        callback: IndexingHeartbeatInterface | None = None,  # noqa: ARG002
     ) -> GenerateSlimDocumentOutput:
         one_day = timedelta(hours=24).total_seconds()
 
@@ -679,6 +882,9 @@ class JiraConnector(
         current_offset = 0
         slim_doc_batch: list[SlimDocument | HierarchyNode] = []
 
+        # Track seen hierarchy nodes within this sync run
+        seen_hierarchy_node_ids: set[str] = set()
+
         while checkpoint.has_more:
             for issue in _perform_jql_search(
                 jira_client=self.jira_client,
@@ -690,17 +896,52 @@ class JiraConnector(
                 nextPageToken=checkpoint.cursor,
                 ids_done=checkpoint.ids_done,
             ):
-                project_key = get_jira_project_key_from_issue(issue=issue)
+                # Get project info
+                project = best_effort_get_field_from_issue(issue, _FIELD_PROJECT)
+                project_key = project.key if project else None
+                project_name = project.name if project else None
+
                 if not project_key:
                     continue
 
+                # Yield hierarchy nodes BEFORE the slim document (parent-before-child)
+                # 1. Yield project hierarchy node (if not already yielded)
+                for node in self._yield_project_hierarchy_node(
+                    project_key, project_name, seen_hierarchy_node_ids
+                ):
+                    slim_doc_batch.append(node)
+
+                # 2. If parent is an Epic, yield hierarchy node for it
+                parent = best_effort_get_field_from_issue(issue, _FIELD_PARENT)
+                if parent:
+                    for node in self._yield_parent_hierarchy_node_if_epic(
+                        parent, project_key, seen_hierarchy_node_ids
+                    ):
+                        slim_doc_batch.append(node)
+
+                # 3. If this issue IS an Epic, yield it as hierarchy node
+                if self._is_epic(issue):
+                    for node in self._yield_epic_hierarchy_node(
+                        issue, project_key, seen_hierarchy_node_ids
+                    ):
+                        slim_doc_batch.append(node)
+
+                # Now add the slim document
                 issue_key = best_effort_get_field_from_issue(issue, _FIELD_KEY)
-                id = build_jira_url(self.jira_base, issue_key)
+                doc_id = build_jira_url(self.jira_base, issue_key)
 
                 slim_doc_batch.append(
                     SlimDocument(
-                        id=id,
-                        external_access=self._get_project_permissions(project_key),
+                        id=doc_id,
+                        # Permission sync path - don't prefix, upsert_document_external_perms handles it
+                        external_access=self._get_project_permissions(
+                            project_key, add_prefix=False
+                        ),
+                        parent_hierarchy_raw_node_id=(
+                            self._get_parent_hierarchy_raw_node_id(issue, project_key)
+                            if project_key
+                            else None
+                        ),
                     )
                 )
                 current_offset += 1
@@ -825,7 +1066,7 @@ def make_checkpoint_callback(
 if __name__ == "__main__":
     import os
     from onyx.utils.variable_functionality import global_version
-    from tests.daily.connectors.utils import load_all_docs_from_checkpoint_connector
+    from tests.daily.connectors.utils import load_all_from_connector
 
     # For connector permission testing, set EE to true.
     global_version.set_ee()
@@ -852,9 +1093,9 @@ if __name__ == "__main__":
     ):
         print(slim_doc)
 
-    for doc in load_all_docs_from_checkpoint_connector(
+    for doc in load_all_from_connector(
         connector=connector,
         start=start,
         end=end,
-    ):
+    ).documents:
         print(doc)

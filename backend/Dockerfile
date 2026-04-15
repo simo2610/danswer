@@ -1,4 +1,4 @@
-FROM python:3.11.7-slim-bookworm
+FROM python:3.11-slim-bookworm@sha256:9c6f90801e6b68e772b7c0ca74260cbf7af9f320acec894e26fccdaccfbe3b47
 
 LABEL com.danswer.maintainer="founders@onyx.app"
 LABEL com.danswer.description="This image is the web/frontend container of Onyx which \
@@ -46,7 +46,11 @@ RUN apt-get update && \
         pkg-config \
         gcc \
         nano \
-        vim && \
+        vim \
+        # Install procps so kubernetes exec sessions can use ps aux for debugging
+        procps \
+        libjemalloc2 \
+        && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
@@ -134,12 +138,14 @@ COPY --chown=onyx:onyx ./alembic_tenants /app/alembic_tenants
 COPY --chown=onyx:onyx ./alembic.ini /app/alembic.ini
 COPY supervisord.conf /usr/etc/supervisord.conf
 COPY --chown=onyx:onyx ./static /app/static
+COPY --chown=onyx:onyx ./keys /app/keys
 
 # Escape hatch scripts
 COPY --chown=onyx:onyx ./scripts/debugging /app/scripts/debugging
 COPY --chown=onyx:onyx ./scripts/force_delete_connector_by_id.py /app/scripts/force_delete_connector_by_id.py
 COPY --chown=onyx:onyx ./scripts/supervisord_entrypoint.sh /app/scripts/supervisord_entrypoint.sh
 COPY --chown=onyx:onyx ./scripts/setup_craft_templates.sh /app/scripts/setup_craft_templates.sh
+COPY --chown=onyx:onyx ./scripts/reencrypt_secrets.py /app/scripts/reencrypt_secrets.py
 RUN chmod +x /app/scripts/supervisord_entrypoint.sh /app/scripts/setup_craft_templates.sh
 
 # Run Craft template setup at build time when ENABLE_CRAFT=true
@@ -149,6 +155,11 @@ RUN if [ "$ENABLE_CRAFT" = "true" ]; then \
         ENABLE_CRAFT=true /app/scripts/setup_craft_templates.sh; \
     fi
 
+# Set Craft template paths to the in-image locations
+# These match the paths where setup_craft_templates.sh creates the templates
+ENV OUTPUTS_TEMPLATE_PATH=/app/onyx/server/features/build/sandbox/kubernetes/docker/templates/outputs
+ENV VENV_TEMPLATE_PATH=/app/onyx/server/features/build/sandbox/kubernetes/docker/templates/venv
+
 # Put logo in assets
 COPY --chown=onyx:onyx ./assets /app/assets
 
@@ -157,6 +168,13 @@ ENV PYTHONPATH=/app
 # Default ONYX_VERSION, typically overriden during builds by GitHub Actions.
 ARG ONYX_VERSION=0.0.0-dev
 ENV ONYX_VERSION=${ONYX_VERSION}
+
+# Use jemalloc instead of glibc malloc to reduce memory fragmentation
+# in long-running Python processes (API server, Celery workers).
+# The soname is architecture-independent; the dynamic linker resolves
+# the correct path from standard library directories.
+# Placed after all RUN steps so build-time processes are unaffected.
+ENV LD_PRELOAD=libjemalloc.so.2
 
 # Default command which does nothing
 # This container is used by api server and background which specify their own CMD

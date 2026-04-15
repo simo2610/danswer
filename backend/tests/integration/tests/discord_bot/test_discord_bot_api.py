@@ -17,7 +17,7 @@ from tests.integration.common_utils.test_models import DATestUser
 class TestBotConfigEndpoints:
     """Tests for /manage/admin/discord-bot/config endpoints."""
 
-    def test_get_bot_config_not_configured(self, reset: None) -> None:
+    def test_get_bot_config_not_configured(self, reset: None) -> None:  # noqa: ARG002
         """GET /config returns configured=False when no config exists."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -29,7 +29,7 @@ class TestBotConfigEndpoints:
         assert config["configured"] is False
         assert "created_at" not in config or config.get("created_at") is None
 
-    def test_create_bot_config(self, reset: None) -> None:
+    def test_create_bot_config(self, reset: None) -> None:  # noqa: ARG002
         """POST /config creates a new bot config."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -47,7 +47,10 @@ class TestBotConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_bot_config_if_exists(admin_user)
 
-    def test_create_bot_config_already_exists(self, reset: None) -> None:
+    def test_create_bot_config_already_exists(
+        self,
+        reset: None,  # noqa: ARG002
+    ) -> None:
         """POST /config returns 409 if config already exists."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -70,7 +73,7 @@ class TestBotConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_bot_config_if_exists(admin_user)
 
-    def test_delete_bot_config(self, reset: None) -> None:
+    def test_delete_bot_config(self, reset: None) -> None:  # noqa: ARG002
         """DELETE /config removes the bot config."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -89,7 +92,7 @@ class TestBotConfigEndpoints:
         config = DiscordBotManager.get_bot_config(admin_user)
         assert config["configured"] is False
 
-    def test_delete_bot_config_not_found(self, reset: None) -> None:
+    def test_delete_bot_config_not_found(self, reset: None) -> None:  # noqa: ARG002
         """DELETE /config returns 404 if no config exists."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -106,7 +109,7 @@ class TestBotConfigEndpoints:
 class TestGuildConfigEndpoints:
     """Tests for /manage/admin/discord-bot/guilds endpoints."""
 
-    def test_create_guild_config(self, reset: None) -> None:
+    def test_create_guild_config(self, reset: None) -> None:  # noqa: ARG002
         """POST /guilds creates a new guild config with registration key."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -119,7 +122,7 @@ class TestGuildConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_list_guilds(self, reset: None) -> None:
+    def test_list_guilds(self, reset: None) -> None:  # noqa: ARG002
         """GET /guilds returns all guild configs."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -137,7 +140,7 @@ class TestGuildConfigEndpoints:
         DiscordBotManager.delete_guild_if_exists(guild1.id, admin_user)
         DiscordBotManager.delete_guild_if_exists(guild2.id, admin_user)
 
-    def test_get_guild_config(self, reset: None) -> None:
+    def test_get_guild_config(self, reset: None) -> None:  # noqa: ARG002
         """GET /guilds/{config_id} returns the specific guild config."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -153,14 +156,14 @@ class TestGuildConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_get_guild_config_not_found(self, reset: None) -> None:
+    def test_get_guild_config_not_found(self, reset: None) -> None:  # noqa: ARG002
         """GET /guilds/{config_id} returns 404 for non-existent guild."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
         result = DiscordBotManager.get_guild_or_none(999999, admin_user)
         assert result is None
 
-    def test_update_guild_config(self, reset: None) -> None:
+    def test_update_guild_config(self, reset: None) -> None:  # noqa: ARG002
         """PATCH /guilds/{config_id} updates the guild config."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -182,7 +185,7 @@ class TestGuildConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_delete_guild_config(self, reset: None) -> None:
+    def test_delete_guild_config(self, reset: None) -> None:  # noqa: ARG002
         """DELETE /guilds/{config_id} removes the guild config."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -195,7 +198,7 @@ class TestGuildConfigEndpoints:
         # Verify it's gone
         assert DiscordBotManager.get_guild_or_none(guild.id, admin_user) is None
 
-    def test_delete_guild_config_not_found(self, reset: None) -> None:
+    def test_delete_guild_config_not_found(self, reset: None) -> None:  # noqa: ARG002
         """DELETE /guilds/{config_id} returns 404 for non-existent guild."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -204,7 +207,7 @@ class TestGuildConfigEndpoints:
 
         assert exc_info.value.response.status_code == 404
 
-    def test_registration_key_format(self, reset: None) -> None:
+    def test_registration_key_format(self, reset: None) -> None:  # noqa: ARG002
         """Registration key has proper format with tenant encoded."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -223,7 +226,7 @@ class TestGuildConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_each_registration_key_is_unique(self, reset: None) -> None:
+    def test_each_registration_key_is_unique(self, reset: None) -> None:  # noqa: ARG002
         """Each created guild gets a unique registration key."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -240,7 +243,7 @@ class TestGuildConfigEndpoints:
 class TestChannelConfigEndpoints:
     """Tests for /manage/admin/discord-bot/guilds/{id}/channels endpoints."""
 
-    def test_list_channels_empty(self, reset: None) -> None:
+    def test_list_channels_empty(self, reset: None) -> None:  # noqa: ARG002
         """GET /guilds/{id}/channels returns empty list when no channels exist."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -257,7 +260,7 @@ class TestChannelConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_list_channels_with_data(self, reset: None) -> None:
+    def test_list_channels_with_data(self, reset: None) -> None:  # noqa: ARG002
         """GET /guilds/{id}/channels returns channel configs."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -290,7 +293,7 @@ class TestChannelConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_update_channel_enabled(self, reset: None) -> None:
+    def test_update_channel_enabled(self, reset: None) -> None:  # noqa: ARG002
         """PATCH /guilds/{id}/channels/{id} updates enabled status."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -326,7 +329,7 @@ class TestChannelConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_update_channel_thread_only_mode(self, reset: None) -> None:
+    def test_update_channel_thread_only_mode(self, reset: None) -> None:  # noqa: ARG002
         """PATCH /guilds/{id}/channels/{id} updates thread_only_mode."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -357,7 +360,10 @@ class TestChannelConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_update_channel_require_bot_invocation(self, reset: None) -> None:
+    def test_update_channel_require_bot_invocation(
+        self,
+        reset: None,  # noqa: ARG002
+    ) -> None:
         """PATCH /guilds/{id}/channels/{id} updates require_bot_invocation."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -388,7 +394,7 @@ class TestChannelConfigEndpoints:
         # Cleanup
         DiscordBotManager.delete_guild_if_exists(guild.id, admin_user)
 
-    def test_update_channel_not_found(self, reset: None) -> None:
+    def test_update_channel_not_found(self, reset: None) -> None:  # noqa: ARG002
         """PATCH /guilds/{id}/channels/{id} returns 404 for non-existent channel."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 
@@ -415,7 +421,10 @@ class TestChannelConfigEndpoints:
 class TestServiceApiKeyCleanup:
     """Tests for service API key cleanup when bot/guild configs are deleted."""
 
-    def test_delete_bot_config_also_deletes_service_api_key(self, reset: None) -> None:
+    def test_delete_bot_config_also_deletes_service_api_key(
+        self,
+        reset: None,  # noqa: ARG002
+    ) -> None:
         """DELETE /config also deletes the service API key (self-hosted flow)."""
         admin_user: DATestUser = UserManager.create(name="admin_user")
 

@@ -1,5 +1,6 @@
+export const IS_DEV = process.env.NODE_ENV === "development";
+
 export enum AuthType {
-  DISABLED = "disabled",
   BASIC = "basic",
   GOOGLE_OAUTH = "google_oauth",
   OIDC = "oidc",
@@ -21,7 +22,7 @@ export const MCP_INTERNAL_URL =
 // NOTE: this should ONLY be used on the server-side (including middleware).
 // The AUTH_TYPE environment variable is set in the backend and shared with Next.js
 export const SERVER_SIDE_ONLY__AUTH_TYPE = (process.env.AUTH_TYPE ||
-  AuthType.DISABLED) as AuthType;
+  AuthType.BASIC) as AuthType;
 
 export const NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED =
   process.env.NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED?.toLowerCase() ===
@@ -29,22 +30,11 @@ export const NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED =
 
 export const TENANT_ID_COOKIE_NAME = "onyx_tid";
 
-export const GMAIL_AUTH_IS_ADMIN_COOKIE_NAME = "gmail_auth_is_admin";
-
-export const GOOGLE_DRIVE_AUTH_IS_ADMIN_COOKIE_NAME =
-  "google_drive_auth_is_admin";
-
 export const SEARCH_TYPE_COOKIE_NAME = "search_type";
 export const AGENTIC_SEARCH_TYPE_COOKIE_NAME = "agentic_type";
 
 export const LOGOUT_DISABLED =
   process.env.NEXT_PUBLIC_DISABLE_LOGOUT?.toLowerCase() === "true";
-
-// Default sidebar open is true if the environment variable is not set
-export const NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN =
-  process.env.NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN?.toLowerCase() === "false"
-    ? false
-    : true;
 
 export const TOGGLED_CONNECTORS_COOKIE_NAME = "toggled_connectors";
 
@@ -54,8 +44,13 @@ export const NEXT_PUBLIC_CUSTOM_REFRESH_URL =
 
 // NOTE: this should ONLY be used on the server-side. If used client side,
 // it will not be accurate (will always be false).
+// Mirrors backend logic: EE is enabled if EITHER the legacy flag OR license
+// enforcement is active. LICENSE_ENFORCEMENT_ENABLED defaults to true on the
+// backend, so we treat undefined as enabled here to match.
 export const SERVER_SIDE_ONLY__PAID_ENTERPRISE_FEATURES_ENABLED =
-  process.env.ENABLE_PAID_ENTERPRISE_EDITION_FEATURES?.toLowerCase() === "true";
+  process.env.ENABLE_PAID_ENTERPRISE_EDITION_FEATURES?.toLowerCase() ===
+    "true" ||
+  process.env.LICENSE_ENFORCEMENT_ENABLED?.toLowerCase() !== "false";
 // NOTE: since this is a `NEXT_PUBLIC_` variable, it will be set at
 // build-time
 // TODO: consider moving this to an API call so that the api_server
@@ -86,9 +81,6 @@ export const NEXT_PUBLIC_FORGOT_PASSWORD_ENABLED =
 export const NEXT_PUBLIC_TEST_ENV =
   process.env.NEXT_PUBLIC_TEST_ENV?.toLowerCase() === "true";
 
-export const NEXT_PUBLIC_ENABLE_CHROME_EXTENSION =
-  process.env.NEXT_PUBLIC_ENABLE_CHROME_EXTENSION?.toLowerCase() === "true";
-
 export const NEXT_PUBLIC_INCLUDE_ERROR_POPUP_SUPPORT_LINK =
   process.env.NEXT_PUBLIC_INCLUDE_ERROR_POPUP_SUPPORT_LINK?.toLowerCase() ===
   "true";
@@ -118,10 +110,9 @@ export const CREDENTIAL_JSON = "credential_json";
 
 export const MODAL_ROOT_ID = "modal-root";
 
-export const ANONYMOUS_USER_NAME = "Anonymous";
 export const UNNAMED_CHAT = "New Chat";
 
-export const DEFAULT_ASSISTANT_ID = 0;
+export const DEFAULT_AGENT_ID = 0;
 export const GENERAL_ASSISTANT_ID = -1;
 export const IMAGE_ASSISTANT_ID = -2;
 export const ART_ASSISTANT_ID = -3;
@@ -131,11 +122,14 @@ export const ART_ASSISTANT_ID = -3;
 export const MAX_FILES_TO_SHOW = 3;
 
 // SIZES
-export const MOBILE_SIDEBAR_BREAKPOINT_PX = 640;
-export const DEFAULT_AGENT_AVATAR_SIZE_PX = 18;
+export const MOBILE_SIDEBAR_BREAKPOINT_PX = 724;
+export const DESKTOP_SMALL_BREAKPOINT_PX = 912;
+export const DESKTOP_MEDIUM_BREAKPOINT_PX = 1232;
+export const DEFAULT_AVATAR_SIZE_PX = 18;
 export const HORIZON_DISTANCE_PX = 800;
-export const LOGO_FOLDED_SIZE_PX = 24;
-export const LOGO_UNFOLDED_SIZE_PX = 88;
+export const DEFAULT_LOGO_SIZE_PX = 24;
 
 export const DEFAULT_CONTEXT_TOKENS = 120_000;
 export const MAX_CHUNKS_FED_TO_CHAT = 25;
+
+export const APP_SLOGAN = "Open Source AI Platform";

@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import { motion } from "motion/react";
+import { track, AnalyticsEvent } from "@/lib/analytics";
 import { OnyxLogoTypeIcon } from "@/components/icons/icons";
 import Text from "@/refresh-components/texts/Text";
 import BigButton from "@/app/craft/components/BigButton";
@@ -14,6 +16,11 @@ export default function BuildModeIntroContent({
   onClose,
   onTryBuildMode,
 }: BuildModeIntroContentProps) {
+  // Track when user sees the craft intro
+  useEffect(() => {
+    track(AnalyticsEvent.SAW_CRAFT_INTRO);
+  }, []);
+
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
       <div className="flex flex-col items-center gap-7 w-full">
@@ -66,6 +73,7 @@ export default function BuildModeIntroContent({
             className="!border-white !text-white hover:!bg-white/10 active:!bg-white/20 !w-[160px]"
             onClick={(e) => {
               e.stopPropagation();
+              track(AnalyticsEvent.CLICKED_GO_HOME);
               onClose();
             }}
           >
@@ -76,6 +84,7 @@ export default function BuildModeIntroContent({
             className="!bg-white !text-black hover:!bg-gray-200 active:!bg-gray-300 !w-[160px]"
             onClick={(e) => {
               e.stopPropagation();
+              track(AnalyticsEvent.CLICKED_TRY_CRAFT);
               onTryBuildMode();
             }}
           >

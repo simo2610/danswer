@@ -1,10 +1,13 @@
 # editors
-.vscode
+.vscode/*
 !/.vscode/env_template.txt
+!/.vscode/env.web_template.txt
 !/.vscode/launch.json
 !/.vscode/tasks.template.jsonc
 .zed
 .cursor
+!/.cursor/mcp.json
+!/.cursor/skills/
 
 # macos
 .DS_store
@@ -39,10 +42,6 @@ settings.json
 /backend/tests/regression/answer_quality/search_test_config.yaml
 *.egg-info
 
-# Claude
-AGENTS.md
-CLAUDE.md
-
 # Local .terraform directories
 **/.terraform/*
 
@@ -60,3 +59,6 @@ node_modules
 
 # plans
 plans/
+
+# Added context for LLMs
+onyx-llm-context/

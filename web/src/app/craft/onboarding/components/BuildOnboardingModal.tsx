@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { SvgArrowRight, SvgArrowLeft, SvgX, SvgLoader } from "@opal/icons";
+import {
+  track,
+  AnalyticsEvent,
+  LLMProviderConfiguredSource,
+} from "@/lib/analytics";
+import { SvgArrowRight, SvgArrowLeft, SvgX } from "@opal/icons";
 import { cn } from "@/lib/utils";
 import Text from "@/refresh-components/texts/Text";
 import {
@@ -17,12 +22,9 @@ import {
   getBuildLlmSelection,
   getDefaultLlmSelection,
 } from "@/app/craft/onboarding/constants";
-import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
-import { LLM_PROVIDERS_ADMIN_URL } from "@/app/admin/configuration/llm/constants";
-import {
-  buildInitialValues,
-  testApiKeyHelper,
-} from "@/refresh-components/onboarding/components/llmConnectionHelpers";
+import { LLMProviderDescriptor } from "@/interfaces/llm";
+import { LLM_PROVIDERS_ADMIN_URL } from "@/lib/llmConfig/constants";
+import { testApiKeyHelper } from "@/sections/modals/llmConfig/svc";
 import OnboardingInfoPages from "@/app/craft/onboarding/components/OnboardingInfoPages";
 import OnboardingUserInfo from "@/app/craft/onboarding/components/OnboardingUserInfo";
 import OnboardingLlmSetup, {
@@ -75,15 +77,17 @@ function getStepsForMode(
 ): OnboardingStep[] {
   switch (mode.type) {
     case "initial-onboarding":
-      // Full flow: user-info (if needed) → llm-setup (if admin + not all configured) → page1 → page2
-      const steps: OnboardingStep[] = [];
-      if (!hasUserInfo) {
-        steps.push("user-info");
-      }
+      // Full flow: page1 → llm-setup (if admin + not all configured) → user-info
+      const steps: OnboardingStep[] = ["page1"];
+
       if (isAdmin && !allProvidersConfigured) {
         steps.push("llm-setup");
       }
-      steps.push("page1", "page2");
+
+      if (!hasUserInfo) {
+        steps.push("user-info");
+      }
+
       return steps;
 
     case "edit-persona":
@@ -181,46 +185,9 @@ export default function BuildOnboardingModal({
   // Submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Timeout state for informational pages (page1 and page2)
-  // Track which pages have already been seen (timer completed)
-  const [seenInfoPages, setSeenInfoPages] = useState<Set<OnboardingStep>>(
-    new Set()
-  );
-  const [canContinueInfoPage, setCanContinueInfoPage] = useState(false);
-
-  // Set up timeout when entering page1 or page2 (only if not seen before)
-  useEffect(() => {
-    if (
-      (currentStep === "page1" || currentStep === "page2") &&
-      !seenInfoPages.has(currentStep)
-    ) {
-      setCanContinueInfoPage(false);
-
-      // page1: 1s, page2: 3s
-      const timeoutDuration = currentStep === "page1" ? 1000 : 3000;
-
-      const timeout = setTimeout(() => {
-        setCanContinueInfoPage(true);
-        setSeenInfoPages((prev) => new Set(prev).add(currentStep));
-      }, timeoutDuration);
-
-      return () => clearTimeout(timeout);
-    } else if (
-      (currentStep === "page1" || currentStep === "page2") &&
-      seenInfoPages.has(currentStep)
-    ) {
-      // If already seen, allow immediate continuation
-      setCanContinueInfoPage(true);
-    }
-  }, [currentStep, seenInfoPages]);
-
   const requiresLevel =
     workArea !== undefined && WORK_AREAS_REQUIRING_LEVEL.includes(workArea);
-  const isUserInfoValid =
-    firstName.trim() &&
-    lastName.trim() &&
-    workArea &&
-    (!requiresLevel || level);
+  const isUserInfoValid = workArea && (!requiresLevel || level);
 
   const currentProviderConfig = PROVIDERS.find(
     (p) => p.key === selectedProvider
@@ -253,10 +220,8 @@ export default function BuildOnboardingModal({
     setConnectionStatus("testing");
     setErrorMessage("");
 
-    const baseValues = buildInitialValues();
     const providerName = `build-mode-${currentProviderConfig.providerName}`;
     const payload = {
-      ...baseValues,
       name: providerName,
       provider: currentProviderConfig.providerName,
       api_key: apiKey,
@@ -313,6 +278,12 @@ export default function BuildOnboardingModal({
         providerName: providerName,
         provider: currentProviderConfig.providerName,
         modelName: selectedModel,
+      });
+
+      track(AnalyticsEvent.CONFIGURED_LLM_PROVIDER, {
+        provider: currentProviderConfig.providerName,
+        is_creation: true,
+        source: LLMProviderConfiguredSource.CRAFT_ONBOARDING,
       });
 
       setConnectionStatus("success");
@@ -374,11 +345,12 @@ export default function BuildOnboardingModal({
 
       await onComplete({
         firstName: firstName.trim(),
-        lastName: lastName.trim(),
+        lastName: lastName.trim() || undefined,
         workArea,
         level: level || undefined,
       });
 
+      track(AnalyticsEvent.COMPLETED_CRAFT_ONBOARDING);
       onClose();
     } catch (error) {
       console.error("Error completing onboarding:", error);
@@ -456,15 +428,6 @@ export default function BuildOnboardingModal({
             />
           )}
 
-          {/* Page 2 - Let's get started */}
-          {currentStep === "page2" && (
-            <OnboardingInfoPages
-              step="page2"
-              workArea={workArea}
-              level={level}
-            />
-          )}
-
           {/* Navigation buttons */}
           <div className="relative flex justify-between items-center pt-2">
             {/* Back button */}
@@ -504,7 +467,19 @@ export default function BuildOnboardingModal({
             {currentStep === "user-info" && (
               <button
                 type="button"
-                onClick={isLastStep ? handleSubmit : handleNext}
+                onClick={() => {
+                  track(AnalyticsEvent.COMPLETED_CRAFT_USER_INFO, {
+                    first_name: firstName.trim(),
+                    last_name: lastName.trim() || undefined,
+                    work_area: workArea,
+                    level: level,
+                  });
+                  if (isLastStep) {
+                    handleSubmit();
+                  } else {
+                    handleNext();
+                  }
+                }}
                 disabled={!canProceedUserInfo || isSubmitting}
                 className={cn(
                   "flex items-center gap-1.5 px-4 py-2 rounded-12 transition-colors",
@@ -524,7 +499,7 @@ export default function BuildOnboardingModal({
                   {isLastStep
                     ? isSubmitting
                       ? "Saving..."
-                      : "Save"
+                      : "Get Started!"
                     : "Continue"}
                 </Text>
                 {!isLastStep && (
@@ -544,53 +519,12 @@ export default function BuildOnboardingModal({
               <button
                 type="button"
                 onClick={handleNext}
-                disabled={!canContinueInfoPage}
-                className={cn(
-                  "flex items-center gap-1.5 px-4 py-2 rounded-12 transition-colors",
-                  canContinueInfoPage
-                    ? "bg-black dark:bg-white text-white dark:text-black hover:opacity-90"
-                    : "bg-background-neutral-01 text-text-02 cursor-not-allowed"
-                )}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-12 transition-colors bg-black dark:bg-white text-white dark:text-black hover:opacity-90"
               >
-                {!canContinueInfoPage ? (
-                  <SvgLoader className="w-4 h-4 animate-spin text-text-02" />
-                ) : (
-                  <>
-                    <Text mainUiAction className="text-white dark:text-black">
-                      Continue
-                    </Text>
-                    <SvgArrowRight className="w-4 h-4 text-white dark:text-black" />
-                  </>
-                )}
-              </button>
-            )}
-
-            {currentStep === "page2" && (
-              <button
-                type="button"
-                onClick={handleSubmit}
-                disabled={!canContinueInfoPage || isSubmitting}
-                className={cn(
-                  "flex items-center gap-1.5 px-4 py-2 rounded-12 transition-colors",
-                  canContinueInfoPage && !isSubmitting
-                    ? "bg-black dark:bg-white text-white dark:text-black hover:opacity-90"
-                    : "bg-background-neutral-01 text-text-02 cursor-not-allowed"
-                )}
-              >
-                {isSubmitting ? (
-                  <>
-                    <SvgLoader className="w-4 h-4 animate-spin text-text-02" />
-                    <Text mainUiAction className="text-text-02">
-                      Saving...
-                    </Text>
-                  </>
-                ) : !canContinueInfoPage ? (
-                  <SvgLoader className="w-4 h-4 animate-spin text-text-02" />
-                ) : (
-                  <Text mainUiAction className="text-white dark:text-black">
-                    Get Started!
-                  </Text>
-                )}
+                <Text mainUiAction className="text-white dark:text-black">
+                  Continue
+                </Text>
+                <SvgArrowRight className="w-4 h-4 text-white dark:text-black" />
               </button>
             )}
 

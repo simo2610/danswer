@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "@/components/user/UserProvider";
+import { useUser } from "@/providers/UserProvider";
 import { useAuthType } from "@/lib/hooks";
 import { AuthType } from "@/lib/constants";
 import { AccountsAccessSettings } from "@/refresh-pages/SettingsPage";
@@ -13,7 +13,7 @@ export default function AccountsAccessPage() {
   const authType = useAuthType();
 
   const showPasswordSection = Boolean(user?.password_configured);
-  const showTokensSection = authType !== null && authType !== AuthType.DISABLED;
+  const showTokensSection = authType !== null;
   const hasAccess = showPasswordSection || showTokensSection;
 
   // Only redirect after authType has loaded to avoid redirecting during loading state

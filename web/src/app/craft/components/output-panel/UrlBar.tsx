@@ -3,16 +3,19 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import Text from "@/refresh-components/texts/Text";
-import Button from "@/refresh-components/buttons/Button";
+import { Button } from "@opal/components";
 import {
   SvgDownloadCloud,
   SvgLoader,
   SvgArrowLeft,
   SvgArrowRight,
   SvgExternalLink,
+  SvgRevert,
 } from "@opal/icons";
 import { IconProps } from "@opal/types";
-import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import { Tooltip } from "@opal/components";
+import ShareButton from "@/app/craft/components/ShareButton";
+import type { SharingScope } from "@/app/craft/types/streamingTypes";
 
 /** SvgLoader wrapped with animate-spin so it can be passed as a Button leftIcon */
 const SpinningLoader: React.FunctionComponent<IconProps> = (props) => (
@@ -29,10 +32,20 @@ export interface UrlBarProps {
   previewUrl?: string | null;
   /** Optional callback to download the raw file — shows a cloud-download icon inside the URL pill */
   onDownloadRaw?: () => void;
+  /** Tooltip text for the raw download button */
+  downloadRawTooltip?: string;
   /** Optional download callback — shows an export button in the URL bar when provided */
   onDownload?: () => void;
   /** Whether a download/export is currently in progress */
   isDownloading?: boolean;
+  /** Optional refresh callback — shows a refresh icon at the right edge of the URL pill */
+  onRefresh?: () => void;
+  /** Session ID — when present with previewUrl, shows share button for webapp */
+  sessionId?: string;
+  /** Sharing scope for the webapp (used when sessionId + previewUrl) */
+  sharingScope?: SharingScope;
+  /** Callback when sharing scope changes (revalidate webapp info) */
+  onScopeChange?: () => void;
 }
 
 /**
@@ -51,8 +64,13 @@ export default function UrlBar({
   onForward,
   previewUrl,
   onDownloadRaw,
+  downloadRawTooltip = "Download file",
   onDownload,
   isDownloading = false,
+  onRefresh,
+  sessionId,
+  sharingScope = "private",
+  onScopeChange,
 }: UrlBarProps) {
   const handleOpenInNewTab = () => {
     if (previewUrl) {
@@ -63,7 +81,7 @@ export default function UrlBar({
   return (
     <div className="px-3 pb-2">
       <div className="flex items-center gap-1">
-        {/* Navigation buttons */}
+        {/* Navigation buttons + refresh */}
         {showNavigation && (
           <div className="flex items-center gap-0.5">
             <button
@@ -92,25 +110,34 @@ export default function UrlBar({
             >
               <SvgArrowRight size={16} />
             </button>
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                className="p-1.5 rounded-full transition-colors hover:bg-background-tint-03 text-text-03"
+                aria-label="Refresh"
+              >
+                <SvgRevert size={14} className="-scale-x-100" />
+              </button>
+            )}
           </div>
         )}
         {/* URL display */}
-        <div className="flex-1 flex items-center px-3 py-1.5 bg-background-tint-02 rounded-full gap-2">
-          {/* Download raw MD file button */}
+        <div className="flex-1 min-w-0 flex items-center px-3 py-1.5 bg-background-tint-02 rounded-full gap-2 min-h-[2.25rem]">
+          {/* Download raw file button */}
           {onDownloadRaw && (
-            <SimpleTooltip tooltip="Download MD file" delayDuration={200}>
+            <Tooltip tooltip={downloadRawTooltip} delayDuration={200}>
               <button
                 onClick={onDownloadRaw}
                 className="flex-shrink-0 p-0.5 rounded transition-colors hover:bg-background-tint-03 text-text-03"
-                aria-label="Download MD file"
+                aria-label={downloadRawTooltip}
               >
                 <SvgDownloadCloud size={14} />
               </button>
-            </SimpleTooltip>
+            </Tooltip>
           )}
           {/* Open in new tab button - only shown for Preview tab with valid URL */}
           {previewUrl && (
-            <SimpleTooltip tooltip="open in a new tab" delayDuration={200}>
+            <Tooltip tooltip="open in a new tab" delayDuration={200}>
               <button
                 onClick={handleOpenInNewTab}
                 className="flex-shrink-0 p-0.5 rounded transition-colors hover:bg-background-tint-03 text-text-03"
@@ -118,23 +145,33 @@ export default function UrlBar({
               >
                 <SvgExternalLink size={14} />
               </button>
-            </SimpleTooltip>
+            </Tooltip>
           )}
-          <Text secondaryBody text03 className="truncate">
+          <Text secondaryBody text03 className="min-w-0 flex-1 truncate">
             {displayUrl}
           </Text>
         </div>
         {/* Export button — shown for downloadable file previews (e.g. markdown → docx) */}
         {onDownload && (
           <Button
-            action
-            tertiary
-            leftIcon={isDownloading ? SpinningLoader : SvgExternalLink}
             disabled={isDownloading}
+            variant="action"
+            prominence="tertiary"
+            icon={isDownloading ? SpinningLoader : SvgExternalLink}
             onClick={onDownload}
           >
             {isDownloading ? "Exporting..." : "Export to .docx"}
           </Button>
+        )}
+        {/* Share button — shown when webapp preview is active */}
+        {previewUrl && sessionId && (
+          <ShareButton
+            key={sessionId}
+            sessionId={sessionId}
+            webappUrl={previewUrl}
+            sharingScope={sharingScope}
+            onScopeChange={onScopeChange}
+          />
         )}
       </div>
     </div>

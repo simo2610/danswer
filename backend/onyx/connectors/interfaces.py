@@ -59,7 +59,7 @@ class BaseConnector(abc.ABC, Generic[CT]):
             elif isinstance(metadata_value, list):
                 if not all([isinstance(val, str) for val in metadata_value]):
                     raise RuntimeError(custom_parser_req_msg)
-                metadata_lines.append(f'{metadata_key}: {", ".join(metadata_value)}')
+                metadata_lines.append(f"{metadata_key}: {', '.join(metadata_value)}")
             else:
                 raise RuntimeError(custom_parser_req_msg)
         return metadata_lines
@@ -89,7 +89,7 @@ class BaseConnector(abc.ABC, Generic[CT]):
         based on the application level image analysis setting."""
 
     @classmethod
-    def normalize_url(cls, url: str) -> "NormalizationResult":
+    def normalize_url(cls, url: str) -> "NormalizationResult":  # noqa: ARG003
         """Normalize a URL to match the canonical Document.id format used during ingestion.
 
         Connectors that use URLs as document IDs should override this method.
@@ -123,6 +123,9 @@ class SlimConnector(BaseConnector):
     @abc.abstractmethod
     def retrieve_all_slim_docs(
         self,
+        start: SecondsSinceUnixEpoch | None = None,
+        end: SecondsSinceUnixEpoch | None = None,
+        callback: IndexingHeartbeatInterface | None = None,
     ) -> GenerateSlimDocumentOutput:
         raise NotImplementedError
 
@@ -295,6 +298,22 @@ class CheckpointedConnectorWithPermSync(CheckpointedConnector[CT]):
         end: SecondsSinceUnixEpoch,
         checkpoint: CT,
     ) -> CheckpointOutput[CT]:
+        raise NotImplementedError
+
+
+class Resolver(BaseConnector):
+    @abc.abstractmethod
+    def resolve_errors(
+        self,
+        errors: list[ConnectorFailure],
+        include_permissions: bool = False,
+    ) -> Generator[Document | ConnectorFailure | HierarchyNode, None, None]:
+        """Attempts to yield back ALL the documents described by the errors, no checkpointing.
+
+        Caller's responsibility is to delete the old ConnectorFailures and replace with the new ones.
+        If include_permissions is True, the documents will have permissions synced.
+        May also yield HierarchyNode objects for ancestor folders of resolved documents.
+        """
         raise NotImplementedError
 
 

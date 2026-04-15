@@ -7,9 +7,11 @@ import {
 } from "@/lib/chat/greetingMessages";
 import AgentAvatar from "@/refresh-components/avatars/AgentAvatar";
 import Text from "@/refresh-components/texts/Text";
-import { MinimalPersonaSnapshot } from "@/app/admin/assistants/interfaces";
+import { MinimalPersonaSnapshot } from "@/app/admin/agents/interfaces";
 import { useState, useEffect } from "react";
-import { useSettingsContext } from "@/components/settings/SettingsProvider";
+import { useSettingsContext } from "@/providers/SettingsProvider";
+import FrostedDiv from "@/refresh-components/FrostedDiv";
+import { Section } from "@/layouts/general-layouts";
 
 export interface WelcomeMessageProps {
   agent?: MinimalPersonaSnapshot;
@@ -38,31 +40,33 @@ export default function WelcomeMessage({
 
   if (isDefaultAgent) {
     content = (
-      <div data-testid="onyx-logo" className="flex flex-row items-center gap-4">
+      <Section
+        data-testid="onyx-logo"
+        flexDirection="column"
+        alignItems="start"
+        gap={0.5}
+        width="fit"
+      >
         <Logo folded size={32} />
         <Text as="p" headingH2>
           {greeting}
         </Text>
-      </div>
+      </Section>
     );
   } else if (agent) {
     content = (
-      <>
-        <div
-          data-testid="assistant-name-display"
-          className="flex flex-row items-center gap-3"
-        >
-          <AgentAvatar agent={agent} size={36} />
-          <Text as="p" headingH2>
-            {agent.name}
-          </Text>
-        </div>
-        {agent.description && (
-          <Text as="p" secondaryBody text03>
-            {agent.description}
-          </Text>
-        )}
-      </>
+      <Section
+        data-testid="agent-name-display"
+        flexDirection="column"
+        alignItems="start"
+        gap={0.5}
+        width="fit"
+      >
+        <AgentAvatar agent={agent} size={36} />
+        <Text as="p" headingH2>
+          {agent.name}
+        </Text>
+      </Section>
     );
   }
 
@@ -71,11 +75,11 @@ export default function WelcomeMessage({
   if (!content) return null;
 
   return (
-    <div
+    <FrostedDiv
       data-testid="chat-intro"
-      className="flex flex-col items-center justify-center gap-3 max-w-[50rem]"
+      className="flex flex-col items-center justify-center gap-3 w-full max-w-[var(--app-page-main-content-width)]"
     >
       {content}
-    </div>
+    </FrostedDiv>
   );
 }

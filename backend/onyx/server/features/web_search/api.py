@@ -1,14 +1,16 @@
 from fastapi import APIRouter
 from fastapi import Depends
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from onyx.auth.users import current_user
+from onyx.auth.permissions import require_permission
 from onyx.configs.constants import PUBLIC_API_TAGS
 from onyx.db.engine.sql_engine import get_session
+from onyx.db.enums import Permission
 from onyx.db.models import User
 from onyx.db.web_search import fetch_active_web_content_provider
 from onyx.db.web_search import fetch_active_web_search_provider
+from onyx.error_handling.error_codes import OnyxErrorCode
+from onyx.error_handling.exceptions import OnyxError
 from onyx.server.features.web_search.models import OpenUrlsToolRequest
 from onyx.server.features.web_search.models import OpenUrlsToolResponse
 from onyx.server.features.web_search.models import WebSearchToolRequest
@@ -61,9 +63,10 @@ def _get_active_search_provider(
 ) -> tuple[WebSearchProviderView, WebSearchProvider]:
     provider_model = fetch_active_web_search_provider(db_session)
     if provider_model is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No web search provider configured.",
+        raise OnyxError(
+            OnyxErrorCode.INVALID_INPUT,
+            "No web search provider configured. Please configure one in "
+            "Admin > Web Search settings.",
         )
 
     provider_view = WebSearchProviderView(
@@ -75,20 +78,21 @@ def _get_active_search_provider(
         has_api_key=bool(provider_model.api_key),
     )
 
-    if not provider_model.api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Web search provider requires an API key.",
+    if provider_model.api_key is None:
+        raise OnyxError(
+            OnyxErrorCode.INVALID_INPUT,
+            "Web search provider requires an API key. Please configure one in "
+            "Admin > Web Search settings.",
         )
 
     try:
         provider: WebSearchProvider = build_search_provider_from_config(
             provider_type=provider_view.provider_type,
-            api_key=provider_model.api_key,
+            api_key=provider_model.api_key.get_value(apply_mask=False),
             config=provider_model.config or {},
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise OnyxError(OnyxErrorCode.INVALID_INPUT, str(exc)) from exc
 
     return provider_view, provider
 
@@ -110,36 +114,27 @@ def _get_active_content_provider(
 
     if provider_model.api_key is None:
         # TODO - this is not a great error, in fact, this key should not be nullable.
-        raise HTTPException(
-            status_code=400,
-            detail="Web content provider requires an API key.",
+        raise OnyxError(
+            OnyxErrorCode.INVALID_INPUT,
+            "Web content provider requires an API key.",
         )
 
     try:
         provider_type = WebContentProviderType(provider_model.provider_type)
+        config = provider_model.config or WebContentProviderConfig()
 
-        config = provider_model.config or {}
-        timeout_conf = config.get("timeout_seconds")
-        if timeout_conf is not None:
-            timeout_seconds = int(timeout_conf)
-        else:
-            timeout_seconds = None
-        base_url = config.get("base_url")
         provider: WebContentProvider | None = build_content_provider_from_config(
             provider_type=provider_type,
-            api_key=provider_model.api_key,
-            config=WebContentProviderConfig(
-                timeout_seconds=timeout_seconds,
-                base_url=base_url,
-            ),
+            api_key=provider_model.api_key.get_value(apply_mask=False),
+            config=config,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise OnyxError(OnyxErrorCode.INVALID_INPUT, str(exc)) from exc
 
     if provider is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Unable to initialize the configured web content provider.",
+        raise OnyxError(
+            OnyxErrorCode.INVALID_INPUT,
+            "Unable to initialize the configured web content provider.",
         )
 
     provider_view = WebContentProviderView(
@@ -147,7 +142,7 @@ def _get_active_content_provider(
         name=provider_model.name,
         provider_type=provider_type,
         is_active=provider_model.is_active,
-        config=provider_model.config or {},
+        config=provider_model.config or WebContentProviderConfig(),
         has_api_key=bool(provider_model.api_key),
     )
 
@@ -163,12 +158,13 @@ def _run_web_search(
     for query in request.queries:
         try:
             search_results = provider.search(query)
-        except HTTPException:
+        except OnyxError:
             raise
         except Exception as exc:
             logger.exception("Web search provider failed for query '%s'", query)
-            raise HTTPException(
-                status_code=502, detail="Web search provider failed to execute query."
+            raise OnyxError(
+                OnyxErrorCode.BAD_GATEWAY,
+                "Web search provider failed to execute query.",
             ) from exc
 
         filtered_results = filter_web_search_results_with_no_title_or_snippet(
@@ -201,12 +197,13 @@ def _open_urls(
         docs = filter_web_contents_with_no_title_or_content(
             list(provider.contents(urls))
         )
-    except HTTPException:
+    except OnyxError:
         raise
     except Exception as exc:
         logger.exception("Web content provider failed to fetch URLs")
-        raise HTTPException(
-            status_code=502, detail="Web content provider failed to fetch URLs."
+        raise OnyxError(
+            OnyxErrorCode.BAD_GATEWAY,
+            "Web content provider failed to fetch URLs.",
         ) from exc
 
     results: list[LlmOpenUrlResult] = []
@@ -229,7 +226,7 @@ def _open_urls(
 @router.post("/search", response_model=WebSearchWithContentResponse)
 def execute_web_search(
     request: WebSearchToolRequest,
-    _: User | None = Depends(current_user),
+    _: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> WebSearchWithContentResponse:
     """
@@ -272,7 +269,7 @@ def execute_web_search(
 @router.post("/search-lite", response_model=WebSearchToolResponse)
 def execute_web_search_lite(
     request: WebSearchToolRequest,
-    _: User | None = Depends(current_user),
+    _: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> WebSearchToolResponse:
     """
@@ -288,7 +285,7 @@ def execute_web_search_lite(
 @router.post("/open-urls", response_model=OpenUrlsToolResponse)
 def execute_open_urls(
     request: OpenUrlsToolRequest,
-    _: User | None = Depends(current_user),
+    _: User = Depends(require_permission(Permission.BASIC_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> OpenUrlsToolResponse:
     """

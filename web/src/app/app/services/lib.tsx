@@ -12,13 +12,14 @@ import {
   FileChatDisplay,
   Message,
   MessageResponseIDInfo,
+  MultiModelMessageResponseIDInfo,
   ResearchType,
   RetrievalType,
   StreamingError,
   ToolCallMetadata,
   UserKnowledgeFilePacket,
 } from "../interfaces";
-import { MinimalPersonaSnapshot } from "@/app/admin/assistants/interfaces";
+import { MinimalPersonaSnapshot } from "@/app/admin/agents/interfaces";
 import { ReadonlyURLSearchParams } from "next/navigation";
 import { SEARCH_PARAM_NAMES } from "./searchParams";
 import { WEB_SEARCH_TOOL_ID } from "@/app/app/components/tools/constants";
@@ -96,6 +97,7 @@ export type PacketType =
   | FileChatDisplay
   | StreamingError
   | MessageResponseIDInfo
+  | MultiModelMessageResponseIDInfo
   | StreamStopInfo
   | UserKnowledgeFilePacket
   | Packet;
@@ -108,6 +110,13 @@ export type MessageOrigin =
   | "api"
   | "slackbot"
   | "unknown";
+
+export interface LLMOverride {
+  model_provider: string;
+  model_version: string;
+  temperature?: number;
+  display_name?: string;
+}
 
 export interface SendMessageParams {
   message: string;
@@ -124,8 +133,13 @@ export interface SendMessageParams {
   modelProvider?: string;
   modelVersion?: string;
   temperature?: number;
+  // Multi-model: send multiple LLM overrides for parallel generation
+  llmOverrides?: LLMOverride[];
   // Origin of the message for telemetry tracking
   origin?: MessageOrigin;
+  // Additional context injected into the LLM call but not stored/shown in chat.
+  // Used e.g. by Chrome extension "Read this tab" feature.
+  additionalContext?: string;
 }
 
 export async function* sendMessage({
@@ -141,7 +155,9 @@ export async function* sendMessage({
   modelProvider,
   modelVersion,
   temperature,
+  llmOverrides,
   origin,
+  additionalContext,
 }: SendMessageParams): AsyncGenerator<PacketType, void, unknown> {
   // Build payload for new send-chat-message API
   const payload = {
@@ -161,8 +177,11 @@ export async function* sendMessage({
             model_version: modelVersion,
           }
         : null,
+    // Multi-model: list of LLM overrides for parallel generation
+    llm_overrides: llmOverrides ?? null,
     // Default to "unknown" for consistency with backend; callers should set explicitly
     origin: origin ?? "unknown",
+    additional_context: additionalContext ?? null,
   };
 
   const body = JSON.stringify(payload);
@@ -177,10 +196,25 @@ export async function* sendMessage({
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? `HTTP error! status: ${response.status}`);
   }
 
   yield* handleSSEStream<PacketType>(response, signal);
+}
+
+export async function setPreferredResponse(
+  userMessageId: number,
+  preferredResponseId: number
+): Promise<Response> {
+  return fetch("/api/chat/set-preferred-response", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_message_id: userMessageId,
+      preferred_response_id: preferredResponseId,
+    }),
+  });
 }
 
 export async function nameChatSession(chatSessionId: string) {
@@ -283,15 +317,15 @@ export async function deleteAllChatSessions() {
 
 export async function getAvailableContextTokens(
   chatSessionId: string
-): Promise<number> {
+): Promise<number | null> {
   const response = await fetch(
     `/api/chat/available-context-tokens/${chatSessionId}`
   );
   if (!response.ok) {
-    return 0;
+    return null;
   }
   const data = (await response.json()) as { available_tokens: number };
-  return data?.available_tokens ?? 0;
+  return data?.available_tokens ?? null;
 }
 
 export function processRawChatHistory(
@@ -301,12 +335,12 @@ export function processRawChatHistory(
   const messages: Map<number, Message> = new Map();
   const parentMessageChildrenMap: Map<number, number[]> = new Map();
 
-  let assistantMessageInd = 0;
+  let agentMessageInd = 0;
 
   rawMessages.forEach((messageInfo, _ind) => {
-    const packetsForMessage = packets[assistantMessageInd];
+    const packetsForMessage = packets[agentMessageInd];
     if (messageInfo.message_type === "assistant") {
-      assistantMessageInd++;
+      agentMessageInd++;
     }
 
     const hasContextDocs = (messageInfo?.context_docs || []).length > 0;
@@ -327,13 +361,15 @@ export function processRawChatHistory(
       nodeId: messageInfo.message_id,
       messageId: messageInfo.message_id,
       message: messageInfo.message,
-      type: messageInfo.message_type as "user" | "assistant",
+      type: messageInfo.error
+        ? "error"
+        : (messageInfo.message_type as "user" | "assistant"),
       files: messageInfo.files,
-      alternateAssistantID:
+      alternateAgentID:
         messageInfo.alternate_assistant_id !== null
           ? Number(messageInfo.alternate_assistant_id)
           : null,
-      // only include these fields if this is an assistant message so that
+      // only include these fields if this is an agent message so that
       // this is identical to what is computed at streaming time
       ...(messageInfo.message_type === "assistant"
         ? {
@@ -342,6 +378,7 @@ export function processRawChatHistory(
             query: messageInfo.rephrased_query,
             documents: messageInfo?.context_docs || [],
             citations: messageInfo?.citations || {},
+            processingDurationSeconds: messageInfo.processing_duration_seconds,
           }
         : {}),
       toolCall: messageInfo.tool_call,
@@ -351,6 +388,9 @@ export function processRawChatHistory(
       overridden_model: messageInfo.overridden_model,
       packets: packetsForMessage || [],
       currentFeedback: messageInfo.current_feedback as FeedbackType | null,
+      // Multi-model answer generation
+      preferredResponseId: messageInfo.preferred_response_id ?? null,
+      modelDisplayName: messageInfo.model_display_name ?? null,
     };
 
     messages.set(messageInfo.message_id, message);
