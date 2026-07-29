@@ -2,16 +2,17 @@ import functools
 import importlib
 import inspect
 import os
-from typing import Any
-from typing import TypeVar
+from typing import Any, TypeVar
 
-from onyx.configs.app_configs import API_SERVER_HOST
-from onyx.configs.app_configs import API_SERVER_PROTOCOL
-from onyx.configs.app_configs import API_SERVER_URL_OVERRIDE_FOR_HTTP_REQUESTS
-from onyx.configs.app_configs import APP_API_PREFIX
-from onyx.configs.app_configs import APP_PORT
-from onyx.configs.app_configs import DEV_MODE
-from onyx.configs.app_configs import ENTERPRISE_EDITION_ENABLED
+from onyx.configs.app_configs import (
+    API_SERVER_HOST,
+    API_SERVER_PROTOCOL,
+    API_SERVER_URL_OVERRIDE_FOR_HTTP_REQUESTS,
+    APP_API_PREFIX,
+    APP_PORT,
+    DEV_MODE,
+    ENTERPRISE_EDITION_ENABLED,
+)
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -62,7 +63,12 @@ def set_is_ee_based_on_env_variable() -> None:
         )
         global_version.set_ee()
     elif _LICENSE_ENFORCEMENT_ENABLED:
-        logger.notice("Enterprise Edition enabled via LICENSE_ENFORCEMENT_ENABLED")
+        logger.notice(
+            "License enforcement is enabled (LICENSE_ENFORCEMENT_ENABLED). "
+            "Enterprise Edition code is loaded, but paid features stay locked "
+            "until a valid license is applied. Without a license this "
+            "deployment behaves as Community Edition."
+        )
         global_version.set_ee()
 
 
@@ -192,7 +198,9 @@ def fetch_ee_implementation_or_noop(
     try:
         return fetch_versioned_implementation(module, attribute)
     except Exception as e:
-        logger.error(f"Failed to fetch implementation for {module}.{attribute}: {e}")
+        logger.error(
+            "Failed to fetch implementation for %s.%s: %s", module, attribute, e
+        )
         raise
 
 

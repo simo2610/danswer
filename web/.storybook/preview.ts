@@ -1,11 +1,13 @@
-import type { Preview } from "@storybook/react";
+import type { Preview } from "@storybook/react-vite";
 import { withThemeByClassName } from "@storybook/addon-themes";
+import * as TooltipPrimitive from "@radix-ui/react-tooltip";
+import React from "react";
 import "../src/app/globals.css";
 
 const preview: Preview = {
   parameters: {
     layout: "centered",
-    backgrounds: { disable: true },
+    backgrounds: { disabled: true },
     controls: {
       matchers: {
         color: /(background|color)$/i,
@@ -21,6 +23,12 @@ const preview: Preview = {
       },
       defaultTheme: "light",
     }),
+    (Story) =>
+      React.createElement(
+        TooltipPrimitive.Provider,
+        null,
+        React.createElement(Story)
+      ),
   ],
 };
 

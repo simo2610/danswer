@@ -3,22 +3,15 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
-from pydantic import model_validator
+from pydantic import BaseModel, model_validator
 
-from onyx.configs.constants import DocumentSource
-from onyx.configs.constants import MessageType
-from onyx.configs.constants import SessionType
-from onyx.context.search.models import BaseFilters
-from onyx.context.search.models import SavedSearchDoc
-from onyx.context.search.models import SearchDoc
-from onyx.context.search.models import Tag
+from onyx.configs.constants import DocumentSource, MessageType, SessionType
+from onyx.context.search.models import BaseFilters, SavedSearchDoc, SearchDoc, Tag
 from onyx.db.enums import ChatSessionSharedStatus
 from onyx.db.models import ChatSession
 from onyx.file_store.models import FileDescriptor
 from onyx.llm.override_models import LLMOverride
 from onyx.server.query_and_chat.streaming_models import Packet
-
 
 AUTO_PLACE_AFTER_LATEST_MESSAGE = -1
 
@@ -32,6 +25,7 @@ class MessageOrigin(str, Enum):
     SLACKBOT = "slackbot"
     WIDGET = "widget"
     DISCORDBOT = "discordbot"
+    MOBILE = "mobile"
     UNKNOWN = "unknown"
     UNSET = "unset"
 
@@ -73,6 +67,11 @@ class UpdateChatSessionThreadRequest(BaseModel):
 class UpdateChatSessionTemperatureRequest(BaseModel):
     chat_session_id: UUID
     temperature_override: float
+
+
+class UpdateChatSessionReasoningRequest(BaseModel):
+    chat_session_id: UUID
+    reasoning_effort_override: str | None = None
 
 
 class ChatSessionCreationRequest(BaseModel):
@@ -193,6 +192,7 @@ class ChatSessionDetails(BaseModel):
     shared_status: ChatSessionSharedStatus
     current_alternate_model: str | None = None
     current_temperature_override: float | None = None
+    current_reasoning_effort_override: str | None = None
 
     @classmethod
     def from_model(cls, model: ChatSession) -> "ChatSessionDetails":
@@ -205,6 +205,7 @@ class ChatSessionDetails(BaseModel):
             shared_status=model.shared_status,
             current_alternate_model=model.current_alternate_model,
             current_temperature_override=model.temperature_override,
+            current_reasoning_effort_override=model.reasoning_effort_override,
         )
 
 
@@ -232,8 +233,14 @@ class ChatMessageDetail(BaseModel):
     preferred_response_id: int | None = None
     model_display_name: str | None = None
 
-    def model_dump(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
-        initial_dict = super().model_dump(mode="json", *args, **kwargs)  # type: ignore
+    def model_dump(  # ty: ignore[invalid-method-override]
+        self, *args: list, **kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        initial_dict = super().model_dump(
+            mode="json",
+            *args,
+            **kwargs,  # ty: ignore[invalid-argument-type]
+        )
         initial_dict["time_sent"] = self.time_sent.isoformat()
         return initial_dict
 
@@ -241,6 +248,12 @@ class ChatMessageDetail(BaseModel):
 class SetPreferredResponseRequest(BaseModel):
     user_message_id: int
     preferred_response_id: int
+
+
+class CurrentRunInfo(BaseModel):
+    """In-flight run whose stream buffer can be replayed/tailed."""
+
+    run_id: int
 
 
 class ChatSessionDetailResponse(BaseModel):
@@ -254,9 +267,13 @@ class ChatSessionDetailResponse(BaseModel):
     shared_status: ChatSessionSharedStatus
     current_alternate_model: str | None
     current_temperature_override: float | None
+    current_reasoning_effort_override: str | None
     deleted: bool = False
     owner_name: str | None = None
     packets: list[list[Packet]]
+    # Set while a run is in flight and resumable: cursor-0 replay+tail is
+    # available at /chat-session/{id}/resume-stream.
+    current_run: CurrentRunInfo | None = None
 
 
 class AdminSearchRequest(BaseModel):
@@ -276,6 +293,7 @@ class ChatSessionSummary(BaseModel):
     shared_status: ChatSessionSharedStatus
     current_alternate_model: str | None = None
     current_temperature_override: float | None = None
+    current_reasoning_effort_override: str | None = None
 
 
 class ChatSessionGroup(BaseModel):

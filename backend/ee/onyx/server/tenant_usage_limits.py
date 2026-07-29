@@ -5,8 +5,7 @@ import time
 import requests
 
 from ee.onyx.server.tenants.access import generate_data_plane_token
-from onyx.configs.app_configs import CONTROL_PLANE_API_BASE_URL
-from onyx.configs.app_configs import DEV_MODE
+from onyx.configs.app_configs import CONTROL_PLANE_API_BASE_URL, DEV_MODE
 from onyx.server.tenant_usage_limits import TenantUsageLimitOverrides
 from onyx.server.usage_limits import NO_LIMIT
 from onyx.utils.logger import setup_logger
@@ -49,7 +48,9 @@ def fetch_usage_limit_overrides() -> dict[str, TenantUsageLimitOverrides] | None
                 result[tenant_id] = TenantUsageLimitOverrides(**override_data)
             except Exception as e:
                 logger.warning(
-                    f"Failed to parse usage limit overrides for tenant {tenant_id}: {e}"
+                    "Failed to parse usage limit overrides for tenant %s: %s",
+                    tenant_id,
+                    e,
                 )
 
         return (
@@ -57,10 +58,12 @@ def fetch_usage_limit_overrides() -> dict[str, TenantUsageLimitOverrides] | None
         )  # if empty dictionary, something went wrong and we shouldn't enforce limits
 
     except requests.exceptions.RequestException as e:
-        logger.warning(f"Failed to fetch usage limit overrides from control plane: {e}")
+        logger.warning(
+            "Failed to fetch usage limit overrides from control plane: %s", e
+        )
         return None
     except Exception as e:
-        logger.error(f"Error parsing usage limit overrides: {e}")
+        logger.error("Error parsing usage limit overrides: %s", e)
         return None
 
 
@@ -81,7 +84,7 @@ def load_usage_limit_overrides() -> None:
     _tenant_usage_limit_overrides = overrides or _tenant_usage_limit_overrides
 
     if overrides:
-        logger.info(f"Loaded usage limit overrides for {len(overrides)} tenants")
+        logger.info("Loaded usage limit overrides for %s tenants", len(overrides))
     else:
         logger.info("No tenant-specific usage limit overrides found")
 
@@ -122,7 +125,9 @@ def get_tenant_usage_limit_overrides(
         _tenant_usage_limit_overrides is None and time_since > _ERROR_FETCH_INTERVAL
     ) or (time_since > _FETCH_INTERVAL):
         logger.debug(
-            f"Last fetch time: {_last_fetch_time}, time since last fetch: {time_since}"
+            "Last fetch time: %s, time since last fetch: %s",
+            _last_fetch_time,
+            time_since,
         )
 
         load_usage_limit_overrides()

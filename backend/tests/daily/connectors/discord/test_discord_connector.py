@@ -1,19 +1,21 @@
-import os
 import time
 
 import pytest
 
 from onyx.connectors.discord.connector import DiscordConnector
-from onyx.connectors.models import Document
-from onyx.connectors.models import DocumentSource
-from onyx.connectors.models import HierarchyNode
+from onyx.connectors.models import Document, DocumentSource, HierarchyNode
+from tests.utils.secret_names import TestSecret
+
+pytestmark = pytest.mark.secrets(TestSecret.DISCORD_CONNECTOR_BOT_TOKEN)
 
 
 @pytest.fixture
-def discord_connector() -> DiscordConnector:
+def discord_connector(
+    test_secrets: dict[TestSecret, str],
+) -> DiscordConnector:
     connector = DiscordConnector()
     connector.load_credentials(
-        {"discord_bot_token": os.environ["DISCORD_CONNECTOR_BOT_TOKEN"]}
+        {"discord_bot_token": test_secrets[TestSecret.DISCORD_CONNECTOR_BOT_TOKEN]}
     )
     return connector
 

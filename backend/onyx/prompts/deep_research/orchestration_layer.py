@@ -1,8 +1,9 @@
-from onyx.prompts.deep_research.dr_tool_prompts import GENERATE_PLAN_TOOL_NAME
-from onyx.prompts.deep_research.dr_tool_prompts import GENERATE_REPORT_TOOL_NAME
-from onyx.prompts.deep_research.dr_tool_prompts import RESEARCH_AGENT_TOOL_NAME
-from onyx.prompts.deep_research.dr_tool_prompts import THINK_TOOL_NAME
-
+from onyx.prompts.deep_research.dr_tool_prompts import (
+    GENERATE_PLAN_TOOL_NAME,
+    GENERATE_REPORT_TOOL_NAME,
+    RESEARCH_AGENT_TOOL_NAME,
+    THINK_TOOL_NAME,
+)
 
 # ruff: noqa: E501, W605 start
 CLARIFICATION_PROMPT = f"""
@@ -108,9 +109,7 @@ Before calling {GENERATE_REPORT_TOOL_NAME}, double check that all aspects of the
 
 INTERNAL_SEARCH_RESEARCH_TASK_GUIDANCE = """
  If necessary, clarify if the research agent should focus mostly on organization internal searches, web searches, or a combination of both. If the task doesn't require a clear priority, don't add sourcing guidance.
-""".strip(
-    "\n"
-)
+""".strip("\n")
 
 
 USER_ORCHESTRATOR_PROMPT = """

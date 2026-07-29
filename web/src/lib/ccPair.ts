@@ -1,5 +1,5 @@
 import { ConnectorCredentialPairStatus } from "@/app/admin/connector/[ccPairId]/types";
-import { toast } from "@/hooks/useToast";
+import { toast } from "@opal/layouts";
 
 export async function setCCPairStatus(
   ccPairId: number,
@@ -30,7 +30,7 @@ export async function setCCPairStatus(
         : "Paused connector!"
     );
 
-    onUpdate && onUpdate();
+    onUpdate?.();
   } catch (error) {
     console.error("Error updating CC pair status:", error);
     toast.error("Failed to update connector status");

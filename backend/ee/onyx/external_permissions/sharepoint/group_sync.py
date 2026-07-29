@@ -1,14 +1,17 @@
 from collections.abc import Generator
 
-from office365.sharepoint.client_context import ClientContext  # type: ignore[import-untyped]
+from office365.sharepoint.client_context import ClientContext
 
 from ee.onyx.db.external_perm import ExternalUserGroup
 from ee.onyx.external_permissions.sharepoint.permission_utils import (
     get_sharepoint_external_groups,
 )
+from ee.onyx.external_permissions.utils import credential_json
 from onyx.configs.app_configs import SHAREPOINT_EXHAUSTIVE_AD_ENUMERATION
-from onyx.connectors.sharepoint.connector import acquire_token_for_rest
-from onyx.connectors.sharepoint.connector import SharepointConnector
+from onyx.connectors.sharepoint.connector import (
+    SharepointConnector,
+    acquire_token_for_rest,
+)
 from onyx.db.models import ConnectorCredentialPair
 from onyx.utils.logger import setup_logger
 
@@ -26,12 +29,7 @@ def sharepoint_group_sync(
 
     # Create SharePoint connector instance and load credentials
     connector = SharepointConnector(**connector_config)
-    credential_json = (
-        cc_pair.credential.credential_json.get_value(apply_mask=False)
-        if cc_pair.credential.credential_json
-        else {}
-    )
-    connector.load_credentials(credential_json)
+    connector.load_credentials(credential_json(cc_pair))
 
     if not connector.msal_app:
         raise RuntimeError("MSAL app not initialized in connector")
@@ -45,7 +43,7 @@ def sharepoint_group_sync(
     if not site_descriptors:
         raise RuntimeError("No SharePoint sites found for group sync")
 
-    logger.info(f"Processing {len(site_descriptors)} sites for group sync")
+    logger.info("Processing %s sites for group sync", len(site_descriptors))
 
     enumerate_all = connector_config.get(
         "exhaustive_ad_enumeration", SHAREPOINT_EXHAUSTIVE_AD_ENUMERATION
@@ -55,7 +53,7 @@ def sharepoint_group_sync(
     sp_tenant_domain = connector.sp_tenant_domain
     sp_domain_suffix = connector.sharepoint_domain_suffix
     for site_descriptor in site_descriptors:
-        logger.debug(f"Processing site: {site_descriptor.url}")
+        logger.debug("Processing site: %s", site_descriptor.url)
 
         ctx = ClientContext(site_descriptor.url).with_access_token(
             lambda: acquire_token_for_rest(msal_app, sp_tenant_domain, sp_domain_suffix)
@@ -72,6 +70,6 @@ def sharepoint_group_sync(
         # Yield each group
         for group in external_groups:
             logger.debug(
-                f"Found group: {group.id} with {len(group.user_emails)} members"
+                "Found group: %s with %s members", group.id, len(group.user_emails)
             )
             yield group

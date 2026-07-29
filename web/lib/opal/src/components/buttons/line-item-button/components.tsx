@@ -1,3 +1,4 @@
+import type React from "react";
 import {
   Interactive,
   type InteractiveStatefulProps,
@@ -5,8 +6,7 @@ import {
 } from "@opal/core";
 import type { ExtremaSizeVariants, DistributiveOmit } from "@opal/types";
 import { Tooltip, type TooltipSide } from "@opal/components";
-import type { ContentActionProps } from "@opal/layouts/content-action/components";
-import { ContentAction } from "@opal/layouts";
+import { type ContentActionProps, ContentAction } from "@opal/layouts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,25 +14,18 @@ import { ContentAction } from "@opal/layouts";
 
 type ContentPassthroughProps = DistributiveOmit<
   ContentActionProps,
-  "paddingVariant" | "widthVariant" | "ref"
+  "padding" | "width" | "ref"
 >;
 
 type LineItemButtonOwnProps = Pick<
   InteractiveStatefulProps,
-  | "state"
-  | "interaction"
-  | "onClick"
-  | "href"
-  | "target"
-  | "group"
-  | "ref"
-  | "type"
+  "state" | "interaction" | "onClick" | "href" | "target" | "group" | "ref"
 > & {
   /** Interactive select variant. @default "select-light" */
   selectVariant?: "select-light" | "select-heavy";
 
   /** Corner rounding preset (height is always content-driven). @default "md" */
-  roundingVariant?: InteractiveContainerRoundingVariant;
+  rounding?: InteractiveContainerRoundingVariant;
 
   /** Container width. @default "full" */
   width?: ExtremaSizeVariants;
@@ -50,6 +43,42 @@ type LineItemButtonProps = ContentPassthroughProps & LineItemButtonOwnProps;
 // LineItemButton
 // ---------------------------------------------------------------------------
 
+// Mirrors native <button> activation (Enter fires on keydown, Space on keyup).
+// Guarded so keystrokes on nested interactive children (e.g. `rightChildren`
+// action buttons) don't also activate the row.
+function handleRowKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    e.currentTarget.click();
+  } else if (e.key === " ") {
+    e.preventDefault();
+  }
+}
+
+function handleRowKeyUp(e: React.KeyboardEvent<HTMLDivElement>) {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === " ") {
+    e.preventDefault();
+    e.currentTarget.click();
+  }
+}
+
+// Ignore clicks originating from nested interactive children (e.g.
+// `rightChildren` action buttons) so they don't also activate the row.
+function guardNestedInteractiveClick(
+  onClick: React.MouseEventHandler<HTMLElement> | undefined
+): React.MouseEventHandler<HTMLElement> | undefined {
+  if (!onClick) return undefined;
+  return (e) => {
+    const nested = (e.target as HTMLElement).closest(
+      'button, a, [role="button"]'
+    );
+    if (nested && nested !== e.currentTarget) return;
+    onClick(e);
+  };
+}
+
 function LineItemButton({
   // Interactive surface
   selectVariant = "select-light",
@@ -60,10 +89,9 @@ function LineItemButton({
   target,
   group,
   ref,
-  type = "button",
 
   // Sizing
-  roundingVariant = "md",
+  rounding = "md",
   width = "full",
   tooltip,
   tooltipSide = "top",
@@ -71,27 +99,42 @@ function LineItemButton({
   // ContentAction pass-through
   ...contentActionProps
 }: LineItemButtonProps) {
+  // The row renders as a focusable div (role="button") instead of a native
+  // <button> so interactive `rightChildren` (e.g. action buttons) don't nest
+  // a <button> inside a <button> — invalid HTML that breaks hydration.
+  const rowButtonProps = href
+    ? undefined
+    : ({
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: handleRowKeyDown,
+        onKeyUp: handleRowKeyUp,
+      } as const);
+
   const item = (
     <Interactive.Stateful
       variant={selectVariant}
       state={state}
       interaction={interaction}
-      onClick={onClick}
+      onClick={guardNestedInteractiveClick(onClick)}
       href={href}
       target={target}
       group={group}
       ref={ref}
     >
       <Interactive.Container
-        type={type}
-        widthVariant={width}
-        heightVariant="lg"
-        roundingVariant={roundingVariant}
+        width={width}
+        size="fit"
+        rounding={rounding}
+        {...rowButtonProps}
       >
-        <ContentAction
-          {...(contentActionProps as ContentActionProps)}
-          paddingVariant="fit"
-        />
+        <div className="w-full p-2">
+          <ContentAction
+            color="interactive"
+            {...(contentActionProps as ContentActionProps)}
+            padding="fit"
+          />
+        </div>
       </Interactive.Container>
     </Interactive.Stateful>
   );

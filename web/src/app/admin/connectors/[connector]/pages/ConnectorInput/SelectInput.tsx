@@ -1,4 +1,4 @@
-import CredentialSubText from "@/components/credentials/CredentialFields";
+import CredentialSubText from "@/lib/credentials/components/CredentialFields";
 import { StringWithDescription } from "@/lib/connectors/connectors";
 import { Field } from "formik";
 
@@ -29,7 +29,7 @@ export default function SelectInput({
       <Field
         as="select"
         name={name}
-        className="w-full p-2 border border-border-03 rounded-08 bg-transparent text-text-04 focus:ring-2 focus:ring-lighter-agent focus:border-lighter-agent focus:outline-none"
+        className="w-full p-2 border border-border-03 rounded-08 bg-transparent text-text-04 focus:ring-2 focus:ring-lighter-agent focus:border-lighter-agent focus:outline-hidden"
       >
         <option value="">Select an option</option>
         {options?.map((option: any) => (

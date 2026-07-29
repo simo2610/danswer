@@ -15,8 +15,7 @@ from sqlalchemy.orm import Session
 
 from onyx.cache.factory import get_cache_backend
 from onyx.configs.app_configs import AUTO_LLM_CONFIG_URL
-from onyx.db.llm import fetch_auto_mode_providers
-from onyx.db.llm import sync_auto_mode_models
+from onyx.db.llm import fetch_auto_mode_providers, sync_auto_mode_models
 from onyx.llm.well_known_providers.auto_update_models import LLMRecommendations
 from onyx.utils.logger import setup_logger
 
@@ -32,7 +31,7 @@ def _get_cached_last_updated_at() -> datetime | None:
         if value is not None:
             return datetime.fromisoformat(value.decode("utf-8"))
     except Exception as e:
-        logger.warning(f"Failed to get cached last_updated_at: {e}")
+        logger.warning("Failed to get cached last_updated_at: %s", e)
     return None
 
 
@@ -44,7 +43,7 @@ def _set_cached_last_updated_at(updated_at: datetime) -> None:
             ex=_CACHE_TTL_SECONDS,
         )
     except Exception as e:
-        logger.warning(f"Failed to set cached last_updated_at: {e}")
+        logger.warning("Failed to set cached last_updated_at: %s", e)
 
 
 def fetch_llm_recommendations_from_github(
@@ -67,10 +66,10 @@ def fetch_llm_recommendations_from_github(
             data = response.json()
             return LLMRecommendations.model_validate(data)
     except httpx.HTTPError as e:
-        logger.error(f"Failed to fetch LLM config from GitHub: {e}")
+        logger.error("Failed to fetch LLM config from GitHub: %s", e)
         return None
     except Exception as e:
-        logger.error(f"Error parsing LLM config: {e}")
+        logger.error("Error parsing LLM config: %s", e)
         return None
 
 
@@ -120,7 +119,7 @@ def sync_llm_models_from_github(
 
         if provider_type not in config.providers:
             logger.debug(
-                f"No config for provider type '{provider_type}' in GitHub config"
+                "No config for provider type '%s' in GitHub config", provider_type
             )
             continue
 
@@ -132,9 +131,11 @@ def sync_llm_models_from_github(
         )
 
         if changes > 0:
-            results[provider.name] = changes
+            results[str(provider.id)] = changes
             logger.info(
-                f"Applied {changes} model changes to provider '{provider.name}'"
+                "Applied %s model changes to provider '%s'",
+                changes,
+                provider.name or provider.provider,
             )
 
     _set_cached_last_updated_at(config.updated_at)
@@ -146,4 +147,4 @@ def reset_cache() -> None:
     try:
         get_cache_backend().delete(_CACHE_KEY_LAST_UPDATED_AT)
     except Exception as e:
-        logger.warning(f"Failed to reset cache: {e}")
+        logger.warning("Failed to reset cache: %s", e)

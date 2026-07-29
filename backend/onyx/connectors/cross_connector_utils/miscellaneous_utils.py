@@ -1,36 +1,23 @@
 import re
-from collections.abc import Callable
-from collections.abc import Iterator
-from datetime import datetime
-from datetime import timezone
-from typing import Any
-from typing import TypeVar
-from urllib.parse import urljoin
-from urllib.parse import urlparse
+from collections.abc import Callable, Iterator
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any, TypeVar
+from urllib.parse import urljoin, urlparse
 
 import requests
 from dateutil.parser import parse
-from dateutil.parser import ParserError
 
 from onyx.configs.app_configs import CONNECTOR_LOCALHOST_OVERRIDE
-from onyx.configs.constants import DocumentSource
-from onyx.configs.constants import IGNORE_FOR_QA
-from onyx.connectors.models import BasicExpertInfo
-from onyx.connectors.models import OnyxMetadata
+from onyx.configs.constants import IGNORE_FOR_QA, DocumentSource
+from onyx.connectors.models import BasicExpertInfo, OnyxMetadata
+from onyx.utils.datetime import datetime_to_utc
 from onyx.utils.logger import setup_logger
 from onyx.utils.text_processing import is_valid_email
-
 
 T = TypeVar("T")
 U = TypeVar("U")
 logger = setup_logger()
-
-
-def datetime_to_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-
-    return dt.astimezone(timezone.utc)
 
 
 def time_str_to_utc(datetime_str: str) -> datetime:
@@ -56,18 +43,16 @@ def time_str_to_utc(datetime_str: str) -> datetime:
             if fixed not in candidates:
                 candidates.append(fixed)
 
-    last_exception: Exception | None = None
-    for candidate in candidates:
-        try:
-            dt = parse(candidate)
-            return datetime_to_utc(dt)
-        except (ValueError, ParserError) as exc:
-            last_exception = exc
+    # dateutil is the primary; the stdlib RFC 2822 parser is a fallback for
+    # inputs dateutil rejects (e.g. headers concatenated without a CRLF —
+    # TZ may be dropped, datetime_to_utc then assumes UTC).
+    for parser in (parse, parsedate_to_datetime):
+        for candidate in candidates:
+            try:
+                return datetime_to_utc(parser(candidate))
+            except (TypeError, ValueError, OverflowError):
+                continue
 
-    if last_exception is not None:
-        raise last_exception
-
-    # Fallback in case parsing failed without raising (should not happen)
     raise ValueError(f"Unable to parse datetime string: {datetime_str}")
 
 
@@ -130,7 +115,7 @@ def _parse_document_source(connector_type: Any) -> DocumentSource | None:
         return connector_type
 
     if not isinstance(connector_type, str):
-        logger.warning(f"Invalid connector_type type: {type(connector_type).__name__}")
+        logger.warning("Invalid connector_type type: %s", type(connector_type).__name__)
         return None
 
     normalized = re.sub(r"[\s\-]+", "_", connector_type.strip().lower())
@@ -138,7 +123,9 @@ def _parse_document_source(connector_type: Any) -> DocumentSource | None:
         return DocumentSource(normalized)
     except ValueError:
         logger.warning(
-            f"Invalid connector_type value: '{connector_type}' (normalized: '{normalized}')"
+            "Invalid connector_type value: '%s' (normalized: '%s')",
+            connector_type,
+            normalized,
         )
         return None
 

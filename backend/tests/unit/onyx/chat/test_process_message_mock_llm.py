@@ -3,20 +3,18 @@ from unittest.mock import Mock
 import pytest
 
 from onyx.chat import process_message
-from onyx.chat.models import AnswerStream
-from onyx.chat.models import StreamingError
+from onyx.chat.models import AnswerStream, StreamingError
 from onyx.configs import app_configs
-from onyx.server.query_and_chat.models import MessageResponseIDInfo
-from onyx.server.query_and_chat.models import SendMessageRequest
+from onyx.server.query_and_chat.models import MessageResponseIDInfo, SendMessageRequest
 
 
 def test_mock_llm_response_requires_integration_mode() -> None:
-    assert (
-        app_configs.INTEGRATION_TESTS_MODE is False
-    ), "Unit tests expect INTEGRATION_TESTS_MODE=false."
-    assert (
-        process_message.INTEGRATION_TESTS_MODE is False
-    ), "process_message should reflect INTEGRATION_TESTS_MODE=false in unit tests."
+    assert app_configs.INTEGRATION_TESTS_MODE is False, (
+        "Unit tests expect INTEGRATION_TESTS_MODE=false."
+    )
+    assert process_message.INTEGRATION_TESTS_MODE is False, (
+        "process_message should reflect INTEGRATION_TESTS_MODE=false in unit tests."
+    )
 
     request = SendMessageRequest(
         message="test",
@@ -35,7 +33,6 @@ def test_mock_llm_response_requires_integration_mode() -> None:
             process_message.handle_stream_message_objects(
                 new_msg_req=request,
                 user=mock_user,
-                db_session=Mock(),
             )
         )
 

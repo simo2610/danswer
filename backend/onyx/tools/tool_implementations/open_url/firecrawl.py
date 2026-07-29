@@ -9,8 +9,10 @@ from typing import Any
 import requests
 
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
-from onyx.tools.tool_implementations.open_url.models import WebContent
-from onyx.tools.tool_implementations.open_url.models import WebContentProvider
+from onyx.tools.tool_implementations.open_url.models import (
+    WebContent,
+    WebContentProvider,
+)
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -37,7 +39,6 @@ class FirecrawlClient(WebContentProvider):
         base_url: str = FIRECRAWL_SCRAPE_URL,
         timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-
         self._headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -156,7 +157,7 @@ class FirecrawlClient(WebContentProvider):
                 published_date = None
 
         if not text:
-            logger.warning(f"Firecrawl returned empty content for url={url}")
+            logger.warning("Firecrawl returned empty content for url=%s", url)
 
         return ExtractedContentFields(
             text=text or "",

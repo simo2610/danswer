@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Generator
 from typing import Any
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,18 +13,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ee.onyx.server.scim.api import ScimJSONResponse
-from ee.onyx.server.scim.models import ScimGroupResource
-from ee.onyx.server.scim.models import ScimListResponse
-from ee.onyx.server.scim.models import ScimName
-from ee.onyx.server.scim.models import ScimUserResource
+from ee.onyx.server.scim.models import (
+    ScimGroupResource,
+    ScimListResponse,
+    ScimName,
+    ScimUserResource,
+)
 from ee.onyx.server.scim.providers.base import ScimProvider
 from ee.onyx.server.scim.providers.entra import EntraProvider
 from ee.onyx.server.scim.providers.okta import OktaProvider
-from onyx.db.models import ScimToken
-from onyx.db.models import ScimUserMapping
-from onyx.db.models import User
-from onyx.db.models import UserGroup
-from onyx.db.models import UserRole
+from onyx.db.models import ScimToken, ScimUserMapping, User, UserGroup, UserRole
 
 # Every supported SCIM provider must appear here so that all endpoint tests
 # run against it.  When adding a new provider, add its class to this list.
@@ -145,26 +142,32 @@ def assert_scim_error(result: object, expected_status: int) -> None:
 
 def parse_scim_user(result: object, *, status: int = 200) -> ScimUserResource:
     """Assert *result* is a ScimJSONResponse and parse as ScimUserResource."""
-    assert isinstance(
-        result, ScimJSONResponse
-    ), f"Expected ScimJSONResponse, got {type(result).__name__}"
+    assert isinstance(result, ScimJSONResponse), (
+        f"Expected ScimJSONResponse, got {type(result).__name__}"
+    )
     assert result.status_code == status
-    return ScimUserResource.model_validate(json.loads(result.body))
+    return ScimUserResource.model_validate(
+        json.loads(result.body)  # ty: ignore[invalid-argument-type]
+    )
 
 
 def parse_scim_group(result: object, *, status: int = 200) -> ScimGroupResource:
     """Assert *result* is a ScimJSONResponse and parse as ScimGroupResource."""
-    assert isinstance(
-        result, ScimJSONResponse
-    ), f"Expected ScimJSONResponse, got {type(result).__name__}"
+    assert isinstance(result, ScimJSONResponse), (
+        f"Expected ScimJSONResponse, got {type(result).__name__}"
+    )
     assert result.status_code == status
-    return ScimGroupResource.model_validate(json.loads(result.body))
+    return ScimGroupResource.model_validate(
+        json.loads(result.body)  # ty: ignore[invalid-argument-type]
+    )
 
 
 def parse_scim_list(result: object) -> ScimListResponse:
     """Assert *result* is a ScimJSONResponse and parse as ScimListResponse."""
-    assert isinstance(
-        result, ScimJSONResponse
-    ), f"Expected ScimJSONResponse, got {type(result).__name__}"
+    assert isinstance(result, ScimJSONResponse), (
+        f"Expected ScimJSONResponse, got {type(result).__name__}"
+    )
     assert result.status_code == 200
-    return ScimListResponse.model_validate(json.loads(result.body))
+    return ScimListResponse.model_validate(
+        json.loads(result.body)  # ty: ignore[invalid-argument-type]
+    )

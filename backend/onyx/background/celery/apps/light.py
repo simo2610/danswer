@@ -1,26 +1,25 @@
 from typing import Any
 
-from celery import Celery
-from celery import signals
-from celery import Task
+from celery import Celery, Task, signals
 from celery.apps.worker import Worker
-from celery.signals import celeryd_init
-from celery.signals import worker_init
-from celery.signals import worker_ready
-from celery.signals import worker_shutdown
+from celery.signals import celeryd_init, worker_init, worker_ready, worker_shutdown
 
 import onyx.background.celery.apps.app_base as app_base
 from onyx.background.celery.celery_utils import httpx_init_vespa_pool
-from onyx.configs.app_configs import MANAGED_VESPA
-from onyx.configs.app_configs import VESPA_CLOUD_CERT_PATH
-from onyx.configs.app_configs import VESPA_CLOUD_KEY_PATH
+from onyx.configs.app_configs import (
+    MANAGED_VESPA,
+    VESPA_CLOUD_CERT_PATH,
+    VESPA_CLOUD_KEY_PATH,
+)
 from onyx.configs.constants import POSTGRES_CELERY_WORKER_LIGHT_APP_NAME
 from onyx.db.engine.sql_engine import SqlEngine
-from onyx.server.metrics.celery_task_metrics import on_celery_task_postrun
-from onyx.server.metrics.celery_task_metrics import on_celery_task_prerun
-from onyx.server.metrics.celery_task_metrics import on_celery_task_rejected
-from onyx.server.metrics.celery_task_metrics import on_celery_task_retry
-from onyx.server.metrics.celery_task_metrics import on_celery_task_revoked
+from onyx.server.metrics.celery_task_metrics import (
+    on_celery_task_postrun,
+    on_celery_task_prerun,
+    on_celery_task_rejected,
+    on_celery_task_retry,
+    on_celery_task_revoked,
+)
 from onyx.server.metrics.metrics_server import start_metrics_server
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
@@ -29,7 +28,7 @@ logger = setup_logger()
 
 celery_app = Celery(__name__)
 celery_app.config_from_object("onyx.background.celery.configs.light")
-celery_app.Task = app_base.TenantAwareTask  # type: ignore [misc]
+celery_app.Task = app_base.TenantAwareTask  # ty: ignore[invalid-assignment]
 
 
 @signals.task_prerun.connect
@@ -70,6 +69,7 @@ def on_task_retry(sender: Any | None = None, **kwargs: Any) -> None:  # noqa: AR
 def on_task_revoked(sender: Any | None = None, **kwargs: Any) -> None:
     task_name = getattr(sender, "name", None) or str(sender)
     on_celery_task_revoked(kwargs.get("task_id"), task_name)
+    app_base.on_task_revoked(**kwargs)
 
 
 @signals.task_rejected.connect
@@ -95,23 +95,31 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
 
     logger.info("worker_init signal received.")
 
-    logger.info(f"Concurrency: {sender.concurrency}")  # type: ignore
+    logger.info(
+        "Concurrency: %s",
+        sender.concurrency,  # ty: ignore[unresolved-attribute]
+    )
 
     SqlEngine.set_app_name(POSTGRES_CELERY_WORKER_LIGHT_APP_NAME)
-    SqlEngine.init_engine(pool_size=sender.concurrency, max_overflow=EXTRA_CONCURRENCY)  # type: ignore
+    SqlEngine.init_engine(
+        pool_size=sender.concurrency,  # ty: ignore[unresolved-attribute]
+        max_overflow=EXTRA_CONCURRENCY,
+    )
 
     if MANAGED_VESPA:
         httpx_init_vespa_pool(
-            sender.concurrency + EXTRA_CONCURRENCY,  # type: ignore
+            sender.concurrency + EXTRA_CONCURRENCY,  # ty: ignore[unresolved-attribute]
             ssl_cert=VESPA_CLOUD_CERT_PATH,
             ssl_key=VESPA_CLOUD_KEY_PATH,
         )
     else:
-        httpx_init_vespa_pool(sender.concurrency + EXTRA_CONCURRENCY)  # type: ignore
+        httpx_init_vespa_pool(
+            sender.concurrency + EXTRA_CONCURRENCY  # ty: ignore[unresolved-attribute]
+        )
 
     app_base.wait_for_redis(sender, **kwargs)
     app_base.wait_for_db(sender, **kwargs)
-    app_base.wait_for_vespa_or_shutdown(sender, **kwargs)
+    app_base.wait_for_document_index_or_shutdown()
 
     # Less startup checks in multi-tenant case
     if MULTI_TENANT:
@@ -151,8 +159,8 @@ celery_app.autodiscover_tasks(
             "onyx.background.celery.tasks.doc_permission_syncing",
             "onyx.background.celery.tasks.docprocessing",
             "onyx.background.celery.tasks.opensearch_migration",
-            # Sandbox cleanup tasks (isolated in build feature)
-            "onyx.server.features.build.sandbox.tasks",
+            # Sandbox cleanup tasks (build feature)
+            "onyx.background.celery.tasks.build",
         ]
     )
 )

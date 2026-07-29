@@ -1,26 +1,25 @@
 """Unit tests for chat history compression module."""
 
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
-from onyx.chat.compression import _build_llm_messages_for_summarization
-from onyx.chat.compression import find_summary_for_branch
-from onyx.chat.compression import generate_summary
-from onyx.chat.compression import get_compression_params
-from onyx.chat.compression import get_messages_to_summarize
-from onyx.chat.compression import SummaryContent
+from onyx.chat.compression import (
+    SummaryContent,
+    _build_llm_messages_for_summarization,
+    find_summary_for_branch,
+    generate_summary,
+    get_compression_params,
+    get_messages_to_summarize,
+)
 from onyx.configs.constants import MessageType
-from onyx.llm.models import AssistantMessage
-from onyx.llm.models import SystemMessage
-from onyx.llm.models import UserMessage
-from onyx.prompts.compression_prompts import PROGRESSIVE_SUMMARY_SYSTEM_PROMPT_BLOCK
-from onyx.prompts.compression_prompts import PROGRESSIVE_USER_REMINDER
-from onyx.prompts.compression_prompts import SUMMARIZATION_CUTOFF_MARKER
-from onyx.prompts.compression_prompts import SUMMARIZATION_PROMPT
-from onyx.prompts.compression_prompts import USER_REMINDER
+from onyx.llm.models import AssistantMessage, SystemMessage, UserMessage
+from onyx.prompts.compression_prompts import (
+    PROGRESSIVE_SUMMARY_SYSTEM_PROMPT_BLOCK,
+    PROGRESSIVE_USER_REMINDER,
+    SUMMARIZATION_CUTOFF_MARKER,
+    SUMMARIZATION_PROMPT,
+    USER_REMINDER,
+)
 
 # Base time for generating sequential timestamps
 BASE_TIME = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -79,7 +78,7 @@ def test_get_messages_returns_summary_content() -> None:
         create_mock_message(2, "msg2", 100),
     ]
     result = get_messages_to_summarize(
-        chat_history=messages,  # type: ignore[arg-type]
+        chat_history=messages,  # ty: ignore[invalid-argument-type]
         existing_summary=None,
         tokens_for_recent=50,
     )
@@ -100,7 +99,7 @@ def test_messages_after_summary_cutoff_only() -> None:
     existing_summary.last_summarized_message_id = 2
 
     result = get_messages_to_summarize(
-        chat_history=messages,  # type: ignore[arg-type]
+        chat_history=messages,  # ty: ignore[invalid-argument-type]
         existing_summary=existing_summary,
         tokens_for_recent=50,
     )
@@ -120,7 +119,7 @@ def test_no_summary_considers_all_messages() -> None:
     ]
 
     result = get_messages_to_summarize(
-        chat_history=messages,  # type: ignore[arg-type]
+        chat_history=messages,  # ty: ignore[invalid-argument-type]
         existing_summary=None,
         tokens_for_recent=50,
     )
@@ -138,7 +137,7 @@ def test_empty_messages_filtered_out() -> None:
     ]
 
     result = get_messages_to_summarize(
-        chat_history=messages,  # type: ignore[arg-type]
+        chat_history=messages,  # ty: ignore[invalid-argument-type]
         existing_summary=None,
         tokens_for_recent=50,
     )
@@ -179,7 +178,10 @@ def test_find_summary_for_branch_returns_matching_branch() -> None:
         matching_summary
     ]
 
-    result = find_summary_for_branch(mock_db, branch_history)  # type: ignore[arg-type]
+    result = find_summary_for_branch(
+        mock_db,
+        branch_history,  # ty: ignore[invalid-argument-type]
+    )
 
     assert result == matching_summary
 
@@ -208,7 +210,10 @@ def test_find_summary_for_branch_ignores_other_branch() -> None:
         other_branch_summary
     ]
 
-    result = find_summary_for_branch(mock_db, branch_b_history)  # type: ignore[arg-type]
+    result = find_summary_for_branch(
+        mock_db,
+        branch_b_history,  # ty: ignore[invalid-argument-type]
+    )
 
     assert result is None
 
@@ -231,7 +236,7 @@ def test_cutoff_always_before_user_message() -> None:
     # Token budget that would normally cut between messages 3 and 4
     # (keeping ~300 tokens = messages 4, 5, 6)
     result = get_messages_to_summarize(
-        chat_history=messages,  # type: ignore[arg-type]
+        chat_history=messages,  # ty: ignore[invalid-argument-type]
         existing_summary=None,
         tokens_for_recent=300,
     )
@@ -255,7 +260,10 @@ def test__build_llm_messages_for_summarization_user_messages() -> None:
         create_mock_message(2, "How are you?", 15, MessageType.USER),
     ]
 
-    result = _build_llm_messages_for_summarization(messages, {})  # type: ignore[arg-type]
+    result = _build_llm_messages_for_summarization(
+        messages,  # ty: ignore[invalid-argument-type]
+        {},
+    )
 
     assert len(result) == 2
     assert all(isinstance(m, UserMessage) for m in result)
@@ -269,7 +277,10 @@ def test__build_llm_messages_for_summarization_assistant_messages() -> None:
         create_mock_message(1, "I'm doing great!", 20, MessageType.ASSISTANT),
     ]
 
-    result = _build_llm_messages_for_summarization(messages, {})  # type: ignore[arg-type]
+    result = _build_llm_messages_for_summarization(
+        messages,  # ty: ignore[invalid-argument-type]
+        {},
+    )
 
     assert len(result) == 1
     assert isinstance(result[0], AssistantMessage)
@@ -303,7 +314,10 @@ def test__build_llm_messages_for_summarization_skips_tool_responses() -> None:
         create_mock_message(3, "Assistant answer", 20, MessageType.ASSISTANT),
     ]
 
-    result = _build_llm_messages_for_summarization(messages, {})  # type: ignore[arg-type]
+    result = _build_llm_messages_for_summarization(
+        messages,  # ty: ignore[invalid-argument-type]
+        {},
+    )
 
     assert len(result) == 2
     assert isinstance(result[0], UserMessage)
@@ -318,7 +332,10 @@ def test__build_llm_messages_for_summarization_skips_empty() -> None:
         create_mock_message(3, "Also has content", 10, MessageType.ASSISTANT),
     ]
 
-    result = _build_llm_messages_for_summarization(messages, {})  # type: ignore[arg-type]
+    result = _build_llm_messages_for_summarization(
+        messages,  # ty: ignore[invalid-argument-type]
+        {},
+    )
 
     assert len(result) == 2
 
@@ -340,8 +357,8 @@ def test_generate_summary_initial_system_prompt() -> None:
 
     with patch("onyx.chat.compression.llm_generation_span"):
         result = generate_summary(
-            older_messages=older_messages,  # type: ignore[arg-type]
-            recent_messages=recent_messages,  # type: ignore[arg-type]
+            older_messages=older_messages,  # ty: ignore[invalid-argument-type]
+            recent_messages=recent_messages,  # ty: ignore[invalid-argument-type]
             llm=mock_llm,
             tool_id_to_name={},
             existing_summary=None,
@@ -386,8 +403,8 @@ def test_generate_summary_progressive_system_prompt() -> None:
 
     with patch("onyx.chat.compression.llm_generation_span"):
         result = generate_summary(
-            older_messages=older_messages,  # type: ignore[arg-type]
-            recent_messages=recent_messages,  # type: ignore[arg-type]
+            older_messages=older_messages,  # ty: ignore[invalid-argument-type]
+            recent_messages=recent_messages,  # ty: ignore[invalid-argument-type]
             llm=mock_llm,
             tool_id_to_name={},
             existing_summary=existing_summary,
@@ -429,8 +446,8 @@ def test_generate_summary_cutoff_marker_as_separate_message() -> None:
 
     with patch("onyx.chat.compression.llm_generation_span"):
         generate_summary(
-            older_messages=older_messages,  # type: ignore[arg-type]
-            recent_messages=recent_messages,  # type: ignore[arg-type]
+            older_messages=older_messages,  # ty: ignore[invalid-argument-type]
+            recent_messages=recent_messages,  # ty: ignore[invalid-argument-type]
             llm=mock_llm,
             tool_id_to_name={},
             existing_summary=None,
@@ -466,8 +483,8 @@ def test_generate_summary_messages_are_separate() -> None:
 
     with patch("onyx.chat.compression.llm_generation_span"):
         generate_summary(
-            older_messages=older_messages,  # type: ignore[arg-type]
-            recent_messages=recent_messages,  # type: ignore[arg-type]
+            older_messages=older_messages,  # ty: ignore[invalid-argument-type]
+            recent_messages=recent_messages,  # ty: ignore[invalid-argument-type]
             llm=mock_llm,
             tool_id_to_name={},
             existing_summary=None,

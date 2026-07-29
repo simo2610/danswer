@@ -1,14 +1,11 @@
 import uuid
-from datetime import datetime
-from datetime import timezone
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import jwt
 import pytest
 
 from onyx.auth.users import SingleTenantJWTStrategy
-
 
 _TEST_SECRET = "test-secret-key-for-jwt-unit-tests"
 _TEST_LIFETIME = 3600  # 1 hour

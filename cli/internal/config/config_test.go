@@ -11,9 +11,6 @@ func clearEnvVars(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{EnvServerURL, EnvAPIKey, EnvAgentID, EnvStreamMarkdown} {
 		t.Setenv(key, "")
-		if err := os.Unsetenv(key); err != nil {
-			t.Fatal(err)
-		}
 	}
 }
 
@@ -253,5 +250,65 @@ func TestSaveCreatesParentDirs(t *testing.T) {
 
 	if !ConfigExists() {
 		t.Error("config file should exist after save")
+	}
+}
+
+func TestAPIURL(t *testing.T) {
+	t.Setenv(EnvAPIPrefix, "/api")
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"https://cloud.onyx.app", "https://cloud.onyx.app/api"},
+		{"https://cloud.onyx.app/", "https://cloud.onyx.app/api"},
+		{"https://cloud.onyx.app/api", "https://cloud.onyx.app/api"},
+		{"https://cloud.onyx.app/api/", "https://cloud.onyx.app/api"},
+		{"http://localhost:8080", "http://localhost:8080/api"},
+	}
+	for _, tc := range cases {
+		got := APIURL(tc.input)
+		if got != tc.want {
+			t.Errorf("APIURL(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestAPIURLCustomPrefix(t *testing.T) {
+	t.Setenv(EnvAPIPrefix, "/onyx/api")
+	for _, input := range []string{
+		"https://onyx.example",
+		"https://onyx.example/onyx/api",
+	} {
+		got := APIURL(input)
+		if got != "https://onyx.example/onyx/api" {
+			t.Errorf("APIURL(%q) = %q", input, got)
+		}
+	}
+}
+
+func TestAPIURLEmptyPrefix(t *testing.T) {
+	t.Setenv(EnvAPIPrefix, "")
+	if got := APIURL("http://localhost:8080/"); got != "http://localhost:8080" {
+		t.Errorf("APIURL() = %q", got)
+	}
+}
+
+func TestOnyxWebURL(t *testing.T) {
+	t.Setenv(EnvAPIPrefix, "/api")
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"https://cloud.onyx.app/api", "https://cloud.onyx.app"},
+		{"https://cloud.onyx.app/api/", "https://cloud.onyx.app"},
+		{"https://onyx.example/base/api", "https://onyx.example/base"},
+		{"https://cloud.onyx.app", "https://cloud.onyx.app"},
+		{"http://localhost:8080", "http://localhost:8080"},
+	}
+	for _, tc := range cases {
+		got := OnyxWebURL(tc.input)
+		if got != tc.want {
+			t.Errorf("OnyxWebURL(%q) = %q, want %q", tc.input, got, tc.want)
+		}
 	}
 }

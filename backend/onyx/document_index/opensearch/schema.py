@@ -1,37 +1,40 @@
 import hashlib
-from datetime import datetime
-from datetime import timezone
-from typing import Any
-from typing import Self
+from datetime import datetime, timezone
+from typing import Any, Self
 
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import field_serializer
-from pydantic import field_validator
-from pydantic import model_serializer
-from pydantic import model_validator
-from pydantic import SerializerFunctionWrapHandler
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
-from onyx.configs.app_configs import OPENSEARCH_INDEX_NUM_REPLICAS
-from onyx.configs.app_configs import OPENSEARCH_INDEX_NUM_SHARDS
-from onyx.configs.app_configs import OPENSEARCH_TEXT_ANALYZER
-from onyx.configs.app_configs import USING_AWS_MANAGED_OPENSEARCH
+from onyx.configs.app_configs import (
+    OPENSEARCH_INDEX_NUM_REPLICAS,
+    OPENSEARCH_INDEX_NUM_SHARDS,
+    OPENSEARCH_TEXT_ANALYZER,
+    USING_AWS_MANAGED_OPENSEARCH,
+)
 from onyx.document_index.interfaces_new import TenantState
-from onyx.document_index.opensearch.constants import DEFAULT_MAX_CHUNK_SIZE
-from onyx.document_index.opensearch.constants import EF_CONSTRUCTION
-from onyx.document_index.opensearch.constants import EF_SEARCH
-from onyx.document_index.opensearch.constants import M
-from onyx.document_index.opensearch.string_filtering import DocumentIDTooLongError
-from onyx.document_index.opensearch.string_filtering import (
-    filter_and_validate_document_id,
+from onyx.document_index.opensearch.constants import (
+    DEFAULT_MAX_CHUNK_SIZE,
+    EF_CONSTRUCTION,
+    EF_SEARCH,
+    M,
 )
 from onyx.document_index.opensearch.string_filtering import (
     MAX_DOCUMENT_ID_ENCODED_LENGTH,
+    DocumentIDTooLongError,
+    filter_and_validate_document_id,
 )
+from onyx.utils.datetime import datetime_to_utc
 from onyx.utils.tenant import get_tenant_id_short_string
 from shared_configs.configs import MULTI_TENANT
 from shared_configs.contextvars import get_current_tenant_id
-
 
 TITLE_FIELD_NAME = "title"
 TITLE_VECTOR_FIELD_NAME = "title_vector"
@@ -40,9 +43,11 @@ CONTENT_VECTOR_FIELD_NAME = "content_vector"
 SOURCE_TYPE_FIELD_NAME = "source_type"
 METADATA_LIST_FIELD_NAME = "metadata_list"
 LAST_UPDATED_FIELD_NAME = "last_updated"
+CREATED_AT_FIELD_NAME = "created_at"
 PUBLIC_FIELD_NAME = "public"
 ACCESS_CONTROL_LIST_FIELD_NAME = "access_control_list"
 HIDDEN_FIELD_NAME = "hidden"
+WRITTEN_BY_PORT_FIELD_NAME = "written_by_port"
 GLOBAL_BOOST_FIELD_NAME = "global_boost"
 SEMANTIC_IDENTIFIER_FIELD_NAME = "semantic_identifier"
 IMAGE_FILE_ID_FIELD_NAME = "image_file_id"
@@ -106,9 +111,11 @@ def get_opensearch_doc_chunk_id(
         )
     except DocumentIDTooLongError:
         # If the document ID is too long, use a hash instead.
-        # We use blake2b because it is faster and equally secure as SHA256, and
+        # We use blake2b because it is faster and equally secure as SHA-256, and
         # accepts digest_size which controls the number of bytes returned in the
-        # hash.
+        # hash. Edit: Actually modern CPUs have good hardware acceleration
+        # specifically for SHA-256 so really blake2b is not expected to be
+        # faster in some production settings.
         # digest_size is the size of the returned hash in bytes. Since we're
         # decoding the hash bytes as a hex string, the digest_size should be
         # half the max target size of the hash string.
@@ -120,24 +127,11 @@ def get_opensearch_doc_chunk_id(
             document_id.encode("utf-8"), digest_size=digest_size
         ).hexdigest()
 
-    opensearch_doc_chunk_id: str = (
-        f"{opensearch_doc_chunk_id_tenant_prefix}{sanitized_document_id}{opensearch_doc_chunk_id_suffix}"
-    )
+    opensearch_doc_chunk_id: str = f"{opensearch_doc_chunk_id_tenant_prefix}{sanitized_document_id}{opensearch_doc_chunk_id_suffix}"
 
     # Do one more validation to ensure we haven't exceeded the max length.
     opensearch_doc_chunk_id = filter_and_validate_document_id(opensearch_doc_chunk_id)
     return opensearch_doc_chunk_id
-
-
-def set_or_convert_timezone_to_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        # astimezone will raise if value does not have a timezone set.
-        value = value.replace(tzinfo=timezone.utc)
-    else:
-        # Does appropriate time conversion if value was set in a different
-        # timezone.
-        value = value.astimezone(timezone.utc)
-    return value
 
 
 class DocumentChunkWithoutVectors(BaseModel):
@@ -172,11 +166,18 @@ class DocumentChunkWithoutVectors(BaseModel):
     metadata_list: list[str] | None = None
     # If it exists, time zone should always be UTC.
     last_updated: datetime | None = None
+    # Time the document was created at the source. If it exists, time zone should
+    # always be UTC.
+    created_at: datetime | None = None
 
     public: bool
     access_control_list: list[str]
     # Defaults to False, currently gets written during update not index.
     hidden: bool = False
+    # None on all normal writes (omitted via exclude_none, so old indices whose mapping
+    # lacks the field are never sent it). Only the reindex port sets it True, and only on
+    # the freshly-created target index; the orphan sweep deletes by it.
+    written_by_port: bool | None = None
 
     global_boost: int
 
@@ -239,7 +240,7 @@ class DocumentChunkWithoutVectors(BaseModel):
         serialized_exclude_none = {k: v for k, v in serialized.items() if v is not None}
         return serialized_exclude_none
 
-    @field_serializer("last_updated", mode="wrap")
+    @field_serializer("last_updated", "created_at", mode="wrap")
     def serialize_datetime_fields_to_epoch_seconds(
         self,
         value: datetime | None,
@@ -252,12 +253,14 @@ class DocumentChunkWithoutVectors(BaseModel):
         """
         if value is None:
             return None
-        value = set_or_convert_timezone_to_utc(value)
+        value = datetime_to_utc(value)
         return int(value.timestamp())
 
-    @field_validator("last_updated", mode="before")
+    @field_validator("last_updated", "created_at", mode="before")
     @classmethod
-    def parse_epoch_seconds_to_datetime(cls, value: Any) -> datetime | None:
+    def parse_epoch_seconds_to_datetime(
+        cls, value: Any, info: ValidationInfo
+    ) -> datetime | None:
         """Parses seconds since the Unix epoch to a datetime object.
 
         If the input is None, returns None.
@@ -267,11 +270,10 @@ class DocumentChunkWithoutVectors(BaseModel):
         if value is None:
             return None
         if isinstance(value, datetime):
-            value = set_or_convert_timezone_to_utc(value)
-            return value
+            return datetime_to_utc(value)
         if not isinstance(value, int):
             raise ValueError(
-                f"Bug: Expected an int for the last_updated property from OpenSearch, got {type(value)} instead."
+                f"Bug: Expected an int for the datetime property '{info.field_name}' from OpenSearch, got {type(value)} instead."
             )
         return datetime.fromtimestamp(value, tz=timezone.utc)
 
@@ -466,6 +468,12 @@ class DocumentSchema:
                     # would make sense to sort by date.
                     "doc_values": True,
                 },
+                # Source creation time.
+                CREATED_AT_FIELD_NAME: {
+                    "type": "date",
+                    "format": "epoch_second",
+                    "doc_values": True,
+                },
                 # Access control fields.
                 # Whether the doc is public. Could have fallen under access
                 # control list but is such a broad and critical filter that it
@@ -485,6 +493,8 @@ class DocumentSchema:
                 # PUBLIC_FIELD_NAME and ACCESS_CONTROL_LIST_FIELD_NAME; up to
                 # search implementations to guarantee this.
                 HIDDEN_FIELD_NAME: {"type": "boolean"},
+                # Marks port-written chunks; filtered by the orphan sweep's delete-by-query.
+                WRITTEN_BY_PORT_FIELD_NAME: {"type": "boolean"},
                 GLOBAL_BOOST_FIELD_NAME: {"type": "integer"},
                 # This field is only used for displaying a useful name for the
                 # doc in the UI and is not used for searching. Disabling these

@@ -4,12 +4,13 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
-from jira import JIRA
-from jira import JIRAError
+from jira import JIRA, JIRAError
 
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.exceptions import CredentialExpiredError
-from onyx.connectors.exceptions import InsufficientPermissionsError
+from onyx.connectors.exceptions import (
+    ConnectorValidationError,
+    CredentialExpiredError,
+    InsufficientPermissionsError,
+)
 from onyx.connectors.jira.connector import JiraConnector
 from tests.unit.onyx.connectors.utils import load_everything_from_checkpoint_connector
 
@@ -40,7 +41,7 @@ def test_nonexistent_project_error_during_indexing(
     # Mock search_issues to raise this error
     jira_client = jira_connector_with_invalid_project._jira_client
     assert jira_client is not None
-    jira_client.search_issues.side_effect = error  # type: ignore
+    jira_client.search_issues.side_effect = error  # ty: ignore[unresolved-attribute]
 
     # Attempt to load from checkpoint - should raise ConnectorValidationError
     end_time = time.time()
@@ -70,7 +71,7 @@ def test_invalid_jql_error_during_indexing(
     # Mock search_issues to raise this error
     jira_client = jira_connector_with_invalid_project._jira_client
     assert jira_client is not None
-    jira_client.search_issues.side_effect = error  # type: ignore
+    jira_client.search_issues.side_effect = error  # ty: ignore[unresolved-attribute]
 
     # Attempt to load from checkpoint - should raise ConnectorValidationError
     end_time = time.time()
@@ -96,7 +97,7 @@ def test_credential_expired_error_during_indexing(
     # Mock search_issues to raise this error
     jira_client = jira_connector_with_invalid_project._jira_client
     assert jira_client is not None
-    jira_client.search_issues.side_effect = error  # type: ignore
+    jira_client.search_issues.side_effect = error  # ty: ignore[unresolved-attribute]
 
     # Attempt to load from checkpoint - should raise CredentialExpiredError
     end_time = time.time()
@@ -122,7 +123,7 @@ def test_insufficient_permissions_error_during_indexing(
     # Mock search_issues to raise this error
     jira_client = jira_connector_with_invalid_project._jira_client
     assert jira_client is not None
-    jira_client.search_issues.side_effect = error  # type: ignore
+    jira_client.search_issues.side_effect = error  # ty: ignore[unresolved-attribute]
 
     # Attempt to load from checkpoint - should raise InsufficientPermissionsError
     end_time = time.time()

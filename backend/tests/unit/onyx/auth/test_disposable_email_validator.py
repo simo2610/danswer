@@ -2,8 +2,10 @@
 Tests for disposable email validation.
 """
 
-from onyx.auth.disposable_email_validator import DisposableEmailValidator
-from onyx.auth.disposable_email_validator import is_disposable_email
+from onyx.auth.disposable_email_validator import (
+    DisposableEmailValidator,
+    is_disposable_email,
+)
 
 
 class TestDisposableEmailValidator:
@@ -61,9 +63,9 @@ class TestDisposableEmailValidator:
         ]
 
         for email in legitimate_emails:
-            assert (
-                is_disposable_email(email) is False
-            ), f"{email} should not be disposable"
+            assert is_disposable_email(email) is False, (
+                f"{email} should not be disposable"
+            )
 
     def test_case_insensitive(self) -> None:
         """Test that domain checking is case-insensitive."""

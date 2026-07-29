@@ -1,40 +1,44 @@
 import json
 import threading
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import requests
 from sqlalchemy.orm import Session
 from typing_extensions import override
 
 from onyx.chat.emitter import Emitter
-from onyx.configs.app_configs import IMAGE_MODEL_NAME
-from onyx.configs.app_configs import IMAGE_MODEL_PROVIDER
-from onyx.db.image_generation import get_default_image_generation_config
+from onyx.configs.app_configs import IMAGE_MODEL_NAME, IMAGE_MODEL_PROVIDER
 from onyx.file_store.models import ChatFileType
-from onyx.file_store.utils import build_frontend_file_url
-from onyx.file_store.utils import load_chat_file_by_id
-from onyx.file_store.utils import save_files
+from onyx.file_store.utils import (
+    build_frontend_file_url,
+    load_chat_file_by_id,
+    save_files,
+)
 from onyx.image_gen.factory import get_image_generation_provider
-from onyx.image_gen.factory import validate_credentials
-from onyx.image_gen.interfaces import ImageGenerationProviderCredentials
-from onyx.image_gen.interfaces import ReferenceImage
+from onyx.image_gen.generation import (
+    generate_images_with_provider,
+    is_image_generation_configured,
+    resolve_image_size,
+)
+from onyx.image_gen.interfaces import (
+    ImageGenerationProviderCredentials,
+    ImageShape,
+    ReferenceImage,
+)
 from onyx.server.query_and_chat.placement import Placement
-from onyx.server.query_and_chat.streaming_models import GeneratedImage
-from onyx.server.query_and_chat.streaming_models import ImageGenerationFinal
-from onyx.server.query_and_chat.streaming_models import ImageGenerationToolHeartbeat
-from onyx.server.query_and_chat.streaming_models import ImageGenerationToolStart
-from onyx.server.query_and_chat.streaming_models import Packet
+from onyx.server.query_and_chat.streaming_models import (
+    GeneratedImage,
+    ImageGenerationFinal,
+    ImageGenerationToolHeartbeat,
+    ImageGenerationToolStart,
+    Packet,
+)
 from onyx.tools.interface import Tool
-from onyx.tools.models import ImageGenerationToolOverrideKwargs
-from onyx.tools.models import ToolCallException
-from onyx.tools.models import ToolExecutionException
-from onyx.tools.models import ToolResponse
+from onyx.tools.models import ToolCallException, ToolExecutionException, ToolResponse
 from onyx.tools.tool_implementations.images.models import (
     FinalImageGenerationResponse,
+    ImageGenerationResponse,
 )
-from onyx.tools.tool_implementations.images.models import ImageGenerationResponse
-from onyx.tools.tool_implementations.images.models import ImageShape
 from onyx.utils.b64 import get_image_type_from_bytes
 from onyx.utils.logger import setup_logger
 from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
@@ -48,7 +52,7 @@ PROMPT_FIELD = "prompt"
 REFERENCE_IMAGE_FILE_IDS_FIELD = "reference_image_file_ids"
 
 
-class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
+class ImageGenerationTool(Tool[None]):
     NAME = "generate_image"
     DESCRIPTION = "Generate an image based on a prompt. Do not use unless the user specifically requests an image."
     DISPLAY_NAME = "Image Generation"
@@ -93,30 +97,7 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
     @classmethod
     def is_available(cls, db_session: Session) -> bool:
         """Available if a default image generation config exists with valid credentials."""
-        try:
-            config = get_default_image_generation_config(db_session)
-            if not config or not config.model_configuration:
-                return False
-
-            llm_provider = config.model_configuration.llm_provider
-            credentials = ImageGenerationProviderCredentials(
-                api_key=(
-                    llm_provider.api_key.get_value(apply_mask=False)
-                    if llm_provider.api_key
-                    else None
-                ),
-                api_base=llm_provider.api_base,
-                api_version=llm_provider.api_version,
-                deployment_name=llm_provider.deployment_name,
-                custom_config=llm_provider.custom_config,
-            )
-            return validate_credentials(
-                provider=llm_provider.provider,
-                credentials=credentials,
-            )
-        except Exception:
-            logger.exception("Error checking if image generation is available")
-            return False
+        return is_image_generation_configured(db_session)
 
     def tool_definition(self) -> dict:
         return {
@@ -142,8 +123,11 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
                         REFERENCE_IMAGE_FILE_IDS_FIELD: {
                             "type": "array",
                             "description": (
-                                "Optional image file IDs to use as reference context for edits/variations. "
-                                "Use the file_id values returned by previous generate_image calls."
+                                "Optional file_ids of existing images to edit or use as reference;"
+                                " the first is the primary edit source."
+                                " Get file_ids from `[attached image — file_id: <id>]` tags on"
+                                " user-attached images or from prior generate_image tool responses."
+                                " Omit for a fresh, unrelated generation."
                             ),
                             "items": {
                                 "type": "string",
@@ -168,59 +152,31 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
         prompt: str,
         shape: ImageShape,
         reference_images: list[ReferenceImage] | None = None,
-    ) -> tuple[ImageGenerationResponse, Any]:
-        if shape == ImageShape.LANDSCAPE:
-            if "gpt-image-1" in self.model:
-                size = "1536x1024"
-            else:
-                size = "1792x1024"
-        elif shape == ImageShape.PORTRAIT:
-            if "gpt-image-1" in self.model:
-                size = "1024x1536"
-            else:
-                size = "1024x1792"
-        else:
-            size = "1024x1024"
-        logger.debug(f"Generating image with model: {self.model}, size: {size}")
+    ) -> ImageGenerationResponse:
+        size = resolve_image_size(self.model, shape)
+        logger.debug("Generating image with model: %s, size: %s", self.model, size)
         try:
-            response = self.img_provider.generate_image(
-                prompt=prompt,
+            generated = generate_images_with_provider(
+                provider=self.img_provider,
                 model=self.model,
+                prompt=prompt,
                 size=size,
                 n=1,
                 reference_images=reference_images,
-                # response_format parameter is not supported for gpt-image-1
-                response_format=None if "gpt-image-1" in self.model else "b64_json",
             )
-
-            if not response.data or len(response.data) == 0:
-                raise RuntimeError("No image data returned from the API")
-
-            image_item = response.data[0].model_dump()
-
-            image_data = image_item.get("b64_json")
-            if not image_data:
-                raise RuntimeError("No base64 image data returned from the API")
-
-            revised_prompt = image_item.get("revised_prompt")
-            if revised_prompt is None:
-                revised_prompt = prompt
-
-            return (
-                ImageGenerationResponse(
-                    revised_prompt=revised_prompt,
-                    image_data=image_data,
-                ),
-                response,
+            first = generated[0]
+            return ImageGenerationResponse(
+                revised_prompt=first.revised_prompt,
+                image_data=first.b64_data,
             )
 
         except requests.RequestException as e:
-            logger.error(f"Error fetching or converting image: {e}")
+            logger.error("Error fetching or converting image: %s", e)
             raise ToolExecutionException(
                 "Failed to fetch or convert the generated image", emit_error_packet=True
             )
         except Exception as e:
-            logger.debug(f"Error occurred during image generation: {e}")
+            logger.debug("Error occurred during image generation: %s", e)
 
             error_message = str(e)
             if "OpenAIException" in str(type(e)):
@@ -254,41 +210,31 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
     def _resolve_reference_image_file_ids(
         self,
         llm_kwargs: dict[str, Any],
-        override_kwargs: ImageGenerationToolOverrideKwargs | None,
     ) -> list[str]:
         raw_reference_ids = llm_kwargs.get(REFERENCE_IMAGE_FILE_IDS_FIELD)
-        if raw_reference_ids is not None:
-            if not isinstance(raw_reference_ids, list) or not all(
-                isinstance(file_id, str) for file_id in raw_reference_ids
-            ):
-                raise ToolCallException(
-                    message=(
-                        f"Invalid {REFERENCE_IMAGE_FILE_IDS_FIELD}: expected array of strings, got {type(raw_reference_ids)}"
-                    ),
-                    llm_facing_message=(
-                        f"The '{REFERENCE_IMAGE_FILE_IDS_FIELD}' field must be an array of file_id strings."
-                    ),
-                )
-            reference_image_file_ids = [
-                file_id.strip() for file_id in raw_reference_ids if file_id.strip()
-            ]
-        elif (
-            override_kwargs
-            and override_kwargs.recent_generated_image_file_ids
-            and self.img_provider.supports_reference_images
-        ):
-            # If no explicit reference was provided, default to the most recently generated image.
-            reference_image_file_ids = [
-                override_kwargs.recent_generated_image_file_ids[-1]
-            ]
-        else:
-            reference_image_file_ids = []
+        if raw_reference_ids is None:
+            # No references requested — plain generation.
+            return []
 
-        # Deduplicate while preserving order.
+        if not isinstance(raw_reference_ids, list) or not all(
+            isinstance(file_id, str) for file_id in raw_reference_ids
+        ):
+            raise ToolCallException(
+                message=(
+                    f"Invalid {REFERENCE_IMAGE_FILE_IDS_FIELD}: expected array of strings, got {type(raw_reference_ids)}"
+                ),
+                llm_facing_message=(
+                    f"The '{REFERENCE_IMAGE_FILE_IDS_FIELD}' field must be an array of file_id strings."
+                ),
+            )
+
+        # Deduplicate while preserving order (first occurrence wins, so the
+        # LLM's intended "primary edit source" stays at index 0).
         deduped_reference_image_ids: list[str] = []
         seen_ids: set[str] = set()
-        for file_id in reference_image_file_ids:
-            if file_id in seen_ids:
+        for file_id in raw_reference_ids:
+            file_id = file_id.strip()
+            if not file_id or file_id in seen_ids:
                 continue
             seen_ids.add(file_id)
             deduped_reference_image_ids.append(file_id)
@@ -302,14 +248,14 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
                     f"Reference images requested but provider '{self.provider}' does not support image-editing context."
                 ),
                 llm_facing_message=(
-                    "This image provider does not support editing from previous image context. "
+                    "This image provider does not support editing from existing images. "
                     "Try text-only generation, or switch to a provider/model that supports image edits."
                 ),
             )
 
         max_reference_images = self.img_provider.max_reference_images
         if max_reference_images > 0:
-            return deduped_reference_image_ids[-max_reference_images:]
+            return deduped_reference_image_ids[:max_reference_images]
         return deduped_reference_image_ids
 
     def _load_reference_images(
@@ -358,7 +304,7 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
     def run(
         self,
         placement: Placement,
-        override_kwargs: ImageGenerationToolOverrideKwargs | None = None,
+        override_kwargs: None = None,  # noqa: ARG002
         **llm_kwargs: Any,
     ) -> ToolResponse:
         if PROMPT_FIELD not in llm_kwargs:
@@ -373,14 +319,11 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
         shape = ImageShape(llm_kwargs.get("shape", ImageShape.SQUARE.value))
         reference_image_file_ids = self._resolve_reference_image_file_ids(
             llm_kwargs=llm_kwargs,
-            override_kwargs=override_kwargs,
         )
         reference_images = self._load_reference_images(reference_image_file_ids)
 
         # Use threading to generate images in parallel while emitting heartbeats
-        results: list[tuple[ImageGenerationResponse, Any] | None] = [
-            None
-        ] * self.num_imgs
+        results: list[ImageGenerationResponse | None] = [None] * self.num_imgs
         completed = threading.Event()
         error_holder: list[Exception | None] = [None]
 
@@ -388,7 +331,7 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
         def generate_all_images() -> None:
             try:
                 generated_results = cast(
-                    list[tuple[ImageGenerationResponse, Any]],
+                    list[ImageGenerationResponse],
                     run_functions_tuples_in_parallel(
                         [
                             (
@@ -443,8 +386,7 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
         if not valid_results:
             raise ValueError("No images were generated")
 
-        # Extract ImageGenerationResponse objects
-        image_generation_responses = [r[0] for r in valid_results]
+        image_generation_responses = valid_results
 
         # Save files and create GeneratedImage objects
         file_ids = save_files(
@@ -486,5 +428,5 @@ class ImageGenerationTool(Tool[ImageGenerationToolOverrideKwargs | None]):
 
         return ToolResponse(
             rich_response=final_image_generation_response,
-            llm_facing_response=cast(str, llm_facing_response),
+            llm_facing_response=llm_facing_response,
         )

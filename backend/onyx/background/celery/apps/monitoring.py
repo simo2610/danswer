@@ -1,13 +1,8 @@
 import multiprocessing
 from typing import Any
 
-from celery import Celery
-from celery import signals
-from celery import Task
-from celery.signals import celeryd_init
-from celery.signals import worker_init
-from celery.signals import worker_ready
-from celery.signals import worker_shutdown
+from celery import Celery, Task, signals
+from celery.signals import celeryd_init, worker_init, worker_ready, worker_shutdown
 
 import onyx.background.celery.apps.app_base as app_base
 from onyx.configs.constants import POSTGRES_CELERY_WORKER_MONITORING_APP_NAME
@@ -15,12 +10,11 @@ from onyx.db.engine.sql_engine import SqlEngine
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
 
-
 logger = setup_logger()
 
 celery_app = Celery(__name__)
 celery_app.config_from_object("onyx.background.celery.configs.monitoring")
-celery_app.Task = app_base.TenantAwareTask  # type: ignore [misc]
+celery_app.Task = app_base.TenantAwareTask  # ty: ignore[invalid-assignment]
 
 
 @signals.task_prerun.connect
@@ -63,7 +57,7 @@ def on_worker_init(sender: Any, **kwargs: Any) -> None:
     global _prometheus_collectors_ok
 
     logger.info("worker_init signal received.")
-    logger.info(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
+    logger.info("Multiprocessing start method: %s", multiprocessing.get_start_method())
 
     SqlEngine.set_app_name(POSTGRES_CELERY_WORKER_MONITORING_APP_NAME)
     SqlEngine.init_engine(pool_size=sender.concurrency, max_overflow=3)

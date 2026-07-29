@@ -11,12 +11,10 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from onyx.connectors.models import ConnectorFailure
-from onyx.connectors.models import DocumentFailure
+from onyx.connectors.models import ConnectorFailure, DocumentFailure
 from onyx.db.engine.sql_engine import get_sqlalchemy_engine
 from onyx.db.enums import IndexingStatus
-from onyx.db.index_attempt import create_index_attempt
-from onyx.db.index_attempt import create_index_attempt_error
+from onyx.db.index_attempt import create_index_attempt, create_index_attempt_error
 from onyx.db.models import IndexAttempt
 from onyx.db.search_settings import get_current_search_settings
 from onyx.server.documents.models import DocumentSource
@@ -27,9 +25,11 @@ from tests.integration.common_utils.managers.document import DocumentManager
 from tests.integration.common_utils.managers.document_set import DocumentSetManager
 from tests.integration.common_utils.managers.user import UserManager
 from tests.integration.common_utils.managers.user_group import UserGroupManager
-from tests.integration.common_utils.test_models import DATestAPIKey
-from tests.integration.common_utils.test_models import DATestUser
-from tests.integration.common_utils.test_models import DATestUserGroup
+from tests.integration.common_utils.test_models import (
+    DATestAPIKey,
+    DATestUser,
+    DATestUserGroup,
+)
 from tests.integration.common_utils.vespa import vespa_fixture
 
 
@@ -164,7 +164,9 @@ def test_connector_deletion(
     doc_set_2.cc_pair_ids = [cc_pair_2.id]
     cc_pair_1.groups = []
     if is_ee:
-        cc_pair_2.groups = [user_group_2.id]
+        cc_pair_2.groups = [
+            user_group_2.id  # ty: ignore[possibly-unresolved-reference]
+        ]
     else:
         cc_pair_2.groups = []
 
@@ -184,7 +186,9 @@ def test_connector_deletion(
 
     cc_pair_2_group_name_expected = []
     if is_ee:
-        cc_pair_2_group_name_expected = [user_group_2.name]
+        cc_pair_2_group_name_expected = [
+            user_group_2.name  # ty: ignore[possibly-unresolved-reference]
+        ]
 
     DocumentManager.verify(
         vespa_client=vespa_client,
@@ -212,16 +216,18 @@ def test_connector_deletion(
     )
 
     if is_ee:
-        user_group_1.cc_pair_ids = []
-        user_group_2.cc_pair_ids = [cc_pair_2.id]
+        user_group_1.cc_pair_ids = []  # ty: ignore[possibly-unresolved-reference]
+        user_group_2.cc_pair_ids = [  # ty: ignore[possibly-unresolved-reference]
+            cc_pair_2.id
+        ]
 
         # validate user groups
         UserGroupManager.verify(
-            user_group=user_group_1,
+            user_group=user_group_1,  # ty: ignore[possibly-unresolved-reference]
             user_performing_action=admin_user,
         )
         UserGroupManager.verify(
-            user_group=user_group_2,
+            user_group=user_group_2,  # ty: ignore[possibly-unresolved-reference]
             user_performing_action=admin_user,
         )
 
@@ -387,7 +393,9 @@ def test_connector_deletion_for_overlapping_connectors(
     # verify the document is only in user group 2
     group_names_expected = []
     if is_ee:
-        group_names_expected = [user_group_2.name]
+        group_names_expected = [
+            user_group_2.name  # ty: ignore[possibly-unresolved-reference]
+        ]
 
     DocumentManager.verify(
         vespa_client=vespa_client,

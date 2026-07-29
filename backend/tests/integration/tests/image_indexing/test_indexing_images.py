@@ -1,6 +1,5 @@
 import os
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -15,8 +14,7 @@ from tests.integration.common_utils.managers.document import DocumentManager
 from tests.integration.common_utils.managers.file import FileManager
 from tests.integration.common_utils.managers.llm_provider import LLMProviderManager
 from tests.integration.common_utils.managers.settings import SettingsManager
-from tests.integration.common_utils.test_models import DATestSettings
-from tests.integration.common_utils.test_models import DATestUser
+from tests.integration.common_utils.test_models import DATestSettings, DATestUser
 from tests.integration.common_utils.vespa import vespa_fixture
 
 FILE_NAME = "Sample.pdf"
@@ -44,7 +42,6 @@ def test_image_indexing(
 
     SettingsManager.update_settings(
         DATestSettings(
-            search_time_image_analysis_enabled=True,
             image_extraction_and_analysis_enabled=True,
         ),
         user_performing_action=admin_user,
@@ -110,7 +107,9 @@ def test_image_indexing(
 
         assert len(documents) == 2
         for document in documents:
-            if "These  are  Johns  dogs" in document.content:
+            # Whitespace-normalize: PDF text extractors differ in inter-word spacing.
+            normalized = " ".join(document.content.split())
+            if "These are Johns dogs" in normalized:
                 assert document.image_file_id is None
             else:
                 assert document.image_file_id is not None
@@ -140,7 +139,6 @@ def test_docx_image_indexing(
 
     SettingsManager.update_settings(
         DATestSettings(
-            search_time_image_analysis_enabled=True,
             image_extraction_and_analysis_enabled=True,
         ),
         user_performing_action=admin_user,
@@ -204,23 +202,23 @@ def test_docx_image_indexing(
         )
 
         # Should have documents for text content plus 3 images
-        assert (
-            len(documents) >= 3
-        ), f"Expected at least 3 documents (3 images), got {len(documents)}"
+        assert len(documents) >= 3, (
+            f"Expected at least 3 documents (3 images), got {len(documents)}"
+        )
 
         # Count documents with images
         image_documents = [doc for doc in documents if doc.image_file_id is not None]
         text_documents = [doc for doc in documents if doc.image_file_id is None]
 
-        assert (
-            len(image_documents) == 3
-        ), f"Expected exactly 3 image documents, got {len(image_documents)}"
-        assert (
-            len(text_documents) >= 1
-        ), f"Expected at least 1 text document, got {len(text_documents)}"
+        assert len(image_documents) == 3, (
+            f"Expected exactly 3 image documents, got {len(image_documents)}"
+        )
+        assert len(text_documents) >= 1, (
+            f"Expected at least 1 text document, got {len(text_documents)}"
+        )
 
         # Verify each image document has a valid image_file_id pointing to our uploaded file
         for image_doc in image_documents:
-            assert file_paths[0] in (
-                image_doc.image_file_id or ""
-            ), f"Image document should reference uploaded file: {image_doc.image_file_id}"
+            assert file_paths[0] in (image_doc.image_file_id or ""), (
+                f"Image document should reference uploaded file: {image_doc.image_file_id}"
+            )

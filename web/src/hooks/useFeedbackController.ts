@@ -5,7 +5,7 @@ import { useChatSessionStore } from "@/app/app/stores/useChatSessionStore";
 import { FeedbackType } from "@/app/app/interfaces";
 import { handleChatFeedback, removeChatFeedback } from "@/app/app/services/lib";
 import { getMessageByMessageId } from "@/app/app/services/messageTree";
-import { toast } from "@/hooks/useToast";
+import { toast } from "@opal/layouts";
 
 /**
  * Hook for managing chat message feedback (like/dislike)
@@ -45,7 +45,8 @@ export default function useFeedbackController() {
         ? sessions.get(currentSessionId)?.messageTree
         : undefined;
       const previousFeedback = messageTree
-        ? getMessageByMessageId(messageTree, messageId)?.currentFeedback ?? null
+        ? (getMessageByMessageId(messageTree, messageId)?.currentFeedback ??
+          null)
         : null;
 
       // Optimistically update the UI

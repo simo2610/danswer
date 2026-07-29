@@ -16,13 +16,14 @@ from litellm import completion_cost
 from sqlalchemy.orm import Session
 
 from onyx.llm.model_response import Usage
-from onyx.llm.models import AssistantMessage
-from onyx.llm.models import ChatCompletionMessage
-from onyx.llm.models import SystemMessage
-from onyx.llm.models import UserMessage
+from onyx.llm.models import (
+    AssistantMessage,
+    ChatCompletionMessage,
+    SystemMessage,
+    UserMessage,
+)
 from onyx.llm.multi_llm import LitellmLLM
 from onyx.llm.prompt_cache.processor import process_with_prompt_cache
-
 
 VERTEX_CREDENTIALS_ENV = "VERTEX_CREDENTIALS"
 VERTEX_LOCATION_ENV = "VERTEX_LOCATION"
@@ -265,9 +266,9 @@ def test_openai_prompt_caching_reduces_costs(
 
     # empirically there's a 60% chance of success per attempt, so we expect at least one success in 8 attempts
     # (99.94% probability). we can bump this number if the test is too flaky.
-    assert (
-        successes > 0
-    ), f"Expected at least one success. 0 of {attempts} attempts used prompt caching."
+    assert successes > 0, (
+        f"Expected at least one success. 0 of {attempts} attempts used prompt caching."
+    )
 
 
 @pytest.mark.skipif(
@@ -413,9 +414,9 @@ def test_anthropic_prompt_caching_reduces_costs(
             continue
 
         # Cost should be lower on second call
-        assert (
-            cost2 < cost1
-        ), f"Expected lower cost on cached call. Cost 1: ${cost1:.10f}, Cost 2: ${cost2:.10f}"
+        assert cost2 < cost1, (
+            f"Expected lower cost on cached call. Cost 1: ${cost1:.10f}, Cost 2: ${cost2:.10f}"
+        )
         return
 
     pytest.skip(
@@ -443,6 +444,7 @@ def test_google_genai_prompt_caching_reduces_costs(
     """
     import random
     import string
+
     from litellm import exceptions as litellm_exceptions
 
     try:
@@ -598,9 +600,9 @@ def test_google_genai_prompt_caching_reduces_costs(
             except OSError:
                 pass
 
-    assert (
-        success
-    ), f"Expected Gemini prompt caching evidence across attempts. Last observed metrics: {last_metrics}"
+    assert success, (
+        f"Expected Gemini prompt caching evidence across attempts. Last observed metrics: {last_metrics}"
+    )
 
 
 @pytest.mark.skipif(

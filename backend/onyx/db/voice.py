@@ -1,12 +1,10 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from onyx.db.models import User
-from onyx.db.models import VoiceProvider
+from onyx.db.models import User, VoiceProvider
 from onyx.error_handling.error_codes import OnyxErrorCode
 from onyx.error_handling.exceptions import OnyxError
 
@@ -94,7 +92,7 @@ def upsert_voice_provider(
 
     # Only update API key if explicitly changed or if provider has no key
     if api_key_changed or provider.api_key is None:
-        provider.api_key = api_key  # type: ignore[assignment]
+        provider.api_key = api_key  # ty: ignore[invalid-assignment]
 
     db_session.flush()
 
@@ -233,5 +231,9 @@ def update_user_voice_settings(
         )
 
     if values:
-        db_session.execute(update(User).where(User.id == user_id).values(**values))  # type: ignore[arg-type]
+        db_session.execute(
+            update(User)
+            .where(User.id == user_id)  # ty: ignore[invalid-argument-type]
+            .values(**values)
+        )
         db_session.flush()

@@ -24,8 +24,7 @@ import multiprocessing
 import traceback
 from collections.abc import Callable
 from multiprocessing import Queue
-from typing import Any
-from typing import TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -58,13 +57,19 @@ def run_with_timeout_multiproc(
 
     if p.is_alive():
         p.terminate()
-        raise TimeoutError(f"{task.__name__} timed out after {timeout} seconds")
+        raise TimeoutError(
+            f"{task.__name__} timed out after {timeout} seconds"  # ty: ignore[unresolved-attribute]
+        )
 
     if not q.empty():
         status, result = q.get()
         if status == "success":
             return result
         else:
-            raise RuntimeError(f"{task.__name__} failed:\n{result}")
+            raise RuntimeError(
+                f"{task.__name__} failed:\n{result}"  # ty: ignore[unresolved-attribute]
+            )
     else:
-        raise RuntimeError(f"{task.__name__} returned no result")
+        raise RuntimeError(
+            f"{task.__name__} returned no result"  # ty: ignore[unresolved-attribute]
+        )

@@ -1,43 +1,42 @@
 import logging
 import os
-import re
 from types import SimpleNamespace
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema
 
-from alembic import command
-from alembic.config import Config
+from onyx.db.engine.shard_registry import (
+    ALEMBIC_TARGET_URL_ATTRIBUTE,
+    get_shard_spec,
+)
+from onyx.db.engine.shard_routing import get_engine_for_tenant, get_shard_for_tenant
 from onyx.db.engine.sql_engine import build_connection_string
-from onyx.db.engine.sql_engine import get_sqlalchemy_engine
-from shared_configs.configs import TENANT_ID_PREFIX
+from onyx.db.engine.tenant_utils import validate_tenant_id
 
 logger = logging.getLogger(__name__)
 
-# Regex pattern for valid tenant IDs:
-# - UUID format: tenant_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-# - AWS instance ID format: tenant_i-xxxxxxxxxxxxxxxxx
-# Also useful for not accidentally dropping `public` schema
-TENANT_ID_PATTERN = re.compile(
-    rf"^{re.escape(TENANT_ID_PREFIX)}("
-    r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"  # UUID
-    r"|i-[a-f0-9]+"  # AWS instance ID
-    r")$"
-)
 
+def _tenant_connection_string(tenant_id: str) -> str:
+    """Alembic URL for the database holding this tenant's schema.
 
-def validate_tenant_id(tenant_id: str) -> bool:
-    """Validate that tenant_id matches expected format.
-
-    This is important for SQL injection prevention since schema names
-    cannot be parameterized in SQL and must be formatted directly.
+    For the default shard this is byte-identical to ``build_connection_string()``,
+    since the default shard's spec is derived from the same POSTGRES_* settings.
     """
-    return bool(TENANT_ID_PATTERN.match(tenant_id))
+    spec = get_shard_spec(get_shard_for_tenant(tenant_id))
+    return build_connection_string(
+        user=spec.user,
+        password=spec.password,
+        host=spec.host,
+        port=spec.port,
+        db=spec.db,
+    )
 
 
 def run_alembic_migrations(schema_name: str) -> None:
-    logger.info(f"Starting Alembic migrations for schema: {schema_name}")
+    logger.info("Starting Alembic migrations for schema: %s", schema_name)
 
     try:
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -46,7 +45,11 @@ def run_alembic_migrations(schema_name: str) -> None:
 
         # Configure Alembic
         alembic_cfg = Config(alembic_ini_path)
-        alembic_cfg.set_main_option("sqlalchemy.url", build_connection_string())
+        # Pin the run to the tenant's shard. Uses env.py's dedicated attribute rather
+        # than `sqlalchemy.url`, which env.py ignores by design.
+        alembic_cfg.attributes[ALEMBIC_TARGET_URL_ATTRIBUTE] = (
+            _tenant_connection_string(schema_name)
+        )
         alembic_cfg.set_main_option(
             "script_location", os.path.join(root_dir, "alembic")
         )
@@ -55,24 +58,28 @@ def run_alembic_migrations(schema_name: str) -> None:
         alembic_cfg.attributes["configure_logger"] = False
 
         # Mimic command-line options by adding 'cmd_opts' to the config
-        alembic_cfg.cmd_opts = SimpleNamespace()  # type: ignore
-        alembic_cfg.cmd_opts.x = [f"schemas={schema_name}"]  # type: ignore
+        alembic_cfg.cmd_opts = SimpleNamespace()  # ty: ignore[invalid-assignment]
+        alembic_cfg.cmd_opts.x = [  # ty: ignore[invalid-assignment]
+            f"schemas={schema_name}"
+        ]
 
         # Run migrations programmatically
         command.upgrade(alembic_cfg, "head")
 
         # Run migrations programmatically
         logger.info(
-            f"Alembic migrations completed successfully for schema: {schema_name}"
+            "Alembic migrations completed successfully for schema: %s", schema_name
         )
 
     except Exception as e:
-        logger.exception(f"Alembic migration failed for schema {schema_name}: {str(e)}")
+        logger.exception(
+            "Alembic migration failed for schema %s: %s", schema_name, str(e)
+        )
         raise
 
 
 def create_schema_if_not_exists(tenant_id: str) -> bool:
-    with Session(get_sqlalchemy_engine()) as db_session:
+    with Session(get_engine_for_tenant(tenant_id)) as db_session:
         with db_session.begin():
             result = db_session.execute(
                 text(
@@ -97,7 +104,7 @@ def drop_schema(tenant_id: str) -> None:
     if not validate_tenant_id(tenant_id):
         raise ValueError(f"Invalid tenant_id format: {tenant_id}")
 
-    with get_sqlalchemy_engine().connect() as connection:
+    with get_engine_for_tenant(tenant_id).connect() as connection:
         with connection.begin():
             # Use string formatting with validated tenant_id (safe after validation)
             connection.execute(text(f'DROP SCHEMA IF EXISTS "{tenant_id}" CASCADE'))
@@ -108,7 +115,7 @@ def get_current_alembic_version(tenant_id: str) -> str:
     from alembic.runtime.migration import MigrationContext
     from sqlalchemy import text
 
-    engine = get_sqlalchemy_engine()
+    engine = get_engine_for_tenant(tenant_id)
 
     # Set the search path to the tenant's schema
     with engine.connect() as connection:

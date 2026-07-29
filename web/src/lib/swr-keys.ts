@@ -10,14 +10,17 @@ export const SWR_KEYS = {
   // ── User ──────────────────────────────────────────────────────────────────
   me: "/api/me",
 
-  // ── Health ────────────────────────────────────────────────────────────────
+  // ── Health / Version ──────────────────────────────────────────────────────
   health: "/api/health",
+  version: "/api/version",
 
   // ── Settings ──────────────────────────────────────────────────────────────
   settings: "/api/settings",
   enterpriseSettings: "/api/enterprise-settings",
   customAnalyticsScript: "/api/enterprise-settings/custom-analytics-script",
   authType: "/api/auth/type",
+  adminSecuritySettings: "/api/admin/security",
+  adminSsoProviders: "/api/admin/sso/provider",
 
   // ── Agents / Personas ─────────────────────────────────────────────────────
   personas: "/api/persona",
@@ -25,6 +28,8 @@ export const SWR_KEYS = {
   agentPreferences: "/api/user/assistant/preferences",
   defaultAssistantConfig: "/api/admin/default-assistant/configuration",
   personaLabels: "/api/persona/labels",
+  adminAgents: "/api/admin/agents",
+  adminPersona: "/api/admin/persona",
 
   // ── LLM Providers ─────────────────────────────────────────────────────────
   llmProviders: "/api/llm/provider",
@@ -36,6 +41,7 @@ export const SWR_KEYS = {
   wellKnownLlmProviders: "/api/admin/llm/built-in/options",
   wellKnownLlmProvider: (providerEndpoint: string) =>
     `/api/admin/llm/built-in/options/${providerEndpoint}`,
+  llmContextualCost: "/api/admin/llm/provider-contextual-cost",
 
   // ── Image Generation ──────────────────────────────────────────────────────
   imageGenConfig: "/api/admin/image-generation/config",
@@ -53,10 +59,6 @@ export const SWR_KEYS = {
   federatedConnectors: "/api/federated",
 
   // ── Google Connectors ─────────────────────────────────────────────────────
-  googleConnectorAppCredential: (service: "gmail" | "google-drive") =>
-    `/api/manage/admin/connector/${service}/app-credential`,
-  googleConnectorServiceAccountKey: (service: "gmail" | "google-drive") =>
-    `/api/manage/admin/connector/${service}/service-account-key`,
   googleConnectorCredentials: (service: "gmail" | "google-drive") =>
     `/api/manage/admin/connector/${service}/credentials`,
   googleConnectorPublicCredential: (service: "gmail" | "google-drive") =>
@@ -68,15 +70,35 @@ export const SWR_KEYS = {
   // ── Search Settings ───────────────────────────────────────────────────────
   currentSearchSettings: "/api/search-settings/get-current-search-settings",
   secondarySearchSettings: "/api/search-settings/get-secondary-search-settings",
+  reindexProgress: "/api/search-settings/reindex-progress",
+  reindexErrors: "/api/search-settings/reindex-errors",
+  embeddingProviders: "/api/admin/embedding/embedding-provider",
 
   // ── Chat Sessions ─────────────────────────────────────────────────────────
   chatSessions: "/api/chat/get-user-chat-sessions",
+  chatSearch: "/api/chat/search",
 
   // ── Projects & Files ──────────────────────────────────────────────────────
   userProjects: "/api/user/projects",
   recentFiles: "/api/user/files/recent",
   userPats: "/api/user/pats",
+  userPatScopes: "/api/user/pats/scopes",
   notifications: "/api/notifications",
+  notificationsSummary: "/api/notifications/summary",
+  notificationsPage: (pageNum: number, pageSize: number) => {
+    const params = new URLSearchParams({
+      page_num: pageNum.toString(),
+      page_size: pageSize.toString(),
+    });
+    return `/api/notifications?${params.toString()}`;
+  },
+  notificationsByType: (notifType: string, pageSize: number) => {
+    const params = new URLSearchParams({
+      notif_type: notifType,
+      page_size: pageSize.toString(),
+    });
+    return `/api/notifications?${params.toString()}`;
+  },
 
   // ── Users ─────────────────────────────────────────────────────────────────
   acceptedUsers: "/api/manage/users/accepted/all",
@@ -99,19 +121,29 @@ export const SWR_KEYS = {
 
   // ── MCP Servers ───────────────────────────────────────────────────────────
   adminMcpServers: "/api/admin/mcp/servers",
+  adminMcpServerToolSnapshots: (serverId: number) =>
+    `/api/admin/mcp/server/${serverId}/tools/snapshots?source=db`,
   mcpServers: "/api/mcp/servers",
+  mcpServersCraft: "/api/mcp/servers/craft",
+  personaMcpServers: (personaId: number) =>
+    `/api/mcp/servers/persona/${personaId}`,
+
+  // ── Skills ────────────────────────────────────────────────────────────────
+  userSkills: "/api/skills",
+  userSkillPreview: (skillId: string) => `/api/skills/${skillId}/preview`,
+  editableSkill: (skillId: string) => `/api/skills/custom/${skillId}/edit`,
 
   // ── Tools ─────────────────────────────────────────────────────────────────
   tools: "/api/tool",
   openApiTools: "/api/tool/openapi",
   oauthTokenStatus: "/api/user-oauth-token/status",
+  adminOAuthTestClaims: "/api/admin/oauth-test/claims",
 
   // ── Voice ─────────────────────────────────────────────────────────────────
   voiceProviders: "/api/admin/voice/providers",
   voiceStatus: "/api/voice/status",
 
   // ── Build (Craft) ─────────────────────────────────────────────────────────
-  buildConnectors: "/api/build/connectors",
   buildUserLibraryTree: "/api/build/user-library/tree",
   buildSessionFiles: (sessionId: string) =>
     `/api/build/sessions/${sessionId}/files?path=`,
@@ -125,10 +157,12 @@ export const SWR_KEYS = {
     `/api/build/sessions/${sessionId}/artifacts/${filePath}`,
   buildSessionPptxPreview: (sessionId: string, filePath: string) =>
     `/api/build/sessions/${sessionId}/pptx-preview/${filePath}`,
-
-  // ── OpenSearch Migration ──────────────────────────────────────────────────
-  opensearchMigrationStatus: "/api/admin/opensearch-migration/status",
-  opensearchMigrationRetrieval: "/api/admin/opensearch-migration/retrieval",
+  buildExternalApps: "/api/build/apps",
+  buildExternalAppsAdmin: "/api/build/admin/apps",
+  buildExternalAppsBuiltInOptions: "/api/build/admin/apps/built-in/options",
+  buildBaseInstructions: "/api/build/admin/base-instructions",
+  buildSessionLiveApprovals: (sessionId: string) =>
+    `/api/build/approvals/sessions/${sessionId}/live`,
 
   // ── Token Rate Limits ─────────────────────────────────────────────────────
   globalTokenRateLimits: "/api/admin/token-rate-limits/global",
@@ -144,8 +178,14 @@ export const SWR_KEYS = {
   webSearchContentProviders: "/api/admin/web-search/content-providers",
   webSearchSearchProviders: "/api/admin/web-search/search-providers",
 
+  // ── Tracing ───────────────────────────────────────────────────────────────
+  tracingProviders: "/api/admin/tracing/providers",
+
   // ── Prompt shortcuts ──────────────────────────────────────────────────────
   promptShortcuts: "/api/input_prompt",
+
+  // ── Admin Banner ──────────────────────────────────────────────────────────
+  adminBanner: "/api/admin/banner",
 
   // ── License & Billing ─────────────────────────────────────────────────────
   license: "/api/license",
@@ -179,4 +219,39 @@ export const SWR_KEYS = {
 
   // ── Connectors ────────────────────────────────────────────────────────────
   connector: "/api/manage/connector",
+
+  // ── Index Attempts ────────────────────────────────────────────────────────
+  indexAttemptStageMetrics: (indexAttemptId: number) =>
+    `/api/manage/admin/index-attempt/${indexAttemptId}/stage-metrics`,
+
+  // ── CC-Pair Sync Attempts ─────────────────────────────────────────────────
+  // The `*Probe` variants are single-row reads used to surface the
+  // `applicable` flag without paying for a full page; see
+  // `useSyncAttemptsPaginatedFetch`.
+  ccPairPermissionSyncAttempts: (ccPairId: number) =>
+    `/api/manage/admin/cc-pair/${ccPairId}/permission-sync-attempts`,
+  ccPairPermissionSyncAttemptsProbe: (ccPairId: number) =>
+    `/api/manage/admin/cc-pair/${ccPairId}/permission-sync-attempts?page_num=0&page_size=1`,
+  ccPairExternalGroupSyncAttempts: (ccPairId: number) =>
+    `/api/manage/admin/cc-pair/${ccPairId}/external-group-sync-attempts`,
+  ccPairExternalGroupSyncAttemptsProbe: (ccPairId: number) =>
+    `/api/manage/admin/cc-pair/${ccPairId}/external-group-sync-attempts?page_num=0&page_size=1`,
+
+  // ── Indexing Errors ───────────────────────────────────────────────────────
+  // Base key for the per-cc-pair errors endpoint. The page also reads
+  // paginated variants via `usePaginatedFetch`, but `mutate` against
+  // this base key invalidates every variant under the same prefix.
+  ccPairIndexingErrors: (ccPairId: number) =>
+    `/api/manage/admin/cc-pair/${ccPairId}/errors`,
+
+  // ── Scheduled Tasks (Craft) ───────────────────────────────────────────────
+  // `scheduledTaskRuns` is a base URL — the run-history table appends
+  // `?limit=…` / `?cursor=…` for pagination. Invalidate from elsewhere with
+  // a prefix predicate so every paginated variant gets refreshed at once.
+  scheduledTasks: "/api/build/scheduled-tasks",
+  scheduledTask: (taskId: string) => `/api/build/scheduled-tasks/${taskId}`,
+  scheduledTaskRuns: (taskId: string) =>
+    `/api/build/scheduled-tasks/${taskId}/runs`,
+  scheduledRunContext: (sessionId: string) =>
+    `/api/build/sessions/${sessionId}/scheduled-run-context`,
 } as const;

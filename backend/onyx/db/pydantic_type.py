@@ -1,7 +1,5 @@
 import json
-from typing import Any
-from typing import Optional
-from typing import Type
+from typing import Any, Optional, Type
 
 from pydantic import BaseModel
 from sqlalchemy.dialects.postgresql import JSONB
@@ -23,7 +21,7 @@ class PydanticType(TypeDecorator):
         dialect: Any,  # noqa: ARG002
     ) -> Optional[dict]:
         if value is not None:
-            return json.loads(value.json())
+            return json.loads(value.model_dump_json())
         return None
 
     def process_result_value(
@@ -32,7 +30,7 @@ class PydanticType(TypeDecorator):
         dialect: Any,  # noqa: ARG002
     ) -> Optional[BaseModel]:
         if value is not None:
-            return self.pydantic_model.parse_obj(value)
+            return self.pydantic_model.model_validate(value)
         return None
 
 

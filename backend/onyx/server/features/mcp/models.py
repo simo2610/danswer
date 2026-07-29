@@ -1,20 +1,63 @@
 import datetime
+import re
 from enum import Enum
-from typing import Any
-from typing import List
-from typing import NotRequired
-from typing import Optional
-from typing import TypedDict
+from typing import Any, List, NotRequired, Optional, TypedDict
+from uuid import UUID
 
 from mcp.types import Tool as MCPLibTool
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import model_validator
+from pydantic import BaseModel, Field, model_validator
 
-from onyx.db.enums import MCPAuthenticationPerformer
-from onyx.db.enums import MCPAuthenticationType
-from onyx.db.enums import MCPServerStatus
-from onyx.db.enums import MCPTransport
+from onyx.db.enums import (
+    EndpointPolicy,
+    MCPAuthenticationPerformer,
+    MCPAuthenticationType,
+    MCPOAuthProviderMode,
+    MCPServerStatus,
+    MCPTransport,
+)
+
+# Matches `{placeholder_name}` inside header value templates.
+_PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
+# RFC 9110 field-name syntax: a non-empty sequence of HTTP token characters.
+_HTTP_FIELD_NAME_RE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+
+def _build_auto_substitution_map(*, user_email: str) -> dict[str, str]:
+    """Single source of truth for placeholders the backend fills in
+    automatically when rendering an ``MCPAuthTemplate`` into final headers.
+
+    Both the substitution call site (``apply_auto_substitutions``) and the
+    "which fields must the user supply" derivation
+    (``MCPAuthTemplate.derive_required_fields``) read from this map, so adding
+    a new auto-filled placeholder is a one-line change here.
+    """
+    return {"user_email": user_email}
+
+
+# Names of placeholders the backend auto-substitutes; never surfaced to the
+# user as fields they must fill in. Derived from the substitution map so the
+# two can never drift.
+AUTO_SUBSTITUTED_PLACEHOLDER_KEYS: frozenset[str] = frozenset(
+    _build_auto_substitution_map(user_email="").keys()
+)
+
+
+def apply_auto_substitutions(value: str, *, user_email: str) -> str:
+    """Substitute every backend-managed placeholder in ``value`` (e.g.
+    ``{user_email}``). User-provided substitutions are handled separately at
+    the call site that has access to the user's credential map."""
+    subst = _build_auto_substitution_map(user_email=user_email)
+    for key, replacement in subst.items():
+        value = value.replace(f"{{{key}}}", replacement)
+    return value
+
+
+# Headers that must never be sourced from stored MCP credentials or request
+# templates. Host is particularly critical — it can be used for Host Header
+# Injection attacks to route requests to unintended internal servers.
+DENYLISTED_MCP_HEADERS = {
+    "host",
+}
 
 
 # This should be updated along with MCPConnectionData
@@ -24,6 +67,9 @@ class MCPOAuthKeys(str, Enum):
     CLIENT_INFO = "client_info"
     TOKENS = "tokens"
     METADATA = "metadata"
+    # Absolute unix expiry for the stored token. `OAuthToken` only carries the
+    # relative `expires_in`, which is meaningless once reloaded from storage.
+    TOKEN_EXPIRES_AT = "token_expires_at"
 
 
 class MCPConnectionData(TypedDict):
@@ -31,7 +77,18 @@ class MCPConnectionData(TypedDict):
     in Postgres"""
 
     headers: dict[str, str]
+    # The placeholder form of shared API-token headers. The rendered headers
+    # above remain the source used for outbound requests.
+    header_template: NotRequired[dict[str, str]]
+    # Stored in the encrypted connection config so an admin can edit the
+    # header template without re-entering the masked API token.
+    api_token: NotRequired[str]
     header_substitutions: NotRequired[dict[str, str]]
+    # Names of fields the user must supply for header substitution. Persisted
+    # only on the per-user template config (the admin's connection config that
+    # serves as the template); empty/absent on regular per-user configs and on
+    # admin-credential configs.
+    required_fields: NotRequired[list[str]]
 
     # For OAuth only
     # Note: Update MCPOAuthKeys if necessary when modifying these
@@ -40,6 +97,7 @@ class MCPConnectionData(TypedDict):
     client_info: NotRequired[dict[str, Any]]  # OAuthClientInformationFull
     tokens: NotRequired[dict[str, Any]]  # OAuthToken
     metadata: NotRequired[dict[str, Any]]  # OAuthClientMetadata
+    token_expires_at: NotRequired[float]  # absolute unix expiry for `tokens`
 
     # the actual models are defined in mcp.shared.auth
     # from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
@@ -61,6 +119,20 @@ class MCPAuthTemplate(BaseModel):
         description="List of required field names that users must provide",
     )
 
+    @staticmethod
+    def derive_required_fields(headers: dict[str, str]) -> list[str]:
+        """Extract the set of `{placeholder}` field names referenced by
+        ``headers`` values, excluding placeholders the backend fills in
+        automatically (see ``AUTO_SUBSTITUTED_PLACEHOLDER_KEYS``).
+        """
+        seen: set[str] = set()
+        for value in headers.values():
+            for match in _PLACEHOLDER_RE.findall(value):
+                if match in AUTO_SUBSTITUTED_PLACEHOLDER_KEYS:
+                    continue
+                seen.add(match)
+        return list(seen)
+
 
 class MCPToolCreateRequest(BaseModel):
     name: str = Field(..., description="Name of the MCP tool")
@@ -73,33 +145,146 @@ class MCPToolCreateRequest(BaseModel):
     api_token: Optional[str] = Field(
         None, description="API token for api_token auth type"
     )
+    api_token_changed: bool = Field(
+        default=False,
+        description=(
+            "True if the shared API token was edited. When False on an update, "
+            "the stored token is reused instead of the masked request value."
+        ),
+    )
     oauth_client_id: Optional[str] = Field(None, description="OAuth client ID")
     oauth_client_secret: Optional[str] = Field(None, description="OAuth client secret")
+    oauth_provider_mode: MCPOAuthProviderMode = Field(
+        default=MCPOAuthProviderMode.AUTO_DISCOVERY,
+        description=(
+            "OAuth provider bootstrap mode. AUTO_DISCOVERY uses SDK challenge/"
+            "metadata discovery; KNOWN_PROVIDER uses admin-configured endpoints."
+        ),
+    )
+    oauth_authorization_endpoint: Optional[str] = Field(
+        None, description="Known-provider OAuth authorization endpoint URL"
+    )
+    oauth_token_endpoint: Optional[str] = Field(
+        None, description="Known-provider OAuth token endpoint URL"
+    )
+    oauth_scopes_override: Optional[list[str]] = Field(
+        None, description="Optional scope override for known-provider OAuth"
+    )
+    oauth_additional_auth_params: Optional[dict[str, str]] = Field(
+        None, description="Optional extra query parameters for the authorization URL"
+    )
+    oauth_client_id_changed: bool = Field(
+        default=False,
+        description=(
+            "True if `oauth_client_id` was edited by the user. When False on an "
+            "update of an existing server, the stored value is reused and the "
+            "request value is ignored. Defaults to False for backward "
+            "compatibility with older clients that don't send the flag."
+        ),
+    )
+    oauth_client_secret_changed: bool = Field(
+        default=False,
+        description=(
+            "True if `oauth_client_secret` was edited by the user. When False on "
+            "an update of an existing server, the stored value is reused and the "
+            "request value is ignored."
+        ),
+    )
     transport: MCPTransport | None = Field(
         None, description="MCP transport type (STREAMABLE_HTTP or SSE)"
     )
     auth_template: Optional[MCPAuthTemplate] = Field(
-        None, description="Template configuration for per-user authentication"
+        None,
+        description=(
+            "Authentication header template for API-token authentication. "
+            "Shared templates support the {api_key} placeholder."
+        ),
     )
     admin_credentials: Optional[dict[str, str]] = Field(
         None,
         description="Admin's credential key-value pairs for template substitution and storage",
     )
+    admin_credentials_changed: dict[str, bool] = Field(
+        default_factory=dict,
+        description=(
+            "Per-field flags marking which `admin_credentials` were edited"
+        ),  # True = use value from request, False = use stored value
+    )
     existing_server_id: Optional[int] = Field(
         None, description="ID of existing server to update (for editing)"
+    )
+    # Access fields are optional on this auth-configuration path: `None` leaves
+    # the server's existing access untouched (the create/edit form owns access).
+    is_public: Optional[bool] = Field(
+        default=None,
+        description=(
+            "If True, any user may add this server's tools to their agents. "
+            "If False, access is limited to `users` / `groups`. None leaves "
+            "existing access unchanged."
+        ),
+    )
+    groups: Optional[list[int]] = Field(
+        default=None,
+        description="User group IDs allowed to use this server when not public",
+    )
+    users: Optional[list[UUID]] = Field(
+        default=None,
+        description="User IDs allowed to use this server when not public",
     )
 
     @model_validator(mode="after")
     def validate_auth_configuration(self) -> "MCPToolCreateRequest":
-        # Validate API token requirements for admin auth
+        # A shared API token is required to create an admin-managed server.
+        # On update (`existing_server_id` set) it may be omitted: the upsert
+        # path reuses the stored token, so requiring it here would reject
+        # legitimate template-only edits from clients that don't replay it.
         if (
             self.auth_type == MCPAuthenticationType.API_TOKEN
             and self.auth_performer == MCPAuthenticationPerformer.ADMIN
+            and self.existing_server_id is None
             and not self.api_token
         ):
             raise ValueError(
                 "api_token is required when auth_type is 'api_token' and auth_performer is 'admin'"
             )
+
+        if (
+            self.auth_type == MCPAuthenticationType.API_TOKEN
+            and self.auth_performer == MCPAuthenticationPerformer.ADMIN
+        ):
+            # An omitted template is resolved against the existing server
+            # configuration during an update, or defaults to Bearer when a
+            # server is created. Do not materialize that default here, since
+            # doing so makes an omitted template look like an explicit edit.
+            if self.auth_template is not None:
+                placeholders: set[str] = {
+                    match
+                    for value in self.auth_template.headers.values()
+                    for match in _PLACEHOLDER_RE.findall(value)
+                }
+                unsupported_placeholders: set[str] = placeholders - {"api_key"}
+                if unsupported_placeholders:
+                    raise ValueError(
+                        "Shared API-token header templates only support the "
+                        f"{{api_key}} placeholder; unsupported placeholders: "
+                        f"{', '.join(sorted(unsupported_placeholders))}"
+                    )
+                if not any(
+                    "{api_key}" in value
+                    for value in self.auth_template.headers.values()
+                ):
+                    raise ValueError(
+                        "Shared API-token header templates must include the {api_key} placeholder"
+                    )
+                if any(
+                    _HTTP_FIELD_NAME_RE.fullmatch(name) is None
+                    or name.strip().lower() in DENYLISTED_MCP_HEADERS
+                    for name in self.auth_template.headers
+                ):
+                    raise ValueError(
+                        "Shared API-token header templates contain an invalid header name"
+                    )
+                self.auth_template.required_fields = ["api_key"]
 
         # Validate that API token is not provided for per-user auth
         if (
@@ -129,6 +314,29 @@ class MCPToolCreateRequest(BaseModel):
         # OAuth client ID/secret are optional. If provided, they will seed the
         # OAuth client info; otherwise, the MCP client will attempt dynamic
         # client registration.
+        if self.auth_type != MCPAuthenticationType.OAUTH:
+            self.oauth_provider_mode = MCPOAuthProviderMode.AUTO_DISCOVERY
+            self.oauth_authorization_endpoint = None
+            self.oauth_token_endpoint = None
+            self.oauth_scopes_override = None
+            self.oauth_additional_auth_params = None
+            return self
+
+        if self.oauth_provider_mode == MCPOAuthProviderMode.KNOWN_PROVIDER:
+            if not self.oauth_authorization_endpoint:
+                raise ValueError(
+                    "oauth_authorization_endpoint is required for known-provider OAuth mode"
+                )
+            if not self.oauth_token_endpoint:
+                raise ValueError(
+                    "oauth_token_endpoint is required for known-provider OAuth mode"
+                )
+        else:
+            # AUTO_DISCOVERY: clear fields that only apply to KNOWN_PROVIDER
+            self.oauth_authorization_endpoint = None
+            self.oauth_token_endpoint = None
+            self.oauth_scopes_override = None
+            self.oauth_additional_auth_params = None
 
         return self
 
@@ -150,6 +358,21 @@ class MCPServerSimpleCreateRequest(BaseModel):
         None, description="Description of the MCP server"
     )
     server_url: str = Field(..., description="URL of the MCP server")
+    is_public: bool = Field(
+        default=True,
+        description=(
+            "If True, any user may add this server's tools to their agents. "
+            "If False, access is limited to `users` / `groups`."
+        ),
+    )
+    groups: list[int] = Field(
+        default_factory=list,
+        description="User group IDs allowed to use this server when not public",
+    )
+    users: list[UUID] = Field(
+        default_factory=list,
+        description="User IDs allowed to use this server when not public",
+    )
 
 
 class MCPServerSimpleUpdateRequest(BaseModel):
@@ -158,6 +381,34 @@ class MCPServerSimpleUpdateRequest(BaseModel):
         None, description="Description of the MCP server"
     )
     server_url: Optional[str] = Field(None, description="URL of the MCP server")
+    tool_policies: Optional[dict[str, EndpointPolicy]] = Field(
+        default=None,
+        description=(
+            "Sparse per-tool Craft approval overrides keyed by tool name; "
+            "replaces the stored set. Unlisted tools use the default (ASK). "
+            "None leaves existing overrides unchanged."
+        ),
+    )
+    # None leaves the server's existing access unchanged.
+    is_public: Optional[bool] = Field(
+        default=None,
+        description=(
+            "If True, any user may add this server's tools to their agents. "
+            "If False, access is limited to `users` / `groups`. None leaves "
+            "existing access unchanged."
+        ),
+    )
+    groups: Optional[list[int]] = Field(
+        default=None,
+        description="User group IDs allowed to use this server when not public",
+    )
+    users: Optional[list[UUID]] = Field(
+        default=None,
+        description="User IDs allowed to use this server when not public",
+    )
+    available_in_craft: Optional[bool] = Field(
+        None, description="Whether the Craft agent may use this server"
+    )
 
 
 class MCPToolResponse(BaseModel):
@@ -203,6 +454,21 @@ class MCPUserOAuthConnectRequest(BaseModel):
     )
     oauth_client_secret: str | None = Field(
         None, description="OAuth client secret (optional for DCR)"
+    )
+    oauth_client_id_changed: bool = Field(
+        default=False,
+        description=(
+            "True if `oauth_client_id` was edited by the user. When False, "
+            "the stored value is reused and the request value is ignored. "
+            "Defaults to False for backward compatibility."
+        ),
+    )
+    oauth_client_secret_changed: bool = Field(
+        default=False,
+        description=(
+            "True if `oauth_client_secret` was edited by the user. When False, "
+            "the stored value is reused and the request value is ignored."
+        ),
     )
 
     @model_validator(mode="after")
@@ -295,9 +561,25 @@ class MCPServer(BaseModel):
     transport: Optional[MCPTransport] = None
     auth_type: Optional[MCPAuthenticationType] = None
     auth_performer: Optional[MCPAuthenticationPerformer] = None
+    oauth_provider_mode: MCPOAuthProviderMode = MCPOAuthProviderMode.AUTO_DISCOVERY
+    oauth_authorization_endpoint: Optional[str] = None
+    oauth_token_endpoint: Optional[str] = None
+    oauth_scopes_override: Optional[list[str]] = None
+    oauth_additional_auth_params: Optional[dict[str, str]] = None
     is_authenticated: bool
     user_authenticated: Optional[bool] = None
     status: MCPServerStatus
+    is_public: bool = True
+    groups: list[int] = Field(default_factory=list)
+    users: list[UUID] = Field(default_factory=list)
+    available_in_craft: bool = False
+    tool_policies: Optional[dict[str, EndpointPolicy]] = Field(
+        None,
+        description=(
+            "Stored per-tool Craft approval overrides (sparse; unlisted tools "
+            "default to ASK). Owner/admin views only."
+        ),
+    )
     last_refreshed_at: Optional[datetime.datetime] = None
     tool_count: int = Field(
         default=0, description="Number of tools associated with this server"
@@ -311,6 +593,13 @@ class MCPServer(BaseModel):
     admin_credentials: Optional[dict[str, str]] = Field(
         None,
         description="Admin's credential key-value pairs for template substitution and storage",
+    )
+    craft_connected: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether Craft can authenticate this user against the server. "
+            "None outside the Craft listing, the only one that computes it."
+        ),
     )
 
 
@@ -327,6 +616,11 @@ class MCPServerCreateResponse(BaseModel):
     server_url: str
     auth_type: str
     auth_performer: Optional[str]
+    oauth_provider_mode: MCPOAuthProviderMode = MCPOAuthProviderMode.AUTO_DISCOVERY
+    oauth_authorization_endpoint: Optional[str] = None
+    oauth_token_endpoint: Optional[str] = None
+    oauth_scopes_override: Optional[list[str]] = None
+    oauth_additional_auth_params: Optional[dict[str, str]] = None
     is_authenticated: bool
 
 

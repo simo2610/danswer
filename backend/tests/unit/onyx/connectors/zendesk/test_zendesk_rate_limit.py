@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import types
-from typing import Any
-from typing import Dict
+from typing import Any, Dict
 
 import pytest
 
@@ -43,9 +42,9 @@ def test_zendesk_client_per_minute_rate_limiting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Import here to allow monkeypatching modules safely
-    from onyx.connectors.zendesk.connector import ZendeskClient
     import onyx.connectors.cross_connector_utils.rate_limit_wrapper as rlw
     import onyx.connectors.zendesk.connector as zendesk_mod
+    from onyx.connectors.zendesk.connector import ZendeskClient
 
     fake_time = _FakeTime()
 
@@ -60,6 +59,7 @@ def test_zendesk_client_per_minute_rate_limiting(
         url: str,
         auth: Any,  # noqa: ARG001
         params: Dict[str, Any],  # noqa: ARG001
+        **kwargs: Any,  # noqa: ARG001
     ) -> _FakeResponse:
         calls.append(url)
         # minimal Zendesk list response (articles path)

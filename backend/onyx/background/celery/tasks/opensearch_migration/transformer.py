@@ -1,37 +1,38 @@
 import traceback
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from onyx.configs.constants import PUBLIC_DOC_PAT
 from onyx.document_index.interfaces_new import TenantState
 from onyx.document_index.opensearch.schema import DocumentChunk
-from onyx.document_index.vespa_constants import ACCESS_CONTROL_LIST
-from onyx.document_index.vespa_constants import BLURB
-from onyx.document_index.vespa_constants import BOOST
-from onyx.document_index.vespa_constants import CHUNK_CONTEXT
-from onyx.document_index.vespa_constants import CHUNK_ID
-from onyx.document_index.vespa_constants import CONTENT
-from onyx.document_index.vespa_constants import DOC_SUMMARY
-from onyx.document_index.vespa_constants import DOC_UPDATED_AT
-from onyx.document_index.vespa_constants import DOCUMENT_ID
-from onyx.document_index.vespa_constants import DOCUMENT_SETS
-from onyx.document_index.vespa_constants import EMBEDDINGS
-from onyx.document_index.vespa_constants import FULL_CHUNK_EMBEDDING_KEY
-from onyx.document_index.vespa_constants import HIDDEN
-from onyx.document_index.vespa_constants import IMAGE_FILE_NAME
-from onyx.document_index.vespa_constants import METADATA_LIST
-from onyx.document_index.vespa_constants import METADATA_SUFFIX
-from onyx.document_index.vespa_constants import PERSONAS
-from onyx.document_index.vespa_constants import PRIMARY_OWNERS
-from onyx.document_index.vespa_constants import SECONDARY_OWNERS
-from onyx.document_index.vespa_constants import SEMANTIC_IDENTIFIER
-from onyx.document_index.vespa_constants import SOURCE_LINKS
-from onyx.document_index.vespa_constants import SOURCE_TYPE
-from onyx.document_index.vespa_constants import TENANT_ID
-from onyx.document_index.vespa_constants import TITLE
-from onyx.document_index.vespa_constants import TITLE_EMBEDDING
-from onyx.document_index.vespa_constants import USER_PROJECT
+from onyx.document_index.vespa_constants import (
+    ACCESS_CONTROL_LIST,
+    BLURB,
+    BOOST,
+    CHUNK_CONTEXT,
+    CHUNK_ID,
+    CONTENT,
+    DOC_SUMMARY,
+    DOC_UPDATED_AT,
+    DOCUMENT_ID,
+    DOCUMENT_SETS,
+    EMBEDDINGS,
+    FULL_CHUNK_EMBEDDING_KEY,
+    HIDDEN,
+    IMAGE_FILE_NAME,
+    METADATA_LIST,
+    METADATA_SUFFIX,
+    PERSONAS,
+    PRIMARY_OWNERS,
+    SECONDARY_OWNERS,
+    SEMANTIC_IDENTIFIER,
+    SOURCE_LINKS,
+    SOURCE_TYPE,
+    TENANT_ID,
+    TITLE,
+    TITLE_EMBEDDING,
+    USER_PROJECT,
+)
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
 
@@ -202,9 +203,9 @@ def transform_vespa_chunks_to_opensearch_chunks(
             # function.
             if vespa_document_id in sanitized_to_original_doc_id_mapping:
                 logger.warning(
-                    f"Migration warning: Vespa document ID {vespa_document_id} does not match the document ID supplied "
-                    f"{sanitized_to_original_doc_id_mapping[vespa_document_id]}. "
-                    "The Vespa ID will be discarded."
+                    "Migration warning: Vespa document ID %s does not match the document ID supplied %s. The Vespa ID will be discarded.",
+                    vespa_document_id,
+                    sanitized_to_original_doc_id_mapping[vespa_document_id],
                 )
             document_id = sanitized_to_original_doc_id_mapping.get(
                 vespa_document_id, vespa_document_id
@@ -287,9 +288,9 @@ def transform_vespa_chunks_to_opensearch_chunks(
             )
             if not is_public and not acl_list:
                 logger.warning(
-                    f"Migration warning: Vespa chunk with document ID {vespa_document_id} and chunk index {chunk_index} has no "
-                    "public ACL and no access control list. This does not make sense as it implies the document is never "
-                    "searchable. Continuing with the migration..."
+                    "Migration warning: Vespa chunk with document ID %s and chunk index %s has no public ACL and no access control list. This does not make sense as it implies the document is never searchable. Continuing with the migration...",
+                    vespa_document_id,
+                    chunk_index,
                 )
 
             chunk_tenant_id: str | None = vespa_chunk.get(TENANT_ID)
@@ -338,9 +339,9 @@ def transform_vespa_chunks_to_opensearch_chunks(
         except Exception:
             traceback.print_exc()
             logger.exception(
-                f"Migration error: Error transforming Vespa chunk with document ID {vespa_chunk.get(DOCUMENT_ID)} "
-                f"and chunk index {vespa_chunk.get(CHUNK_ID)} into an OpenSearch chunk. Continuing with "
-                "the migration..."
+                "Migration error: Error transforming Vespa chunk with document ID %s and chunk index %s into an OpenSearch chunk. Continuing with the migration...",
+                vespa_chunk.get(DOCUMENT_ID),
+                vespa_chunk.get(CHUNK_ID),
             )
             errored_chunks.append(vespa_chunk)
 

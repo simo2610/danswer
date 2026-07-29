@@ -5,8 +5,24 @@ import {
   StreamStopReason,
 } from "@/lib/search/interfaces";
 import { Packet } from "./services/streamingModels";
+import { ReasoningEffortOverride } from "@/lib/languageModels/types";
 
 export type FeedbackType = "like" | "dislike";
+
+export interface QueuedMessage {
+  id: number;
+  text: string;
+}
+
+/**
+ * Maximum number of messages that can be queued while a response streams.
+ * Shared by both the main chat and Craft input bars / stores.
+ */
+export const MAX_QUEUED_MESSAGES = 5;
+
+/** Stable empty reference for selectors/props; `readonly` guards the singleton. */
+export const EMPTY_QUEUED_MESSAGES: readonly QueuedMessage[] = [];
+
 export type ChatState =
   | "input"
   | "loading"
@@ -44,6 +60,7 @@ export interface ChatSessionSummary {
   shared_status: ChatSessionSharedStatus;
   current_alternate_model: string | null;
   current_temperature_override: number | null;
+  current_reasoning_effort_override: ReasoningEffortOverride | null;
   highlights?: string[];
 }
 
@@ -127,6 +144,7 @@ export interface ChatSession {
   project_id: number | null;
   current_alternate_model: string;
   current_temperature_override: number | null;
+  current_reasoning_effort_override: ReasoningEffortOverride | null;
 }
 
 export interface SearchSession {
@@ -188,10 +206,13 @@ export interface BackendChatSession {
   time_updated: string;
   shared_status: ChatSessionSharedStatus;
   current_temperature_override: number | null;
+  current_reasoning_effort_override: ReasoningEffortOverride | null;
   current_alternate_model?: string;
 
   owner_name: string | null;
   packets: Packet[][];
+  // Set while a run is in flight and resumable via the resume-stream endpoint
+  current_run?: { run_id: number } | null;
 }
 
 export function toChatSession(backend: BackendChatSession): ChatSession {
@@ -205,6 +226,8 @@ export function toChatSession(backend: BackendChatSession): ChatSession {
     project_id: null,
     current_alternate_model: backend.current_alternate_model ?? "",
     current_temperature_override: backend.current_temperature_override,
+    current_reasoning_effort_override:
+      backend.current_reasoning_effort_override,
   };
 }
 

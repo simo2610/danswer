@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
-from typing import cast
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from onyx.server.query_and_chat.placement import Placement
-from onyx.tools.models import ToolCallException
-from onyx.tools.models import WebSearchToolOverrideKwargs
+from onyx.tools.models import ToolCallException, WebSearchToolOverrideKwargs
 from onyx.tools.tool_implementations.web_search.models import WebSearchResult
 from onyx.tools.tool_implementations.web_search.web_search_tool import (
+    WebSearchTool,
     _normalize_queries_input,
 )
-from onyx.tools.tool_implementations.web_search.web_search_tool import WebSearchTool
 
 
 def _make_result(
@@ -128,9 +125,9 @@ class TestWebSearchToolRunQueryCoercion:
 
         dispatched = _run(tool, "hi")
         for query_arg in dispatched:
-            assert (
-                len(query_arg) > 1
-            ), f"Single-character query dispatched: {query_arg!r}"
+            assert len(query_arg) > 1, (
+                f"Single-character query dispatched: {query_arg!r}"
+            )
 
     def test_control_characters_sanitized_before_dispatch(self) -> None:
         """Queries with control chars have those chars removed before dispatch."""

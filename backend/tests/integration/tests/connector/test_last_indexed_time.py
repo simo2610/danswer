@@ -15,20 +15,16 @@ Edge cases:
 4. COMPLETED_WITH_ERRORS counts as a success for last_indexed purposes.
 """
 
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 from onyx.db.models import IndexingStatus
-from onyx.server.documents.models import CCPairFullInfo
-from onyx.server.documents.models import ConnectorIndexingStatusLite
+from onyx.server.documents.models import CCPairFullInfo, ConnectorIndexingStatusLite
 from tests.integration.common_utils.managers.cc_pair import CCPairManager
 from tests.integration.common_utils.managers.connector import ConnectorManager
 from tests.integration.common_utils.managers.credential import CredentialManager
 from tests.integration.common_utils.managers.index_attempt import IndexAttemptManager
 from tests.integration.common_utils.managers.user import UserManager
-from tests.integration.common_utils.test_models import DATestCCPair
-from tests.integration.common_utils.test_models import DATestUser
+from tests.integration.common_utils.test_models import DATestCCPair, DATestUser
 
 
 def _wait_for_real_success(
@@ -84,12 +80,12 @@ def test_last_indexed_first_page_all_errors(reset: None) -> None:  # noqa: ARG00
     detail = _get_detail(cc_pair.id, admin)
     listing = _get_listing(cc_pair.id, admin)
 
-    assert (
-        detail.last_indexed is not None
-    ), "Detail page last_indexed is None even though a successful attempt exists"
-    assert (
-        listing.last_success is not None
-    ), "Listing page last_success is None even though a successful attempt exists"
+    assert detail.last_indexed is not None, (
+        "Detail page last_indexed is None even though a successful attempt exists"
+    )
+    assert listing.last_success is not None, (
+        "Listing page last_success is None even though a successful attempt exists"
+    )
 
     # Both surfaces must agree
     assert detail.last_indexed == listing.last_success, (
@@ -224,12 +220,12 @@ def test_last_indexed_completed_with_errors(reset: None) -> None:  # noqa: ARG00
     detail = _get_detail(cc_pair.id, admin)
     listing = _get_listing(cc_pair.id, admin)
 
-    assert (
-        detail.last_indexed is not None
-    ), "COMPLETED_WITH_ERRORS should count as a success for last_indexed"
-    assert (
-        listing.last_success is not None
-    ), "COMPLETED_WITH_ERRORS should count as a success for last_success"
+    assert detail.last_indexed is not None, (
+        "COMPLETED_WITH_ERRORS should count as a success for last_indexed"
+    )
+    assert listing.last_success is not None, (
+        "COMPLETED_WITH_ERRORS should count as a success for last_success"
+    )
 
     assert detail.last_indexed == listing.last_success, (
         f"Detail last_indexed={detail.last_indexed} != "

@@ -6,26 +6,31 @@ import os
 import pytest
 
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
-from tests.daily.connectors.google_drive.conftest import get_credentials_from_env
-from tests.daily.connectors.google_drive.consts_and_utils import ADMIN_EMAIL
-from tests.daily.connectors.google_drive.consts_and_utils import ADMIN_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import file_name_template
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_1_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_2_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_2_1_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_2_2_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_2_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_3_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import load_connector_outputs
-from tests.daily.connectors.google_drive.consts_and_utils import SHARED_DRIVE_1_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import SHARED_DRIVE_2_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import TEST_USER_1_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import TEST_USER_2_FILE_IDS
-from tests.daily.connectors.google_drive.consts_and_utils import TEST_USER_3_FILE_IDS
+from tests.daily.connectors.google_drive.conftest import build_credentials
+from tests.daily.connectors.google_drive.consts_and_utils import (
+    ADMIN_EMAIL,
+    ADMIN_FILE_IDS,
+    FOLDER_1_1_FILE_IDS,
+    FOLDER_1_2_FILE_IDS,
+    FOLDER_1_FILE_IDS,
+    FOLDER_2_1_FILE_IDS,
+    FOLDER_2_2_FILE_IDS,
+    FOLDER_2_FILE_IDS,
+    FOLDER_3_FILE_IDS,
+    SHARED_DRIVE_1_FILE_IDS,
+    SHARED_DRIVE_2_FILE_IDS,
+    TEST_USER_1_FILE_IDS,
+    TEST_USER_2_FILE_IDS,
+    TEST_USER_3_FILE_IDS,
+    file_name_template,
+    load_connector_outputs,
+)
+from tests.utils.secret_names import TestSecret
 
 
-def generate_test_id_to_drive_id_mapping() -> dict[int, str]:
+def generate_test_id_to_drive_id_mapping(
+    test_secrets: dict[TestSecret, str],
+) -> dict[int, str]:
     """
     Generate a mapping from test file IDs to actual Google Drive file IDs.
 
@@ -43,7 +48,9 @@ def generate_test_id_to_drive_id_mapping() -> dict[int, str]:
     )
 
     # Load credentials
-    connector.load_credentials(get_credentials_from_env(email=ADMIN_EMAIL, oauth=False))
+    connector.load_credentials(
+        build_credentials(email=ADMIN_EMAIL, oauth=False, test_secrets=test_secrets)
+    )
 
     # Get all documents from the connector
     docs = load_connector_outputs(connector).documents
@@ -98,11 +105,12 @@ def generate_test_id_to_drive_id_mapping() -> dict[int, str]:
     return test_id_to_drive_id
 
 
+@pytest.mark.secrets(TestSecret.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_STR)
 @pytest.mark.skipif(
     not os.getenv("RUN_MANUAL_TESTS"),
     reason="This test maps test IDs to actual Google Drive IDs. Set RUN_MANUAL_TESTS=1 to run.",
 )
-def test_generate_drive_id_mapping() -> None:
+def test_generate_drive_id_mapping(test_secrets: dict[TestSecret, str]) -> None:
     """Test to generate mapping from test IDs to actual Google Drive IDs.
 
     This test is skipped by default as it requires real Google Drive credentials
@@ -112,7 +120,7 @@ def test_generate_drive_id_mapping() -> None:
 
     RUN_MANUAL_TESTS=true pytest -xvs tests/daily/connectors/google_drive/test_map_test_ids.py::test_generate_drive_id_mapping
     """
-    mapping = generate_test_id_to_drive_id_mapping()
+    mapping = generate_test_id_to_drive_id_mapping(test_secrets)
     assert mapping, "Failed to generate any test ID to drive ID mappings"
 
     # Write the mapping to a JSON file

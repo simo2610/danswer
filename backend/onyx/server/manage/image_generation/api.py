@@ -1,34 +1,43 @@
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from onyx.auth.permissions import require_permission
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.enums import Permission
-from onyx.db.image_generation import create_image_generation_config__no_commit
-from onyx.db.image_generation import delete_image_generation_config__no_commit
-from onyx.db.image_generation import get_all_image_generation_configs
-from onyx.db.image_generation import get_image_generation_config
-from onyx.db.image_generation import set_default_image_generation_config
-from onyx.db.image_generation import unset_default_image_generation_config
-from onyx.db.llm import remove_llm_provider__no_commit
+from onyx.db.image_generation import (
+    create_image_generation_config__no_commit,
+    delete_image_generation_config__no_commit,
+    get_all_image_generation_configs,
+    get_image_generation_config,
+    set_default_image_generation_config,
+    unset_default_image_generation_config,
+)
+from onyx.db.llm import remove_llm_provider
 from onyx.db.models import LLMProvider as LLMProviderModel
-from onyx.db.models import ModelConfiguration
-from onyx.db.models import User
+from onyx.db.models import ModelConfiguration, User
+from onyx.error_handling.error_codes import OnyxErrorCode
+from onyx.error_handling.exceptions import OnyxError
 from onyx.image_gen.exceptions import ImageProviderCredentialsError
-from onyx.image_gen.factory import get_image_generation_provider
-from onyx.image_gen.factory import validate_credentials
+from onyx.image_gen.factory import get_image_generation_provider, validate_credentials
 from onyx.image_gen.interfaces import ImageGenerationProviderCredentials
-from onyx.llm.utils import get_max_input_tokens
-from onyx.server.manage.image_generation.models import ImageGenerationConfigCreate
-from onyx.server.manage.image_generation.models import ImageGenerationConfigUpdate
-from onyx.server.manage.image_generation.models import ImageGenerationConfigView
-from onyx.server.manage.image_generation.models import ImageGenerationCredentials
-from onyx.server.manage.image_generation.models import TestImageGenerationRequest
-from onyx.server.manage.llm.api import _validate_llm_provider_change
-from onyx.server.manage.llm.models import LLMProviderUpsertRequest
-from onyx.server.manage.llm.models import ModelConfigurationUpsertRequest
+from onyx.llm.model_capabilities import get_max_input_tokens
+from onyx.llm.utils import collect_credential_values, litellm_exception_to_safe_error
+from onyx.server.manage.image_generation.models import (
+    ImageGenerationConfigCreate,
+    ImageGenerationConfigUpdate,
+    ImageGenerationConfigView,
+    ImageGenerationCredentials,
+    TestImageGenerationRequest,
+)
+from onyx.server.manage.llm.api import (
+    _validate_and_normalize_vertex_auth,
+    _validate_llm_provider_change,
+)
+from onyx.server.manage.llm.models import (
+    LLMProviderUpsertRequest,
+    ModelConfigurationUpsertRequest,
+)
+from onyx.server.manage.llm.provider_cache import invalidate_provider_listing_cache
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -39,16 +48,13 @@ admin_router = APIRouter(prefix="/admin/image-generation")
 def _get_test_quality_for_model(model_name: str) -> str | None:
     """Returns the fastest quality setting for credential testing.
 
-    - gpt-image-1: 'low' (fastest)
-    - dall-e-3: 'standard' (faster than 'hd')
+    - gpt-image-*: 'low' (fastest)
     - Other models: None (use API default)
     """
     model_lower = model_name.lower()
 
-    if "gpt-image-1" in model_lower:
+    if "gpt-image-" in model_lower:
         return "low"
-    elif "dall-e-3" in model_lower or "dalle-3" in model_lower:
-        return "standard"
     return None
 
 
@@ -88,6 +94,10 @@ def _build_llm_provider_request(
             api_key_changed=False,  # Using stored key from source provider
         )
 
+        custom_config = _validate_and_normalize_vertex_auth(
+            source_provider.provider, custom_config
+        )
+
         return LLMProviderUpsertRequest(
             name=f"Image Gen - {image_provider_id}",
             provider=source_provider.provider,
@@ -115,6 +125,8 @@ def _build_llm_provider_request(
             status_code=400,
             detail="No provider or source llm provided",
         )
+
+    custom_config = _validate_and_normalize_vertex_auth(provider, custom_config)
 
     credentials = ImageGenerationProviderCredentials(
         api_key=api_key,
@@ -242,6 +254,10 @@ def test_image_generation(
             detail="No provider or source llm provided",
         )
 
+    custom_config = _validate_and_normalize_vertex_auth(
+        provider, test_request.custom_config
+    )
+
     try:
         # Build image provider from credentials
         # If incorrect credentials are provided, this will raise an exception
@@ -254,7 +270,7 @@ def test_image_generation(
                 deployment_name=(
                     test_request.deployment_name or test_request.model_name
                 ),
-                custom_config=test_request.custom_config,
+                custom_config=custom_config,
             ),
         )
     except ValueError:
@@ -280,13 +296,11 @@ def test_image_generation(
     except HTTPException:
         raise
     except Exception as e:
-        # Log only exception type to avoid exposing sensitive data
-        # (LiteLLM errors may contain URLs with API keys or auth tokens)
-        logger.warning(f"Image generation test failed: {type(e).__name__}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image generation test failed: {type(e).__name__}",
+        logger.warning("Image generation test failed: %s", type(e).__name__)
+        safe_error = litellm_exception_to_safe_error(
+            e, secrets=collect_credential_values(api_key, custom_config)
         )
+        raise OnyxError(OnyxErrorCode.VALIDATION_ERROR, safe_error.message)
 
 
 @admin_router.post("/config")
@@ -344,6 +358,7 @@ def create_config(
             is_default=config_create.is_default,
         )
         db_session.commit()
+        invalidate_provider_listing_cache()
         db_session.refresh(config)
         return ImageGenerationConfigView.from_model(config)
     except HTTPException:
@@ -467,9 +482,10 @@ def update_config(
         existing_config.model_configuration_id = new_model_config_id
 
         # 5. Delete old LLM provider (safe now - nothing references it)
-        remove_llm_provider__no_commit(db_session, old_llm_provider_id)
+        remove_llm_provider(db_session, old_llm_provider_id, commit=False)
 
         db_session.commit()
+        invalidate_provider_listing_cache()
         db_session.refresh(existing_config)
         return ImageGenerationConfigView.from_model(existing_config)
 
@@ -501,9 +517,10 @@ def delete_config(
         delete_image_generation_config__no_commit(db_session, image_provider_id)
 
         # Clean up the orphaned LLM provider (it was exclusively for image gen)
-        remove_llm_provider__no_commit(db_session, llm_provider_id)
+        remove_llm_provider(db_session, llm_provider_id, commit=False)
 
         db_session.commit()
+        invalidate_provider_listing_cache()
     except HTTPException:
         raise
     except ValueError as e:

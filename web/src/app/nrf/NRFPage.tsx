@@ -3,26 +3,26 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useUser } from "@/providers/UserProvider";
-import { toast } from "@/hooks/useToast";
-import { AuthType } from "@/lib/constants";
+import { toast } from "@opal/layouts";
 import AppInputBar, { AppInputBarHandle } from "@/sections/input/AppInputBar";
 import { Button } from "@opal/components";
-import Modal from "@/refresh-components/Modal";
+import { Modal } from "@opal/components";
 import { useFilters, useLlmManager } from "@/lib/hooks";
 import Dropzone from "react-dropzone";
-import { useSendMessageToParent, getPanelOrigin } from "@/lib/extension/utils";
+import { getPanelOrigin } from "@/lib/extension/utils";
+import { sendSetDefaultNewTabMessage } from "@/lib/extension/svc";
+import { useSendMessageToParent } from "@/lib/extension/hooks";
 import { useNRFPreferences } from "@/components/context/NRFPreferencesContext";
 import SidePanelHeader from "@/app/nrf/side-panel/SidePanelHeader";
 import { CHROME_MESSAGE } from "@/lib/extension/constants";
 import { SettingsPanel } from "@/app/components/nrf/SettingsPanel";
 import LoginPage from "@/app/auth/login/LoginPage";
-import { sendSetDefaultNewTabMessage } from "@/lib/extension/utils";
-import { useAgents } from "@/hooks/useAgents";
+import { useAgents } from "@/lib/agents/hooks";
 import { useProjectsContext } from "@/providers/ProjectsContext";
 import useDeepResearchToggle from "@/hooks/useDeepResearchToggle";
 import useChatController from "@/hooks/useChatController";
 import useChatSessionController from "@/hooks/useChatSessionController";
-import useAgentController from "@/hooks/useAgentController";
+import { useAgentController } from "@/lib/agents/hooks";
 import {
   useCurrentChatState,
   useCurrentMessageHistory,
@@ -33,8 +33,8 @@ import ChatUI from "@/sections/chat/ChatUI";
 import ChatScrollContainer from "@/sections/chat/ChatScrollContainer";
 import WelcomeMessage from "@/app/app/components/WelcomeMessage";
 import useChatSessions from "@/hooks/useChatSessions";
-import { cn } from "@/lib/utils";
-import Spacer from "@/refresh-components/Spacer";
+import { cn } from "@opal/utils";
+import { Spacer } from "@opal/components";
 import { DEFAULT_CONTEXT_TOKENS } from "@/lib/constants";
 import { SvgUser, SvgMenu, SvgAlertTriangle } from "@opal/icons";
 import { useAppBackground } from "@/providers/AppBackgroundProvider";
@@ -43,13 +43,13 @@ import DocumentsSidebar from "@/sections/document-sidebar/DocumentsSidebar";
 import PreviewModal from "@/sections/modals/PreviewModal";
 import { personaIncludesRetrieval } from "@/app/app/services/lib";
 import { useQueryController } from "@/providers/QueryControllerProvider";
-import { eeGated } from "@/ce";
+import { paidTierGated } from "@/ce";
 import EESearchUI from "@/ee/sections/SearchUI";
 import useMultiModelChat from "@/hooks/useMultiModelChat";
-import ModelSelector from "@/refresh-components/popovers/ModelSelector";
+import MultiModelSelector from "@/sections/model-selector/MultiModelSelector";
 import { Section } from "@/layouts/general-layouts";
 
-const SearchUI = eeGated(EESearchUI);
+const SearchUI = paidTierGated(EESearchUI);
 
 interface NRFPageProps {
   isSidePanel?: boolean;
@@ -95,10 +95,7 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
 
   // Assistant controller
   const { selectedAgent, setSelectedAgentFromId, liveAgent } =
-    useAgentController({
-      selectedChatSession: undefined,
-      onAgentSelect: () => {},
-    });
+    useAgentController(undefined, () => {});
 
   // LLM manager for model selection.
   // - currentChatSession: undefined because NRF always starts new chats
@@ -112,15 +109,25 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
 
   // Sync single-model selection to llmManager so the submission path
   // uses the correct provider/version (mirrors AppPage behaviour).
+  // Skip when unchanged — otherwise the initial [] -> [currentLlmModel]
+  // sync would flag a manual override before the agent's default loads.
   useEffect(() => {
     if (multiModel.selectedModels.length === 1) {
       const model = multiModel.selectedModels[0]!;
-      llmManager.updateCurrentLlm({
-        name: model.name,
-        provider: model.provider,
-        modelName: model.modelName,
-      });
+      const current = llmManager.currentLlm;
+      if (
+        model.provider !== current.provider ||
+        model.modelName !== current.modelName ||
+        model.name !== current.name
+      ) {
+        llmManager.updateCurrentLlm({
+          name: model.name,
+          provider: model.provider,
+          modelName: model.modelName,
+        });
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiModel.selectedModels]);
 
   // Deep research toggle
@@ -460,7 +467,7 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
           <div
             {...getRootProps()}
             className={cn(
-              "flex-1 min-h-0 w-full flex flex-col items-center outline-none",
+              "flex-1 min-h-0 w-full flex flex-col items-center outline-hidden",
               isSidePanel && "px-3"
             )}
           >
@@ -500,16 +507,17 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
                   flexDirection="row"
                   justifyContent="between"
                   alignItems="end"
-                  className="max-w-[var(--app-page-main-content-width)]"
+                  className="max-w-(--app-page-main-content-width)"
                 >
                   <WelcomeMessage isDefaultAgent />
-                  {liveAgent && !llmManager.isLoadingProviders && (
-                    <ModelSelector
-                      llmManager={llmManager}
+                  {liveAgent && (
+                    <MultiModelSelector
                       selectedModels={multiModel.selectedModels}
                       onAdd={multiModel.addModel}
                       onRemove={multiModel.removeModel}
                       onReplace={multiModel.replaceModel}
+                      temperatureManager={llmManager}
+                      reasoningManager={llmManager}
                     />
                   )}
                 </Section>
@@ -522,17 +530,18 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
               ref={inputRef}
               className={cn(
                 "w-full flex flex-col",
-                !isSidePanel && "max-w-[var(--app-page-main-content-width)]"
+                !isSidePanel && "max-w-(--app-page-main-content-width)"
               )}
             >
-              {hasMessages && liveAgent && !llmManager.isLoadingProviders && (
+              {hasMessages && liveAgent && (
                 <div className="pb-1">
-                  <ModelSelector
-                    llmManager={llmManager}
+                  <MultiModelSelector
                     selectedModels={multiModel.selectedModels}
                     onAdd={multiModel.addModel}
                     onRemove={multiModel.removeModel}
                     onReplace={multiModel.replaceModel}
+                    temperatureManager={llmManager}
+                    reasoningManager={llmManager}
                   />
                 </div>
               )}
@@ -565,7 +574,7 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
 
             {/* Search results - shown when query is classified as search */}
             {isSearch && (
-              <div className="flex-1 w-full max-w-[var(--app-page-main-content-width)] px-4 min-h-0 overflow-auto">
+              <div className="flex-1 w-full max-w-(--app-page-main-content-width) px-4 min-h-0 overflow-auto">
                 <Spacer rem={0.75} />
                 <SearchUI onDocumentClick={handleSearchDocumentClick} />
               </div>
@@ -581,7 +590,7 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
       <div
         className={cn(
           "absolute right-0 top-0 h-full z-20 overflow-hidden transition-all duration-300",
-          documentSidebarVisible ? "w-[25rem]" : "w-0"
+          documentSidebarVisible ? "w-100" : "w-0"
         )}
       >
         <DocumentsSidebar
@@ -638,10 +647,10 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
           <Modal.Content width="sm" height="sm">
             <Modal.Header icon={SvgUser} title="Welcome to Onyx" />
             <Modal.Body>
-              {authTypeMetadata.authType === AuthType.BASIC ? (
+              {authTypeMetadata?.multiTenant === false ? (
                 <LoginPage
                   authUrl={null}
-                  authTypeMetadata={authTypeMetadata}
+                  authTypeMetadata={authTypeMetadata ?? null}
                   nextUrl="/nrf"
                 />
               ) : (
@@ -671,7 +680,7 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
           width="full"
           prominence="secondary"
           onClick={() => {
-            window.location.href = "/admin/configuration/llm";
+            window.location.href = "/admin/configuration/language-models";
           }}
         >
           Set up an LLM.

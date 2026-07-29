@@ -6,21 +6,16 @@ Verifies that:
 - Reactivation is blocked when the seat limit is reached
 """
 
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import redis
-import requests
 
-from ee.onyx.server.license.models import LicenseMetadata
-from ee.onyx.server.license.models import LicenseSource
-from ee.onyx.server.license.models import PlanType
+from ee.onyx.server.license.models import LicenseMetadata, LicenseSource, PlanType
 from onyx.auth.schemas import UserRole
-from onyx.configs.app_configs import REDIS_DB_NUMBER
-from onyx.configs.app_configs import REDIS_HOST
-from onyx.configs.app_configs import REDIS_PORT
+from onyx.configs.app_configs import REDIS_DB_NUMBER, REDIS_HOST, REDIS_PORT
 from onyx.server.settings.models import ApplicationStatus
 from tests.integration.common_utils.constants import API_SERVER_URL
+from tests.integration.common_utils.http_client import client
 from tests.integration.common_utils.managers.user import UserManager
 from tests.integration.common_utils.test_models import DATestUser
 
@@ -28,7 +23,7 @@ _LICENSE_REDIS_KEY = "public:license:metadata"
 
 
 def _seed_license(r: redis.Redis, seats: int) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     metadata = LicenseMetadata(
         tenant_id="public",
         organization_name="Test Org",
@@ -113,7 +108,7 @@ def test_slack_user_reactivation_blocked_by_seat_limit(
     _seed_license(r, seats=1)
 
     try:
-        response = requests.patch(
+        response = client.patch(
             url=f"{API_SERVER_URL}/manage/admin/activate-user",
             json={"user_email": slack_user.email},
             headers=admin_user.headers,

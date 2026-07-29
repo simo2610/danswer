@@ -1,13 +1,16 @@
 "use client";
 
 import { useField } from "formik";
-import PasswordInputTypeIn, {
-  PasswordInputTypeInProps,
-} from "@/refresh-components/inputs/PasswordInputTypeIn";
+import {
+  PasswordInputTypeIn,
+  type PasswordInputTypeInProps,
+} from "@opal/components";
 import { useOnChangeEvent, useOnBlurEvent } from "@/hooks/formHooks";
 
-export interface PasswordInputTypeInFieldProps
-  extends Omit<PasswordInputTypeInProps, "value"> {
+export interface PasswordInputTypeInFieldProps extends Omit<
+  PasswordInputTypeInProps,
+  "value"
+> {
   name: string;
 }
 

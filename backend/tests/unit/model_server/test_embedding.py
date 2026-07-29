@@ -1,14 +1,11 @@
 import asyncio
 import time
-from typing import Any
-from typing import List
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from typing import Any, List
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from model_server.encoders import embed_text
-from model_server.encoders import process_embed_request
+from model_server.encoders import embed_text, process_embed_request
 from shared_configs.enums import EmbedTextType
 from shared_configs.model_server_models import EmbedRequest
 
@@ -51,8 +48,9 @@ async def test_embed_text_local_model() -> None:
 @pytest.mark.asyncio
 async def test_concurrent_embeddings() -> None:
     def mock_encode(
-        *args: Any, **kwargs: Any  # noqa: ARG001
-    ) -> List[List[float]]:  # noqa: ARG001
+        *args: Any,  # noqa: ARG001
+        **kwargs: Any,  # noqa: ARG001
+    ) -> List[List[float]]:
         time.sleep(5)
         return [[0.1, 0.2, 0.3]]
 

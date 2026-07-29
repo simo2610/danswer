@@ -1,19 +1,23 @@
 from onyx.configs.constants import MessageType
 from onyx.llm.interfaces import LLM
-from onyx.llm.models import AssistantMessage
-from onyx.llm.models import ChatCompletionMessage
-from onyx.llm.models import ReasoningEffort
-from onyx.llm.models import SystemMessage
-from onyx.llm.models import UserMessage
+from onyx.llm.models import (
+    AssistantMessage,
+    ChatCompletionMessage,
+    ReasoningEffort,
+    SystemMessage,
+    UserMessage,
+)
 from onyx.prompts.prompt_utils import get_current_llm_day_time
-from onyx.prompts.search_prompts import KEYWORD_REPHRASE_SYSTEM_PROMPT
-from onyx.prompts.search_prompts import KEYWORD_REPHRASE_USER_PROMPT
-from onyx.prompts.search_prompts import REPHRASE_CONTEXT_PROMPT
-from onyx.prompts.search_prompts import SEMANTIC_QUERY_REPHRASE_SYSTEM_PROMPT
-from onyx.prompts.search_prompts import SEMANTIC_QUERY_REPHRASE_USER_PROMPT
+from onyx.prompts.search_prompts import (
+    KEYWORD_REPHRASE_SYSTEM_PROMPT,
+    KEYWORD_REPHRASE_USER_PROMPT,
+    REPHRASE_CONTEXT_PROMPT,
+    SEMANTIC_QUERY_REPHRASE_SYSTEM_PROMPT,
+    SEMANTIC_QUERY_REPHRASE_USER_PROMPT,
+)
 from onyx.tools.models import ChatMinimalTextMessage
-from onyx.tracing.llm_utils import llm_generation_span
-from onyx.tracing.llm_utils import record_llm_response
+from onyx.tracing.flows import LLMFlow
+from onyx.tracing.llm_utils import llm_generation_span, record_llm_response
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -132,7 +136,7 @@ def semantic_query_rephrase(
 
     # Call LLM and return result with Braintrust tracing
     with llm_generation_span(
-        llm=llm, flow="semantic_query_rephrase", input_messages=messages
+        llm=llm, flow=LLMFlow.SEMANTIC_QUERY_REPHRASE, input_messages=messages
     ) as span_generation:
         response = llm.invoke(prompt=messages, reasoning_effort=ReasoningEffort.OFF)
         record_llm_response(span_generation, response)
@@ -212,7 +216,7 @@ def keyword_query_expansion(
 
     # Call LLM and return result with Braintrust tracing
     with llm_generation_span(
-        llm=llm, flow="keyword_query_expansion", input_messages=messages
+        llm=llm, flow=LLMFlow.KEYWORD_QUERY_EXPANSION, input_messages=messages
     ) as span_generation:
         response = llm.invoke(prompt=messages, reasoning_effort=ReasoningEffort.OFF)
         record_llm_response(span_generation, response)

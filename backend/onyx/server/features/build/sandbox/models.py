@@ -1,23 +1,47 @@
 """Pydantic models for sandbox module communication."""
 
 from datetime import datetime
+from typing import TypeAlias
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from onyx.db.enums import SandboxStatus
+from onyx.server.gateway.models import GatewayModelDescriptor
+
+FileSet: TypeAlias = dict[str, bytes]
 
 
-class LLMProviderConfig(BaseModel):
-    """LLM provider configuration for sandbox provisioning.
+class PromptAttachment(BaseModel):
+    """A session-relative file to include in an OpenCode prompt."""
 
-    Passed to SandboxManager.provision() to configure the LLM.
-    """
+    model_config = ConfigDict(frozen=True)
 
+    name: str
+    path: str
+    mime_type: str
+
+
+class CraftLLMProviderConfig(BaseModel):
     provider: str
     model_name: str
     api_key: str | None
     api_base: str | None
+    display_name: str | None = None
+    models: list[GatewayModelDescriptor] | None = None
+
+
+class CraftMCPServerConfig(BaseModel):
+    """A craft-enabled MCP server resolved for opencode `mcp` emission (URL only;
+    the proxy injects credentials). ``key`` is the opencode server id.
+
+    ``server_id`` is not emitted into ``opencode.json``; it feeds the per-session
+    runtime hash so a hot reload fires when the server set or tools change."""
+
+    key: str
+    url: str
+    disabled_tools: tuple[str, ...] = ()
+    server_id: int
 
 
 class SandboxInfo(BaseModel):
@@ -43,19 +67,6 @@ class SnapshotResult(BaseModel):
     size_bytes: int
 
 
-class SnapshotInfo(BaseModel):
-    """Full information about a sandbox snapshot (including DB info).
-
-    Used when returning snapshot information to API callers.
-    """
-
-    id: str
-    sandbox_id: str
-    storage_path: str
-    created_at: datetime
-    size_bytes: int
-
-
 class FilesystemEntry(BaseModel):
     """Represents a file or directory entry in the sandbox filesystem.
 
@@ -68,3 +79,28 @@ class FilesystemEntry(BaseModel):
     is_directory: bool
     size: int | None = None  # File size in bytes (None for directories)
     mime_type: str | None = None  # MIME type (None for directories)
+
+
+class DirectoryListing(BaseModel):
+    path: str  # Current directory path
+    entries: list[FilesystemEntry]  # Contents
+
+
+class PushFailure(BaseModel):
+    sandbox_id: UUID
+    reason: str
+    detail: str | None = None
+
+
+class PushResult(BaseModel):
+    targets: int
+    succeeded: int
+    failures: list[PushFailure]
+
+
+class RetriableWriteError(Exception):
+    """Transient failure in write_files_to_sandbox (timeout, pod not-ready)."""
+
+
+class FatalWriteError(Exception):
+    """Permanent failure in write_files_to_sandbox (validation, auth)."""

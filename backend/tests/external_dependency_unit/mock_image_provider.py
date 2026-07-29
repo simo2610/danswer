@@ -8,12 +8,13 @@ from datetime import datetime
 from typing import Any
 from unittest.mock import patch
 
-from litellm.types.utils import ImageObject
-from litellm.types.utils import ImageResponse
+from litellm.types.utils import ImageObject, ImageResponse
 
-from onyx.image_gen.interfaces import ImageGenerationProvider
-from onyx.image_gen.interfaces import ImageGenerationProviderCredentials
-from onyx.image_gen.interfaces import ReferenceImage
+from onyx.image_gen.interfaces import (
+    ImageGenerationProvider,
+    ImageGenerationProviderCredentials,
+    ReferenceImage,
+)
 from onyx.llm.interfaces import LLMConfig
 
 
@@ -50,7 +51,7 @@ class MockImageGenerationProvider(
         return True
 
     @classmethod
-    def _build_from_credentials(
+    def _build_from_credentials(  # ty: ignore[invalid-method-override]
         cls,
         _: ImageGenerationProviderCredentials,
     ) -> ImageGenerationProvider:
@@ -107,9 +108,9 @@ def _create_mock_image_generation_llm_config() -> LLMConfig:
 
 
 @contextmanager
-def use_mock_image_generation_provider() -> (
-    Generator[ImageGenerationProviderController, None, None]
-):
+def use_mock_image_generation_provider() -> Generator[
+    ImageGenerationProviderController, None, None
+]:
     image_gen_provider = MockImageGenerationProvider()
 
     with (

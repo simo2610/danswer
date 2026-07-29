@@ -1,10 +1,10 @@
-from typing import cast
+import math
 
-from redis.client import Redis
+from redis.exceptions import LockNotOwnedError
 from redis.lock import Lock as RedisLock
 
-from onyx.cache.interface import CacheBackend
-from onyx.cache.interface import CacheLock
+from onyx.cache.interface import CacheBackend, CacheLock, CacheLockLostError
+from onyx.redis.tenant_redis_client import TenantRedisClient
 
 
 class RedisCacheLock(CacheLock):
@@ -28,30 +28,32 @@ class RedisCacheLock(CacheLock):
     def release(self) -> None:
         self._lock.release()
 
+    def extend(self, ttl_seconds: float) -> None:
+        try:
+            # redis-py extend takes int seconds; ceil so the lease is never shortened.
+            self._lock.extend(math.ceil(ttl_seconds), replace_ttl=True)
+        except LockNotOwnedError as e:
+            raise CacheLockLostError(str(e)) from e
+
     def owned(self) -> bool:
         return bool(self._lock.owned())
 
 
 class RedisCacheBackend(CacheBackend):
-    """``CacheBackend`` implementation that delegates to a ``redis.Redis`` client.
+    """``CacheBackend`` implementation that delegates to a tenant Redis client.
 
     This is a thin pass-through — every method maps 1-to-1 to the underlying
-    Redis command.  ``TenantRedis`` key-prefixing is handled by the client
+    Redis command. Key-prefixing is handled by the ``TenantRedisClient``
     itself (provided by ``get_redis_client``).
     """
 
-    def __init__(self, redis_client: Redis) -> None:
+    def __init__(self, redis_client: TenantRedisClient) -> None:
         self._r = redis_client
 
     # -- basic key/value ---------------------------------------------------
 
     def get(self, key: str) -> bytes | None:
-        val = self._r.get(key)
-        if val is None:
-            return None
-        if isinstance(val, bytes):
-            return val
-        return str(val).encode()
+        return self._r.get(key)
 
     def set(
         self,
@@ -73,12 +75,12 @@ class RedisCacheBackend(CacheBackend):
         self._r.expire(key, seconds)
 
     def ttl(self, key: str) -> int:
-        return cast(int, self._r.ttl(key))
+        return self._r.ttl(key)
 
     # -- distributed lock --------------------------------------------------
 
     def lock(self, name: str, timeout: float | None = None) -> CacheLock:
-        return RedisCacheLock(self._r.lock(name, timeout=timeout))
+        return RedisCacheLock(self._r.lock(name, timeout=timeout, thread_local=False))
 
     # -- blocking list (MCP OAuth BLPOP pattern) ---------------------------
 
@@ -86,7 +88,4 @@ class RedisCacheBackend(CacheBackend):
         self._r.rpush(key, value)
 
     def blpop(self, keys: list[str], timeout: int = 0) -> tuple[bytes, bytes] | None:
-        result = cast(list[bytes] | None, self._r.blpop(keys, timeout=timeout))
-        if result is None:
-            return None
-        return (result[0], result[1])
+        return self._r.blpop(keys, timeout=timeout)

@@ -15,23 +15,25 @@ from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import LargeBinary
-from sqlalchemy import select
-from sqlalchemy import text
+from sqlalchemy import LargeBinary, select, text
 from sqlalchemy.orm import Session
 
-from ee.onyx.utils.encryption import _decrypt_bytes
-from ee.onyx.utils.encryption import _encrypt_string
-from ee.onyx.utils.encryption import _get_trimmed_key
+from ee.onyx.utils.encryption import _decrypt_bytes, _encrypt_string, _get_trimmed_key
 from onyx.configs.constants import DocumentSource
-from onyx.db.models import Credential
-from onyx.db.models import EncryptedJson
-from onyx.db.models import EncryptedString
-from onyx.db.models import InternetSearchProvider
-from onyx.db.rotate_encryption_key import _discover_encrypted_columns
-from onyx.db.rotate_encryption_key import rotate_encryption_key
-from onyx.utils.variable_functionality import fetch_versioned_implementation
-from onyx.utils.variable_functionality import global_version
+from onyx.db.models import (
+    Credential,
+    EncryptedJson,
+    EncryptedString,
+    InternetSearchProvider,
+)
+from onyx.db.rotate_encryption_key import (
+    _discover_encrypted_columns,
+    rotate_encryption_key,
+)
+from onyx.utils.variable_functionality import (
+    fetch_versioned_implementation,
+    global_version,
+)
 
 EE_MODULE = "ee.onyx.utils.encryption"
 ROTATE_MODULE = "onyx.db.rotate_encryption_key"
@@ -79,7 +81,11 @@ class TestDiscoverEncryptedColumns:
     def test_discovers_credential_json(self) -> None:
         results = _discover_encrypted_columns()
         found = {
-            (model_cls.__tablename__, col_name, is_json)  # type: ignore[attr-defined]
+            (
+                model_cls.__tablename__,  # ty: ignore[unresolved-attribute]
+                col_name,
+                is_json,
+            )
             for model_cls, col_name, _, is_json in results
         }
         assert ("credential", "credential_json", True) in found
@@ -87,7 +93,11 @@ class TestDiscoverEncryptedColumns:
     def test_discovers_internet_search_provider_api_key(self) -> None:
         results = _discover_encrypted_columns()
         found = {
-            (model_cls.__tablename__, col_name, is_json)  # type: ignore[attr-defined]
+            (
+                model_cls.__tablename__,  # ty: ignore[unresolved-attribute]
+                col_name,
+                is_json,
+            )
             for model_cls, col_name, _, is_json in results
         }
         assert ("internet_search_provider", "api_key", False) in found
@@ -98,7 +108,7 @@ class TestDiscoverEncryptedColumns:
             col = getattr(model_cls, col_name).property.columns[0]
             if isinstance(col.type, EncryptedString):
                 assert not is_json, (
-                    f"{model_cls.__tablename__}.{col_name} is EncryptedString "  # type: ignore[attr-defined]
+                    f"{model_cls.__tablename__}.{col_name} is EncryptedString "  # ty: ignore[unresolved-attribute]
                     f"but is_json={is_json}"
                 )
 
@@ -108,7 +118,7 @@ class TestDiscoverEncryptedColumns:
             col = getattr(model_cls, col_name).property.columns[0]
             if isinstance(col.type, EncryptedJson):
                 assert is_json, (
-                    f"{model_cls.__tablename__}.{col_name} is EncryptedJson "  # type: ignore[attr-defined]
+                    f"{model_cls.__tablename__}.{col_name} is EncryptedJson "  # ty: ignore[unresolved-attribute]
                     f"but is_json={is_json}"
                 )
 

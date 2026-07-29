@@ -3,19 +3,24 @@ from io import BytesIO
 
 from PIL import Image
 
-from onyx.configs.app_configs import IMAGE_SUMMARIZATION_SYSTEM_PROMPT
-from onyx.configs.app_configs import IMAGE_SUMMARIZATION_USER_PROMPT
+from onyx.configs.app_configs import (
+    IMAGE_SUMMARIZATION_SYSTEM_PROMPT,
+    IMAGE_SUMMARIZATION_USER_PROMPT,
+)
 from onyx.llm.interfaces import LLM
-from onyx.llm.models import ChatCompletionMessage
-from onyx.llm.models import ContentPart
-from onyx.llm.models import ImageContentPart
-from onyx.llm.models import ImageUrlDetail
-from onyx.llm.models import SystemMessage
-from onyx.llm.models import TextContentPart
-from onyx.llm.models import UserMessage
+from onyx.llm.models import (
+    ChatCompletionMessage,
+    ContentPart,
+    ImageContentPart,
+    ImageUrlDetail,
+    SystemMessage,
+    TextContentPart,
+    UserMessage,
+)
 from onyx.llm.utils import llm_response_to_string
-from onyx.tracing.llm_utils import llm_generation_span
-from onyx.tracing.llm_utils import record_llm_response
+from onyx.server.metrics.image_processing import track_image_summarization
+from onyx.tracing.flows import LLMFlow
+from onyx.tracing.llm_utils import llm_generation_span, record_llm_response
 from onyx.utils.b64 import get_image_type_from_bytes
 from onyx.utils.logger import setup_logger
 
@@ -37,6 +42,7 @@ def prepare_image_bytes(image_data: bytes) -> str:
     return encoded_image
 
 
+@track_image_summarization
 def summarize_image_pipeline(
     llm: LLM,
     image_data: bytes,
@@ -127,7 +133,7 @@ def _summarize_image(
         # Call LLM with Braintrust tracing
         with llm_generation_span(
             llm=llm,
-            flow="image_summarization",
+            flow=LLMFlow.IMAGE_SUMMARIZATION,
             input_messages=[{"type": "image_summarization_request"}],
         ) as span_generation:
             # Note: We don't include the actual image in the span input to avoid bloating traces

@@ -1,15 +1,18 @@
 from typing import Any
 from onyx.db.engine.iam_auth import get_iam_auth_token
+from onyx.db.engine.pg_ssl import create_pg_ssl_context
 from onyx.configs.app_configs import USE_IAM_AUTH
 from onyx.configs.app_configs import POSTGRES_HOST
 from onyx.configs.app_configs import POSTGRES_PORT
 from onyx.configs.app_configs import POSTGRES_USER
 from onyx.configs.app_configs import AWS_REGION_NAME
+from onyx.db.engine.shard_registry import ALEMBIC_TARGET_URL_ATTRIBUTE
 from onyx.db.engine.sql_engine import build_connection_string
 from onyx.db.engine.tenant_utils import get_all_tenant_ids
 from sqlalchemy import event
 from sqlalchemy import pool
 from sqlalchemy import text
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.engine.base import Connection
 import os
 import ssl
@@ -25,9 +28,17 @@ from shared_configs.configs import (
     POSTGRES_DEFAULT_SCHEMA,
     TENANT_ID_PREFIX,
 )
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 from onyx.db.models import Base
-from celery.backends.database.session import ResultModelBase  # type: ignore
+from celery.backends.database.session import (
+    ResultModelBase,  # ty: ignore[unresolved-import]
+)
 from onyx.db.engine.sql_engine import SqlEngine
+from onyx.utils.variable_functionality import set_is_ee_based_on_env_variable
+
+# Match the app processes' edition so migrations that use versioned
+# implementations (e.g. encrypt_string_to_bytes) resolve the EE variants.
+set_is_ee_based_on_env_variable()
 
 # Make sure in alembic.ini [logger_root] level=INFO is set or most logging will be
 # hidden! (defaults to level=WARN)
@@ -45,6 +56,19 @@ if config.config_file_name is not None and config.attributes.get(
 target_metadata = [Base.metadata, ResultModelBase.metadata]
 
 logger = logging.getLogger(__name__)
+
+
+def connection_url() -> str:
+    """Database URL for this migration run.
+
+    Defaults to the process-wide POSTGRES_* settings. A caller that has already
+    decided which database to target — notably per-tenant migrations, which must
+    follow the tenant's shard — passes it via `ALEMBIC_TARGET_URL_ATTRIBUTE`.
+    """
+    return (
+        config.attributes.get(ALEMBIC_TARGET_URL_ATTRIBUTE) or build_connection_string()
+    )
+
 
 ssl_context: ssl.SSLContext | None = None
 if USE_IAM_AUTH:
@@ -102,9 +126,9 @@ def filter_tenants_by_range(
     return filtered_tenants
 
 
-def get_schema_options() -> (
-    tuple[bool, bool, bool, int | None, int | None, list[str] | None]
-):
+def get_schema_options() -> tuple[
+    bool, bool, bool, int | None, int | None, list[str] | None
+]:
     x_args_raw = context.get_x_argument()
     x_args = {}
     for arg in x_args_raw:
@@ -158,7 +182,7 @@ def get_schema_options() -> (
                 name.strip() for name in schema_names_str.split(",") if name.strip()
             ]
             if schemas:
-                logger.info(f"Specific schema names specified: {schemas}")
+                logger.info("Specific schema names specified: %s", schemas)
 
     # Validate that only one method is used at a time
     range_filtering = tenant_range_start is not None or tenant_range_end is not None
@@ -216,8 +240,15 @@ def do_run_migrations(
         script_location=config.get_main_option("script_location"),
     )
 
-    with context.begin_transaction():
-        context.run_migrations()
+    # Migrations may call into code that reads CURRENT_TENANT_ID_CONTEXTVAR
+    # (e.g. get_kv_store().load() in 4ee1287bd26a). search_path alone is not
+    # enough — set the Python contextvar to match.
+    token = CURRENT_TENANT_ID_CONTEXTVAR.set(schema_name)
+    try:
+        with context.begin_transaction():
+            context.run_migrations()
+    finally:
+        CURRENT_TENANT_ID_CONTEXTVAR.reset(token)
 
 
 def provide_iam_token_for_alembic(
@@ -227,11 +258,15 @@ def provide_iam_token_for_alembic(
     cparams: Any,
 ) -> None:
     if USE_IAM_AUTH:
-        # Database connection settings
+        # Derived from the URL actually being migrated, not the global POSTGRES_*
+        # settings: an RDS IAM token is only valid for the host/port/user it was
+        # minted for, so a tenant on a shard with different coordinates would be
+        # rejected if we used the defaults here.
+        url = make_url(connection_url())
         region = AWS_REGION_NAME
-        host = POSTGRES_HOST
-        port = POSTGRES_PORT
-        user = POSTGRES_USER
+        host = url.host or POSTGRES_HOST
+        port = str(url.port) if url.port else POSTGRES_PORT
+        user = url.username or POSTGRES_USER
 
         # Get IAM authentication token
         token = get_iam_auth_token(host, port, user, region)
@@ -258,8 +293,9 @@ async def run_async_migrations() -> None:
     SqlEngine.init_engine(pool_size=20, max_overflow=5)
 
     engine = create_async_engine(
-        build_connection_string(),
+        connection_url(),
         poolclass=pool.NullPool,
+        connect_args={"ssl": create_pg_ssl_context()},
     )
 
     if USE_IAM_AUTH:
@@ -272,14 +308,17 @@ async def run_async_migrations() -> None:
 
     if schemas:
         # Use specific schema names directly without fetching all tenants
-        logger.info(f"Migrating specific schema names: {schemas}")
+        logger.info("Migrating specific schema names: %s", schemas)
 
         i_schema = 0
         num_schemas = len(schemas)
         for schema in schemas:
             i_schema += 1
             logger.info(
-                f"Migrating schema: index={i_schema} num_schemas={num_schemas} schema={schema}"
+                "Migrating schema: index=%s num_schemas=%s schema=%s",
+                i_schema,
+                num_schemas,
+                schema,
             )
             try:
                 async with engine.connect() as connection:
@@ -290,7 +329,7 @@ async def run_async_migrations() -> None:
                     )
                     await connection.commit()
             except Exception as e:
-                logger.error(f"Error migrating schema {schema}: {e}")
+                logger.error("Error migrating schema %s: %s", schema, e)
                 if not continue_on_error:
                     logger.error("--continue=true is not set, raising exception!")
                     raise
@@ -306,10 +345,14 @@ async def run_async_migrations() -> None:
 
         if tenant_range_start is not None or tenant_range_end is not None:
             logger.info(
-                f"Filtering tenants by range: start={tenant_range_start}, end={tenant_range_end}"
+                "Filtering tenants by range: start=%s, end=%s",
+                tenant_range_start,
+                tenant_range_end,
             )
             logger.info(
-                f"Total tenants: {len(tenant_schemas)}, Filtered tenants: {len(filtered_tenant_schemas)}"
+                "Total tenants: %s, Filtered tenants: %s",
+                len(tenant_schemas),
+                len(filtered_tenant_schemas),
             )
 
         i_tenant = 0
@@ -317,7 +360,10 @@ async def run_async_migrations() -> None:
         for schema in filtered_tenant_schemas:
             i_tenant += 1
             logger.info(
-                f"Migrating schema: index={i_tenant} num_tenants={num_tenants} schema={schema}"
+                "Migrating schema: index=%s num_tenants=%s schema=%s",
+                i_tenant,
+                num_tenants,
+                schema,
             )
             try:
                 async with engine.connect() as connection:
@@ -328,7 +374,7 @@ async def run_async_migrations() -> None:
                     )
                     await connection.commit()
             except Exception as e:
-                logger.error(f"Error migrating schema {schema}: {e}")
+                logger.error("Error migrating schema %s: %s", schema, e)
                 if not continue_on_error:
                     logger.error("--continue=true is not set, raising exception!")
                     raise
@@ -370,14 +416,14 @@ def run_migrations_offline() -> None:
         tenant_range_end,
         schemas,
     ) = get_schema_options()
-    url = build_connection_string()
+    url = connection_url()
 
     if schemas:
         # Use specific schema names directly without fetching all tenants
-        logger.info(f"Migrating specific schema names: {schemas}")
+        logger.info("Migrating specific schema names: %s", schemas)
 
         for schema in schemas:
-            logger.info(f"Migrating schema: {schema}")
+            logger.info("Migrating schema: %s", schema)
             context.configure(
                 url=url,
                 target_metadata=target_metadata,
@@ -411,14 +457,18 @@ def run_migrations_offline() -> None:
 
         if tenant_range_start is not None or tenant_range_end is not None:
             logger.info(
-                f"Filtering tenants by range: start={tenant_range_start}, end={tenant_range_end}"
+                "Filtering tenants by range: start=%s, end=%s",
+                tenant_range_start,
+                tenant_range_end,
             )
             logger.info(
-                f"Total tenants: {len(tenant_schemas)}, Filtered tenants: {len(filtered_tenant_schemas)}"
+                "Total tenants: %s, Filtered tenants: %s",
+                len(tenant_schemas),
+                len(filtered_tenant_schemas),
             )
 
         for schema in filtered_tenant_schemas:
-            logger.info(f"Migrating schema: {schema}")
+            logger.info("Migrating schema: %s", schema)
             context.configure(
                 url=url,
                 target_metadata=target_metadata,

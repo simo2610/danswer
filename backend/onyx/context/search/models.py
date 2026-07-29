@@ -1,15 +1,13 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from onyx.configs.constants import DocumentSource
 from onyx.db.models import SearchSettings
-from onyx.indexing.models import BaseChunk
-from onyx.indexing.models import IndexingSetting
+from onyx.indexing.models import BaseChunk, IndexingSetting
 from onyx.tools.tool_implementations.web_search.models import WEB_SEARCH_PREFIX
 
 
@@ -35,6 +33,8 @@ class SearchSettingsCreationRequest(IndexingSetting):
 class SavedSearchSettings(IndexingSetting):
     # Previously this contained also Inference time settings. Keeping this wrapper class around
     # as there may again be inference time settings that may get added.
+    use_port_flow: bool | None = None
+
     @classmethod
     def from_db_model(cls, search_settings: SearchSettings) -> "SavedSearchSettings":
         return cls(
@@ -50,9 +50,9 @@ class SavedSearchSettings(IndexingSetting):
             embedding_precision=search_settings.embedding_precision,
             reduced_dimension=search_settings.reduced_dimension,
             switchover_type=search_settings.switchover_type,
+            use_port_flow=search_settings.use_port_flow,
             enable_contextual_rag=search_settings.enable_contextual_rag,
-            contextual_rag_llm_name=search_settings.contextual_rag_llm_name,
-            contextual_rag_llm_provider=search_settings.contextual_rag_llm_provider,
+            contextual_rag_model_configuration_id=search_settings.contextual_rag_model_configuration_id,
         )
 
 
@@ -61,11 +61,59 @@ class Tag(BaseModel):
     tag_value: str
 
 
+class TimeRange(BaseModel):
+    """An inclusive [start, end] window; either bound may be None (open).
+    Naive (timezone-less) bounds are treated as UTC."""
+
+    start: datetime | None = None
+    end: datetime | None = None
+
+    @field_validator("start", "end")
+    @classmethod
+    def _assume_utc_when_naive(cls, value: datetime | None) -> datetime | None:
+        if value is None or value.tzinfo is not None:
+            return value
+        return value.replace(tzinfo=timezone.utc)
+
+    def has_bounds(self) -> bool:
+        return self.start is not None or self.end is not None
+
+    def is_empty(self) -> bool:
+        """True when the window cannot match anything (start after end)."""
+        return self.start is not None and self.end is not None and self.start > self.end
+
+    def intersect(self, other: "TimeRange | None") -> "TimeRange":
+        """The overlap of the two windows (later start, earlier end); None is
+        unbounded."""
+        if other is None:
+            return self
+        return TimeRange(
+            start=max(filter(None, (self.start, other.start)), default=None),
+            end=min(filter(None, (self.end, other.end)), default=None),
+        )
+
+
 class BaseFilters(BaseModel):
     source_type: list[DocumentSource] | None = None
     document_set: list[str] | None = None
-    time_cutoff: datetime | None = None
+    created_at_range: TimeRange | None = None
+    updated_at_range: TimeRange | None = None
     tags: list[Tag] | None = None
+
+    # Deprecated wire-compat alias for updated_at_range.start. Folded into
+    # updated_at_range on validation and cleared; internal code must never read
+    # it. Excluded from serialization so it doesn't propagate further.
+    time_cutoff: datetime | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _fold_legacy_time_cutoff(self) -> "BaseFilters":
+        if self.time_cutoff is None:
+            return self
+        # An explicitly provided updated_at_range wins over the legacy alias.
+        if self.updated_at_range is None:
+            self.updated_at_range = TimeRange(start=self.time_cutoff)
+        self.time_cutoff = None
+        return self
 
 
 class UserFileFilters(BaseModel):
@@ -163,6 +211,10 @@ class InferenceChunk(BaseChunk):
     large_chunk_reference_ids: list[int] = Field(default_factory=list)
 
     is_federated: bool = False
+
+    # `Document.file_id` for the doc this chunk belongs to. Populated post-
+    # retrieval via a Postgres lookup
+    file_id: str | None = None
 
     @property
     def unique_id(self) -> str:
@@ -263,6 +315,10 @@ class SearchDoc(BaseModel):
     secondary_owners: list[str] | None = None
     is_internet: bool = False
 
+    # Mirrors `InferenceChunk.file_id`. Only present once sections have been
+    # run through `populate_file_ids_on_sections`.
+    file_id: str | None = None
+
     @classmethod
     def from_chunks_or_sections(
         cls,
@@ -295,11 +351,12 @@ class SearchDoc(BaseModel):
                 primary_owners=chunk.primary_owners,
                 secondary_owners=chunk.secondary_owners,
                 is_internet=False,
+                file_id=chunk.file_id,
             )
             for item in items
         ]
 
-        return search_docs
+        return search_docs  # ty: ignore[invalid-return-type]
 
     # TODO - there is likely a way to clean this all up and not have the switch between these
     @classmethod
@@ -319,8 +376,13 @@ class SearchDoc(BaseModel):
             for saved_search_doc in saved_search_docs
         ]
 
-    def model_dump(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
-        initial_dict = super().model_dump(*args, **kwargs)  # type: ignore
+    def model_dump(  # ty: ignore[invalid-method-override]
+        self, *args: list, **kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        initial_dict = super().model_dump(
+            *args,
+            **kwargs,  # ty: ignore[invalid-argument-type]
+        )
         initial_dict["updated_at"] = (
             self.updated_at.isoformat() if self.updated_at else None
         )
@@ -337,6 +399,14 @@ class SearchDocsResponse(BaseModel):
     # For cases where the frontend only needs to display a subset of the search docs
     # The whole list is typically still needed for later steps but this set should be saved separately
     displayed_docs: list[SearchDoc] | None = None
+
+    @field_validator("displayed_docs", mode="before")
+    @classmethod
+    def normalize_empty_displayed_docs(
+        cls,
+        value: list[SearchDoc] | None,
+    ) -> list[SearchDoc] | None:
+        return value or None
 
 
 class SavedSearchDoc(SearchDoc):

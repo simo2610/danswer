@@ -1,19 +1,27 @@
-from collections.abc import Generator
-from datetime import datetime
-from datetime import timezone
+from collections.abc import Callable, Generator
+from datetime import datetime, timezone
 
-from ee.onyx.external_permissions.google_drive.models import GoogleDrivePermission
-from ee.onyx.external_permissions.google_drive.models import PermissionType
+from google.auth.exceptions import RefreshError
+
+from ee.onyx.external_permissions.google_drive.models import (
+    GoogleDrivePermission,
+    PermissionType,
+)
 from ee.onyx.external_permissions.google_drive.permission_retrieval import (
     get_permissions_by_ids,
 )
-from ee.onyx.external_permissions.perm_sync_types import FetchAllDocumentsFunction
-from ee.onyx.external_permissions.perm_sync_types import FetchAllDocumentsIdsFunction
-from onyx.access.models import DocExternalAccess
-from onyx.access.models import ElementExternalAccess
-from onyx.access.models import ExternalAccess
-from onyx.access.models import NodeExternalAccess
-from onyx.access.utils import build_ext_group_name_for_onyx
+from ee.onyx.external_permissions.perm_sync_types import (
+    FetchAllDocumentsFunction,
+    FetchAllDocumentsIdsFunction,
+)
+from ee.onyx.external_permissions.utils import credential_json
+from onyx.access.models import (
+    DocExternalAccess,
+    ElementExternalAccess,
+    ExternalAccess,
+    NodeExternalAccess,
+)
+from onyx.access.utils import build_domain_group_id, build_ext_group_name_for_onyx
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
 from onyx.connectors.google_drive.models import GoogleDriveFileType
@@ -25,6 +33,34 @@ from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+
+def _domain_group_for_permission(
+    permission: GoogleDrivePermission,
+    own_domain: str | None,
+    entity_desc: str,
+) -> str | None:
+    """Map an "everyone at <domain>" permission to its domain group, or None when
+    the share grants searchable access to no one. Link-only shares
+    (allow_file_discovery=False) grant nothing: Google exposes them only to
+    domain users who already hold the link, not to domain-wide search. The Drive
+    group sync populates the domain group with that domain's real Workspace
+    members."""
+    if not permission.domain:
+        logger.warning(
+            "Domain permission without a domain for %s\n %s", entity_desc, permission
+        )
+        return None
+    if permission.allow_file_discovery is False:
+        return None
+    if permission.domain != own_domain:
+        # Cross-workspace share (e.g. shared to a partner company's whole domain).
+        logger.debug(
+            "Domain permission for %s scoped to external domain %s",
+            entity_desc,
+            permission.domain,
+        )
+    return build_domain_group_id(permission.domain)
 
 
 def _get_slim_doc_generator(
@@ -70,6 +106,9 @@ def get_external_access_for_raw_gdrive_file(
     admin_drive_service: GoogleDriveService,
     fallback_user_email: str,
     add_prefix: bool = False,
+    fallback_drive_service_factory: (
+        Callable[[], GoogleDriveService | None] | None
+    ) = None,
 ) -> ExternalAccess:
     """
     Get the external access for a raw Google Drive file.
@@ -110,16 +149,39 @@ def get_external_access_for_raw_gdrive_file(
                 permission_ids=permission_ids,
             )
 
-        permissions_list = _get_permissions(
-            retriever_drive_service or admin_drive_service
-        )
-        if len(permissions_list) != len(permission_ids) and retriever_drive_service:
-            logger.warning(
-                f"Failed to get all permissions for file {doc_id} with retriever service, trying admin service"
+        def _get_non_admin_permissions(
+            drive_service_factory: Callable[[], GoogleDriveService | None],
+        ) -> list[GoogleDrivePermission]:
+            try:
+                drive_service = drive_service_factory()
+                return _get_permissions(drive_service) if drive_service else []
+            except RefreshError as error:
+                logger.warning(
+                    "Could not impersonate non-admin user for document %s: %s",
+                    doc_id,
+                    error,
+                )
+                return []
+
+        if retriever_drive_service:
+            permissions_list = _get_non_admin_permissions(
+                lambda: retriever_drive_service
             )
-            backup_permissions_list = _get_permissions(admin_drive_service)
+
+        if (
+            len(permissions_list) != len(permission_ids)
+            and fallback_drive_service_factory
+        ):
             permissions_list = _merge_permissions_lists(
-                [permissions_list, backup_permissions_list]
+                [
+                    permissions_list,
+                    _get_non_admin_permissions(fallback_drive_service_factory),
+                ]
+            )
+
+        if len(permissions_list) != len(permission_ids):
+            permissions_list = _merge_permissions_lists(
+                [permissions_list, _get_permissions(admin_drive_service)]
             )
 
     # For externally-owned files, the Drive API may return no permissions
@@ -132,9 +194,11 @@ def get_external_access_for_raw_gdrive_file(
     # but the actual fetch can still return empty due to a 403.
     if not permissions_list:
         logger.info(
-            f"No permission info available for file {doc_id} "
-            f"(likely owned by a user outside of your organization). "
-            f"Falling back to granting access to retriever user: {fallback_user_email}"
+            "No permission info available for file %s "
+            "(likely owned by a user outside of your organization). "
+            "Falling back to granting access to retriever user: %s",
+            doc_id,
+            fallback_user_email,
         )
         return ExternalAccess(
             external_user_emails={fallback_user_email},
@@ -145,6 +209,7 @@ def get_external_access_for_raw_gdrive_file(
     folder_ids_to_inherit_permissions_from: set[str] = set()
     user_emails: set[str] = set()
     group_emails: set[str] = set()
+    domain_groups: set[str] = set()
     public = False
 
     for permission in permissions_list:
@@ -164,29 +229,38 @@ def get_external_access_for_raw_gdrive_file(
             if permission.email_address:
                 user_emails.add(permission.email_address)
             else:
-                logger.error(
-                    f"Permission is type `user` but no email address is provided for document {doc_id}\n {permission}"
+                # Expected per-doc condition when a Drive permission is
+                # attached to an account without a surfaced email (service
+                # accounts, deleted users, external share links). We just
+                # skip the permission — warn instead of error so the doc_id
+                # in the message doesn't explode Sentry fingerprinting.
+                logger.warning(
+                    "Permission is type `user` but no email address is provided for document %s\n %s",
+                    doc_id,
+                    permission,
                 )
         elif permission.type == PermissionType.GROUP:
             # groups are represented as email addresses within Drive
             if permission.email_address:
                 group_emails.add(permission.email_address)
             else:
-                logger.error(
-                    f"Permission is type `group` but no email address is provided for document {doc_id}\n {permission}"
-                )
-        elif permission.type == PermissionType.DOMAIN and company_domain:
-            if permission.domain == company_domain:
-                public = True
-            else:
                 logger.warning(
-                    f"Permission is type domain but does not match company domain:\n {permission}"
+                    "Permission is type `group` but no email address is provided for document %s\n %s",
+                    doc_id,
+                    permission,
                 )
+        elif permission.type == PermissionType.DOMAIN:
+            domain_group = _domain_group_for_permission(
+                permission, company_domain, f"document {doc_id}"
+            )
+            if domain_group:
+                domain_groups.add(domain_group)
         elif permission.type == PermissionType.ANYONE:
             public = True
 
     group_ids = (
         group_emails
+        | domain_groups
         | folder_ids_to_inherit_permissions_from
         | ({drive_id} if drive_id is not None else set())
     )
@@ -239,7 +313,7 @@ def get_external_access_for_folder(
     # Get permission IDs from folder metadata
     permission_ids = folder.get("permissionIds") or []
     if not permission_ids:
-        logger.debug(f"No permissionIds found for folder {folder_id}")
+        logger.debug("No permissionIds found for folder %s", folder_id)
         return ExternalAccess(
             external_user_emails=set(),
             external_user_group_ids=set(),
@@ -255,6 +329,7 @@ def get_external_access_for_folder(
 
     user_emails: set[str] = set()
     group_emails: set[str] = set()
+    domain_groups: set[str] = set()
     is_public = False
 
     for permission in permissions_list:
@@ -262,35 +337,32 @@ def get_external_access_for_folder(
             if permission.email_address:
                 user_emails.add(permission.email_address)
             else:
-                logger.warning(f"User permission without email for folder {folder_id}")
+                logger.warning("User permission without email for folder %s", folder_id)
         elif permission.type == PermissionType.GROUP:
             # Groups are represented as email addresses in Google Drive
             if permission.email_address:
                 group_emails.add(permission.email_address)
             else:
-                logger.warning(f"Group permission without email for folder {folder_id}")
-        elif permission.type == PermissionType.DOMAIN:
-            # Domain permission - check if it matches company domain
-            if permission.domain == google_domain:
-                # Only public if discoverable (allowFileDiscovery is not False)
-                # If allowFileDiscovery is False, it's "link only" access
-                is_public = permission.allow_file_discovery is not False
-            else:
-                logger.debug(
-                    f"Domain permission for {permission.domain} does not match "
-                    f"company domain {google_domain} for folder {folder_id}"
+                logger.warning(
+                    "Group permission without email for folder %s", folder_id
                 )
+        elif permission.type == PermissionType.DOMAIN:
+            domain_group = _domain_group_for_permission(
+                permission, google_domain, f"folder {folder_id}"
+            )
+            if domain_group:
+                domain_groups.add(domain_group)
         elif permission.type == PermissionType.ANYONE:
             # Only public if discoverable (allowFileDiscovery is not False)
             # If allowFileDiscovery is False, it's "link only" access
             is_public = permission.allow_file_discovery is not False
 
     # Prefix group IDs with source type if requested (for indexing path)
-    group_ids: set[str] = group_emails
+    group_ids: set[str] = group_emails | domain_groups
     if add_prefix:
         group_ids = {
             build_ext_group_name_for_onyx(group_id, DocumentSource.GOOGLE_DRIVE)
-            for group_id in group_emails
+            for group_id in group_ids
         }
 
     return ExternalAccess(
@@ -315,18 +387,13 @@ def gdrive_doc_sync(
     google_drive_connector = GoogleDriveConnector(
         **cc_pair.connector.connector_specific_config
     )
-    credential_json = (
-        cc_pair.credential.credential_json.get_value(apply_mask=False)
-        if cc_pair.credential.credential_json
-        else {}
-    )
-    google_drive_connector.load_credentials(credential_json)
+    google_drive_connector.load_credentials(credential_json(cc_pair))
 
     slim_doc_generator = _get_slim_doc_generator(cc_pair, google_drive_connector)
 
     total_processed = 0
     for slim_doc_batch in slim_doc_generator:
-        logger.info(f"Drive perm sync: Processing {len(slim_doc_batch)} documents")
+        logger.info("Drive perm sync: Processing %s documents", len(slim_doc_batch))
         for slim_doc in slim_doc_batch:
             if callback:
                 if callback.should_stop():
@@ -352,4 +419,4 @@ def gdrive_doc_sync(
                 doc_id=slim_doc.id,
             )
         total_processed += len(slim_doc_batch)
-        logger.info(f"Drive perm sync: Processed {total_processed} total documents")
+        logger.info("Drive perm sync: Processed %s total documents", total_processed)

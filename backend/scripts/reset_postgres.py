@@ -10,11 +10,13 @@ from onyx.db.engine.sql_engine import get_sqlalchemy_engine
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 
-from onyx.configs.app_configs import POSTGRES_DB  # noqa: E402
-from onyx.configs.app_configs import POSTGRES_HOST  # noqa: E402
-from onyx.configs.app_configs import POSTGRES_PASSWORD  # noqa: E402
-from onyx.configs.app_configs import POSTGRES_PORT  # noqa: E402
-from onyx.configs.app_configs import POSTGRES_USER  # noqa: E402
+from onyx.configs.app_configs import (  # noqa: E402
+    POSTGRES_DB,
+    POSTGRES_HOST,
+    POSTGRES_PASSWORD,
+    POSTGRES_PORT,
+    POSTGRES_USER,
+)
 from onyx.db.credentials import create_initial_public_credential  # noqa: E402
 
 
@@ -32,13 +34,11 @@ def wipe_all_rows(database: str) -> None:
     cur.execute("SET session_replication_role = 'replica';")
 
     # Fetch all table names in the current database
-    cur.execute(
-        """
+    cur.execute("""
         SELECT tablename
         FROM pg_tables
         WHERE schemaname = 'public'
-    """
-    )
+    """)
 
     tables = cur.fetchall()
 

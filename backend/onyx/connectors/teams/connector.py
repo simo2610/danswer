@@ -1,42 +1,49 @@
 import copy
 import os
 from collections.abc import Iterator
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
-from typing import cast
 
-import msal  # type: ignore
-from office365.graph_client import GraphClient  # type: ignore
-from office365.runtime.client_request_exception import ClientRequestException  # type: ignore
-from office365.runtime.http.request_options import RequestOptions  # type: ignore[import-untyped]
-from office365.teams.channels.channel import Channel  # type: ignore
-from office365.teams.team import Team  # type: ignore
+import msal
+from office365.graph_client import GraphClient
+from office365.runtime.client_request_exception import ClientRequestException
+from office365.runtime.http.request_options import RequestOptions
+from office365.teams.channels.channel import Channel
+from office365.teams.team import Team
 
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.exceptions import CredentialExpiredError
-from onyx.connectors.exceptions import InsufficientPermissionsError
-from onyx.connectors.exceptions import UnexpectedValidationError
-from onyx.connectors.interfaces import CheckpointedConnectorWithPermSync
-from onyx.connectors.interfaces import CheckpointOutput
-from onyx.connectors.interfaces import GenerateSlimDocumentOutput
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.interfaces import SlimConnectorWithPermSync
+from onyx.connectors.exceptions import (
+    ConnectorValidationError,
+    CredentialExpiredError,
+    InsufficientPermissionsError,
+    UnexpectedValidationError,
+)
+from onyx.connectors.interfaces import (
+    CheckpointedConnectorWithPermSync,
+    CheckpointOutput,
+    GenerateSlimDocumentOutput,
+    SecondsSinceUnixEpoch,
+    SlimConnectorWithPermSync,
+)
 from onyx.connectors.microsoft_graph_env import resolve_microsoft_environment
-from onyx.connectors.models import ConnectorCheckpoint
-from onyx.connectors.models import ConnectorFailure
-from onyx.connectors.models import ConnectorMissingCredentialError
-from onyx.connectors.models import Document
-from onyx.connectors.models import EntityFailure
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import SlimDocument
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import (
+    ConnectorCheckpoint,
+    ConnectorFailure,
+    ConnectorMissingCredentialError,
+    Document,
+    EntityFailure,
+    HierarchyNode,
+    SlimDocument,
+    TextSection,
+)
 from onyx.connectors.teams.models import Message
-from onyx.connectors.teams.utils import fetch_expert_infos
-from onyx.connectors.teams.utils import fetch_external_access
-from onyx.connectors.teams.utils import fetch_messages
-from onyx.connectors.teams.utils import fetch_replies
+from onyx.connectors.teams.utils import (
+    execute_query_with_retry,
+    fetch_expert_infos,
+    fetch_external_access,
+    fetch_messages,
+    fetch_replies,
+)
 from onyx.file_processing.html_utils import parse_html_page_basic
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
@@ -133,8 +140,9 @@ class TeamsConnector(
         try:
             # For validation, do a lightweight check instead of full team search
             logger.info(
-                f"Requested team count: {len(self.requested_team_list) if self.requested_team_list else 0}, "
-                f"Has special chars: {has_special_chars}"
+                "Requested team count: %s, Has special chars: %s",
+                len(self.requested_team_list) if self.requested_team_list else 0,
+                has_special_chars,
             )
 
             validation_query = self.graph_client.teams.get().top(1)
@@ -205,7 +213,7 @@ class TeamsConnector(
         if self.graph_client is None:
             raise ConnectorMissingCredentialError("Teams")
 
-        checkpoint = cast(TeamsCheckpoint, copy.deepcopy(checkpoint))
+        checkpoint = copy.deepcopy(checkpoint)
 
         todos = checkpoint.todo_team_ids
 
@@ -253,7 +261,9 @@ class TeamsConnector(
                     yield channel_doc
 
         logger.info(
-            f"Processed team with id {todo_team_id}; {len(todos)} team(s) left to process"
+            "Processed team with id %s; %s team(s) left to process",
+            todo_team_id,
+            len(todos),
         )
 
         return TeamsCheckpoint(
@@ -282,14 +292,14 @@ class TeamsConnector(
         start = start or 0
 
         teams = _collect_all_teams(
-            graph_client=self.graph_client,
+            graph_client=self.graph_client,  # ty: ignore[invalid-argument-type]
             requested=self.requested_team_list,
         )
 
         for team in teams:
             if not team.id:
                 logger.warning(
-                    f"Expected a team with an id, instead got no id: {team=}"
+                    "Expected a team with an id, instead got no id: team=%r", team
                 )
                 continue
 
@@ -300,16 +310,18 @@ class TeamsConnector(
             for channel in channels:
                 if not channel.id:
                     logger.warning(
-                        f"Expected a channel with an id, instead got no id: {channel=}"
+                        "Expected a channel with an id, instead got no id: channel=%r",
+                        channel,
                     )
                     continue
 
                 external_access = fetch_external_access(
-                    graph_client=self.graph_client, channel=channel
+                    graph_client=self.graph_client,  # ty: ignore[invalid-argument-type]
+                    channel=channel,
                 )
 
                 messages = fetch_messages(
-                    graph_client=self.graph_client,
+                    graph_client=self.graph_client,  # ty: ignore[invalid-argument-type]
                     team_id=team.id,
                     channel_id=channel.id,
                     start=start,
@@ -322,6 +334,8 @@ class TeamsConnector(
                         SlimDocument(
                             id=message.id,
                             external_access=external_access,
+                            # NOTE: doc_created_at population not yet verified against live data
+                            doc_created_at=message.created_date_time,
                         )
                     )
 
@@ -414,7 +428,7 @@ def _construct_semantic_identifier(channel: Channel, top_message: Message) -> st
             user_display_name if user_display_name else "Unknown User"
         )
     else:
-        logger.warning(f"Message {top_message=} has no `from.user` field")
+        logger.warning("Message top_message=%r has no `from.user` field", top_message)
         top_message_user_name = "Unknown User"
 
     top_message_content = top_message.body.content or ""
@@ -427,7 +441,9 @@ def _construct_semantic_identifier(channel: Channel, top_message: Message) -> st
 
     except Exception:
         logger.exception(
-            f"Error parsing snippet for message {top_message.id} with url {top_message.web_url}"
+            "Error parsing snippet for message %s with url %s",
+            top_message.id,
+            top_message.web_url,
         )
         snippet = ""
 
@@ -481,6 +497,8 @@ def _convert_thread_to_document(
         source=DocumentSource.TEAMS,
         semantic_identifier=semantic_string,
         title="",  # teams threads don't really have a "title"
+        # NOTE: doc_created_at population not yet verified against live data
+        doc_created_at=top_message.created_date_time,
         doc_updated_at=most_recent_message_datetime,
         primary_owners=expert_infos,
         metadata={},
@@ -533,9 +551,8 @@ def _collect_all_teams(
     if problematic_names and not safe_names:
         # ALL requested teams have special characters - cannot use OData filtering
         logger.info(
-            f"All requested team names contain special characters (&, (, )) which require "
-            f"client-side filtering. Using basic /teams endpoint with pagination. "
-            f"Teams: {problematic_names}"
+            "All requested team names contain special characters (&, (, )) which require client-side filtering. Using basic /teams endpoint with pagination. Teams: %s",
+            problematic_names,
         )
         # Use unfiltered query with pagination limit to avoid fetching too many teams
         use_client_side_filtering = True
@@ -543,14 +560,15 @@ def _collect_all_teams(
     elif problematic_names and safe_names:
         # Mixed scenario - need to fetch more teams to find the problematic ones
         logger.info(
-            f"Mixed team types: will use client-side filtering for all. "
-            f"Safe names: {safe_names}, Special char names: {problematic_names}"
+            "Mixed team types: will use client-side filtering for all. Safe names: %s, Special char names: %s",
+            safe_names,
+            problematic_names,
         )
         use_client_side_filtering = True
         odata_filter = None
     elif safe_names:
         # All names are safe - use OData filtering
-        logger.info(f"Using OData filtering for all requested teams: {safe_names}")
+        logger.info("Using OData filtering for all requested teams: %s", safe_names)
         use_client_side_filtering = False
         odata_filter = _build_simple_odata_filter(safe_names)
     else:
@@ -579,12 +597,14 @@ def _collect_all_teams(
                     lambda req: _update_request_url(request=req, next_url=url)
                 )
 
-            team_collection = query.execute_query()
+            team_collection = execute_query_with_retry(
+                query, method_name="_collect_all_teams"
+            )
         except (ClientRequestException, ValueError) as e:
             # If OData filter fails, fall back to client-side filtering
             if not use_client_side_filtering and odata_filter:
                 logger.warning(
-                    f"OData filter failed: {e}. Falling back to client-side filtering."
+                    "OData filter failed: %s. Falling back to client-side filtering.", e
                 )
                 use_client_side_filtering = True
                 odata_filter = None
@@ -593,7 +613,7 @@ def _collect_all_teams(
                 page_count = 0
                 continue
             # If client-side approach also fails, re-raise
-            logger.error(f"Teams query failed: {e}")
+            logger.error("Teams query failed: %s", e)
             raise
 
         filtered_teams = (
@@ -614,18 +634,21 @@ def _collect_all_teams(
             # Log progress every 10 pages to avoid excessive logging
             if page_count % 10 == 0:
                 logger.info(
-                    f"Searched {page_count} pages, found {len(found_team_names)} matching teams so far"
+                    "Searched %s pages, found %s matching teams so far",
+                    page_count,
+                    len(found_team_names),
                 )
 
             # Stop if we found all requested teams or hit the page limit
             if requested_set.issubset(found_team_names):
-                logger.info(f"Found all requested teams after {page_count} pages")
+                logger.info("Found all requested teams after %s pages", page_count)
                 break
             elif page_count >= max_pages:
                 logger.warning(
-                    f"Reached maximum page limit ({max_pages}) while searching for teams. "
-                    f"Found: {found_team_names & requested_set}, "
-                    f"Missing: {requested_set - found_team_names}"
+                    "Reached maximum page limit (%s) while searching for teams. Found: %s, Missing: %s",
+                    max_pages,
+                    found_team_names & requested_set,
+                    requested_set - found_team_names,
                 )
                 break
 
@@ -733,9 +756,8 @@ def _get_team_by_id(
     graph_client: GraphClient,
     team_id: str,
 ) -> Team:
-    team_collection = (
-        graph_client.teams.get().filter(f"id eq '{team_id}'").top(1).execute_query()
-    )
+    query = graph_client.teams.get().filter(f"id eq '{team_id}'").top(1)
+    team_collection = execute_query_with_retry(query, method_name="_get_team_by_id")
 
     if not team_collection:
         raise ValueError(f"No team with {team_id=} was found")
@@ -766,7 +788,9 @@ def _collect_all_channels_from_team(
                 lambda req: _update_request_url(request=req, next_url=url)
             )
 
-        channel_collection = query.execute_query()
+        channel_collection = execute_query_with_retry(
+            query, method_name="_collect_all_channels_from_team"
+        )
         channels.extend(channel for channel in channel_collection if channel.id)
 
         if not channel_collection.has_next:

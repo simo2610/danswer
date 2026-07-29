@@ -1,6 +1,5 @@
 from onyx.llm.constants import LlmProviderNames
-from onyx.llm.utils import get_model_map
-from onyx.llm.utils import is_true_openai_model
+from onyx.llm.model_capabilities import get_model_map, is_true_openai_model
 
 
 class TestIsTrueOpenAIModel:
@@ -84,7 +83,13 @@ class TestIsTrueOpenAIModel:
     def test_none_values_handled(self) -> None:
         """Test that None values are handled gracefully."""
         # Should not crash with None values
-        assert is_true_openai_model(LlmProviderNames.OPENAI, None) is False  # type: ignore
+        assert (
+            is_true_openai_model(
+                LlmProviderNames.OPENAI,
+                None,  # ty: ignore[invalid-argument-type]
+            )
+            is False
+        )
 
     def test_litellm_proxy_custom_model(self) -> None:
         """Test that custom models via LiteLLM proxy return False."""

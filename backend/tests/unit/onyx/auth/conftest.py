@@ -1,10 +1,8 @@
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from onyx.db.models import OAuthAccount
-from onyx.db.models import User
+from onyx.db.models import OAuthAccount, User
 
 
 @pytest.fixture
@@ -40,4 +38,9 @@ def mock_user_manager() -> MagicMock:
 @pytest.fixture
 def mock_db_session() -> MagicMock:
     """Creates a mock database session for testing."""
-    return MagicMock()
+    session = MagicMock()
+    # `check_and_refresh_oauth_tokens` calls `await db_session.refresh(...)`
+    # inside the per-user lock to re-read the latest expires_at from DB; the
+    # AsyncMock here lets that await resolve without raising.
+    session.refresh = AsyncMock()
+    return session

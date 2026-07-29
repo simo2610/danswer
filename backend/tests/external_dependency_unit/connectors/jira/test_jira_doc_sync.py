@@ -8,14 +8,9 @@ from ee.onyx.external_permissions.jira.doc_sync import jira_doc_sync
 from onyx.access.models import DocExternalAccess
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.models import InputType
-from onyx.db.enums import AccessType
-from onyx.db.enums import ConnectorCredentialPairStatus
-from onyx.db.models import Connector
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import Credential
-from onyx.db.utils import DocumentRow
-from onyx.db.utils import SortOrder
-
+from onyx.db.enums import AccessType, ConnectorCredentialPairStatus
+from onyx.db.models import Connector, ConnectorCredentialPair, Credential
+from onyx.db.utils import DocumentRow, SortOrder
 
 # In order to get these tests to run, use the credentials from Bitwarden.
 # Search up "ENV vars for local and Github tests", and find the Jira relevant key-value pairs.
@@ -132,9 +127,9 @@ def test_jira_doc_sync(
             for doc in doc_sync_iter
             if isinstance(doc, DocExternalAccess)
         }
-        assert (
-            expected_docs == actual_docs
-        ), f"Expected docs: {expected_docs}\nActual docs: {actual_docs}"
+        assert expected_docs == actual_docs, (
+            f"Expected docs: {expected_docs}\nActual docs: {actual_docs}"
+        )
     finally:
         db_session.rollback()
 
@@ -210,7 +205,7 @@ def test_jira_doc_sync_with_specific_permissions(
         assert len(docs) > 0, "Expected at least one document from SUP project"
 
         _EXPECTED_USER_EMAILS = set(
-            ["yuhong@onyx.app", "chris@onyx.app", "founders@onyx.app"]
+            ["yuhong@onyx.app", "chris@onyx.app", "founders@onyx.app", "oauth@onyx.app"]
         )
         _EXPECTED_USER_GROUP_IDS = set(["jira-users-danswerai"])
 
@@ -219,9 +214,9 @@ def test_jira_doc_sync_with_specific_permissions(
                 continue
             assert doc.doc_id.startswith("https://danswerai.atlassian.net/browse/SUP-")
             # SUP project has specific users assigned, not applicationRole
-            assert (
-                not doc.external_access.is_public
-            ), f"Document {doc.doc_id} should not be public"
+            assert not doc.external_access.is_public, (
+                f"Document {doc.doc_id} should not be public"
+            )
             # Should have user emails
             assert doc.external_access.external_user_emails == _EXPECTED_USER_EMAILS
             assert (

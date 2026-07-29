@@ -6,15 +6,18 @@ import discord
 from pydantic import BaseModel
 
 from onyx.chat.models import ChatFullResponse
-from onyx.db.discord_bot import get_channel_config_by_discord_ids
-from onyx.db.discord_bot import get_guild_config_by_discord_id
+from onyx.db.discord_bot import (
+    get_channel_config_by_discord_ids,
+    get_guild_config_by_discord_id,
+)
 from onyx.db.engine.sql_engine import get_session_with_tenant
-from onyx.db.models import DiscordChannelConfig
-from onyx.db.models import DiscordGuildConfig
+from onyx.db.models import DiscordChannelConfig, DiscordGuildConfig
 from onyx.onyxbot.discord.api_client import OnyxAPIClient
-from onyx.onyxbot.discord.constants import MAX_CONTEXT_MESSAGES
-from onyx.onyxbot.discord.constants import MAX_MESSAGE_LENGTH
-from onyx.onyxbot.discord.constants import THINKING_EMOJI
+from onyx.onyxbot.discord.constants import (
+    MAX_CONTEXT_MESSAGES,
+    MAX_MESSAGE_LENGTH,
+    THINKING_EMOJI,
+)
 from onyx.onyxbot.discord.exceptions import APIError
 from onyx.utils.logger import setup_logger
 
@@ -116,7 +119,7 @@ async def check_implicit_invocation(
             )
             if referenced_msg.author.id == bot_user.id:
                 logger.debug(
-                    f"Implicit invocation via reply: '{message.content[:50]}...'"
+                    "Implicit invocation via reply: '%s...'", message.content[:50]
                 )
                 return True
         except (discord.NotFound, discord.HTTPException):
@@ -129,7 +132,9 @@ async def check_implicit_invocation(
         # Bot owns the thread
         if thread.owner_id == bot_user.id:
             logger.debug(
-                f"Implicit invocation via bot-owned thread: '{message.content[:50]}...' in #{thread.name}"
+                "Implicit invocation via bot-owned thread: '%s...' in #%s",
+                message.content[:50],
+                thread.name,
             )
             return True
 
@@ -139,7 +144,9 @@ async def check_implicit_invocation(
                 starter = await thread.parent.fetch_message(thread.id)
                 if starter.author.id == bot_user.id:
                     logger.debug(
-                        f"Implicit invocation via bot-started thread: '{message.content[:50]}...' in #{thread.name}"
+                        "Implicit invocation via bot-started thread: '%s...' in #%s",
+                        message.content[:50],
+                        thread.name,
                     )
                     return True
             except (discord.NotFound, discord.HTTPException):
@@ -166,7 +173,7 @@ async def process_chat_message(
         await message.add_reaction(THINKING_EMOJI)
     except discord.DiscordException:
         logger.warning(
-            f"Failed to add thinking reaction to message: '{message.content[:50]}...'"
+            "Failed to add thinking reaction to message: '%s...'", message.content[:50]
         )
 
     try:
@@ -203,10 +210,10 @@ async def process_chat_message(
             pass
 
     except APIError as e:
-        logger.error(f"API error processing message: {e}")
+        logger.error("API error processing message: %s", e)
         await send_error_response(message, bot_user)
     except Exception as e:
-        logger.exception(f"Error processing chat message: {e}")
+        logger.exception("Error processing chat message: %s", e)
         await send_error_response(message, bot_user)
 
 
@@ -298,13 +305,15 @@ async def _build_reply_chain_context(
         messages.reverse()  # Chronological order
 
         logger.debug(
-            f"Built reply chain context: {len(messages)} messages in #{getattr(message.channel, 'name', 'unknown')}"
+            "Built reply chain context: %s messages in #%s",
+            len(messages),
+            getattr(message.channel, "name", "unknown"),
         )
 
         return _format_messages_as_context(messages, bot_user)
 
     except Exception as e:
-        logger.warning(f"Failed to build reply chain context: {e}")
+        logger.warning("Failed to build reply chain context: %s", e)
         return None
 
 
@@ -358,13 +367,13 @@ async def _build_thread_context(
 
         messages.sort(key=lambda m: m.id)  # Chronological order
         logger.debug(
-            f"Built thread context: {len(messages)} messages in #{thread.name}"
+            "Built thread context: %s messages in #%s", len(messages), thread.name
         )
 
         return _format_messages_as_context(messages, bot_user)
 
     except Exception as e:
-        logger.warning(f"Failed to build thread context: {e}")
+        logger.warning("Failed to build thread context: %s", e)
         return None
 
 

@@ -9,7 +9,7 @@ import React, {
   useState,
 } from "react";
 import { ScrollContainerProvider } from "@/components/chat/ScrollContainerContext";
-import { cn } from "@/lib/utils";
+import { cn } from "@opal/utils";
 
 // Size constants
 const DEFAULT_ANCHOR_OFFSET_PX = 16; // 1rem
@@ -53,6 +53,10 @@ export interface ChatScrollContainerProps {
 
   /** Hide the scrollbar (scroll still works, just invisible) */
   hideScrollbar?: boolean;
+
+  /** Full-width mode: edge-to-edge scroll container instead of the centered
+   *  reading layout (drops the reserved scrollbar gutter). */
+  fullWidth?: boolean;
 }
 
 // Build a CSS mask that fades content opacity at top/bottom edges
@@ -74,6 +78,7 @@ const ChatScrollContainer = React.memo(
         onScrollButtonVisibilityChange,
         sessionId,
         hideScrollbar = false,
+        fullWidth = false,
       }: ChatScrollContainerProps,
       ref: ForwardedRef<ChatScrollContainerHandle>
     ) => {
@@ -362,7 +367,9 @@ const ChatScrollContainer = React.memo(
             )}
             onScroll={handleScroll}
             style={{
-              scrollbarGutter: "stable both-edges",
+              // Full-width drops the reserved gutters so content sits flush with
+              // the chat edge; centered mode keeps both-edges to avoid shift.
+              scrollbarGutter: fullWidth ? "auto" : "stable both-edges",
               // Apply mask to fade content opacity at edges
               maskImage: contentMask,
               WebkitMaskImage: contentMask,
@@ -370,7 +377,10 @@ const ChatScrollContainer = React.memo(
           >
             <div
               ref={contentWrapperRef}
-              className="w-full flex-1 flex flex-col items-center px-4"
+              className={cn(
+                // px-2 sm:px-4 matches the input bar's horizontal padding.
+                "w-full flex-1 flex flex-col items-center px-2 sm:px-4"
+              )}
               data-scroll-ready={isScrollReady}
               style={{
                 visibility: isScrollReady ? "visible" : "hidden",

@@ -1,25 +1,20 @@
-from datetime import datetime
-from datetime import timezone
-from typing import cast
+from datetime import datetime, timezone
 
-from sqlalchemy import and_
-from sqlalchemy import exists
-from sqlalchemy import func
-from sqlalchemy import select
-from sqlalchemy.orm import aliased
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, func, select
+from sqlalchemy.orm import Session, aliased
 
 from onyx.configs.app_configs import DEFAULT_PRUNING_FREQ
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.models import InputType
 from onyx.db.enums import IndexingMode
-from onyx.db.models import Connector
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import FederatedConnector
-from onyx.db.models import IndexAttempt
+from onyx.db.models import (
+    Connector,
+    ConnectorCredentialPair,
+    FederatedConnector,
+    IndexAttempt,
+)
 from onyx.kg.models import KGConnectorData
-from onyx.server.documents.models import ConnectorBase
-from onyx.server.documents.models import ObjectCreationIdResponse
+from onyx.server.documents.models import ConnectorBase, ObjectCreationIdResponse
 from onyx.server.models import StatusResponse
 from onyx.utils.logger import setup_logger
 
@@ -47,8 +42,8 @@ def check_user_files_exist(db_session: Session) -> bool:
     when there are no regular connectors but there are user files
     (User Knowledge mode).
     """
-    from onyx.db.models import UserFile
     from onyx.db.enums import UserFileStatus
+    from onyx.db.models import UserFile
 
     stmt = select(exists(UserFile).where(UserFile.status == UserFileStatus.COMPLETED))
     result = db_session.execute(stmt)
@@ -242,7 +237,15 @@ def fetch_latest_index_attempts_by_status(
         ),
     )
 
-    return cast(list[IndexAttempt], query.all())
+    return query.all()
+
+
+_INTERNAL_ONLY_SOURCES = {
+    # Used by the ingestion API, not a user-created connector.
+    DocumentSource.INGESTION_API,
+    # Backs the user library / build feature, not a connector users filter by.
+    DocumentSource.CRAFT_FILE,
+}
 
 
 def fetch_unique_document_sources(db_session: Session) -> list[DocumentSource]:
@@ -251,7 +254,7 @@ def fetch_unique_document_sources(db_session: Session) -> list[DocumentSource]:
     sources = [
         source[0]
         for source in distinct_sources
-        if source[0] != DocumentSource.INGESTION_API
+        if source[0] not in _INTERNAL_ONLY_SOURCES
     ]
 
     return sources
@@ -393,5 +396,5 @@ def get_kg_enabled_connectors(db_session: Session) -> list[KGConnectorData]:
         return connector_results
 
     except Exception as e:
-        logger.error(f"Error fetching unprocessed connector IDs: {str(e)}")
+        logger.error("Error fetching unprocessed connector IDs: %s", str(e))
         raise e

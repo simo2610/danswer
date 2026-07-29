@@ -2,7 +2,6 @@ import { IconFunctionComponent } from "@opal/types";
 import {
   SvgActions,
   SvgActivity,
-  SvgArrowExchange,
   SvgAudio,
   SvgShareWebhook,
   SvgBarChart,
@@ -10,6 +9,7 @@ import {
   SvgBubbleText,
   SvgClipboard,
   SvgCpu,
+  SvgDevKit,
   SvgDownload,
   SvgEmpty,
   SvgFileText,
@@ -20,12 +20,15 @@ import {
   SvgMcp,
   SvgOnyxOctagon,
   SvgPaintBrush,
+  SvgPlug,
   SvgProgressBars,
   SvgSearchMenu,
+  SvgShield,
   SvgTerminal,
   SvgThumbsUp,
   SvgUploadCloud,
   SvgUser,
+  SvgUserCheck,
   SvgUserKey,
   SvgUserSync,
   SvgUsers,
@@ -126,7 +129,7 @@ export const ADMIN_ROUTES = {
     sidebarLabel: "Chat Preferences",
   },
   LLM_MODELS: {
-    path: "/admin/configuration/llm",
+    path: "/admin/configuration/language-models",
     icon: SvgCpu,
     title: "Language Models",
     sidebarLabel: "Language Models",
@@ -155,8 +158,26 @@ export const ADMIN_ROUTES = {
     title: "Code Interpreter",
     sidebarLabel: "Code Interpreter",
   },
+  CRAFT_ACCESS: {
+    path: "/admin/craft/access",
+    icon: SvgUserCheck,
+    title: "Access",
+    sidebarLabel: "Access",
+  },
+  CRAFT_APPS: {
+    path: "/admin/craft/apps",
+    icon: SvgPlug,
+    title: "Apps",
+    sidebarLabel: "Apps",
+  },
+  CRAFT_INSTRUCTIONS: {
+    path: "/admin/craft/instructions",
+    icon: SvgDevKit,
+    title: "Instructions",
+    sidebarLabel: "Instructions",
+  },
   INDEX_SETTINGS: {
-    path: "/admin/configuration/search",
+    path: "/admin/configuration/index-settings",
     icon: SvgSearchMenu,
     title: "Index Settings",
     sidebarLabel: "Index Settings",
@@ -185,6 +206,12 @@ export const ADMIN_ROUTES = {
     title: "Spending Limits",
     sidebarLabel: "Spending Limits",
   },
+  TRACING: {
+    path: "/admin/tracing",
+    icon: SvgBarChart,
+    title: "Tracing",
+    sidebarLabel: "Tracing",
+  },
   USAGE: {
     path: "/admin/performance/usage",
     icon: SvgActivity,
@@ -203,6 +230,12 @@ export const ADMIN_ROUTES = {
     title: "Custom Analytics",
     sidebarLabel: "Custom Analytics",
   },
+  EXPORT_LOGS: {
+    path: "/admin/export-logs",
+    icon: SvgDownload,
+    title: "Export Logs",
+    sidebarLabel: "Export Logs",
+  },
   THEME: {
     path: "/admin/theme",
     icon: SvgPaintBrush,
@@ -214,12 +247,6 @@ export const ADMIN_ROUTES = {
     icon: SvgWallet,
     title: "Plans & Billing",
     sidebarLabel: "Plans & Billing",
-  },
-  INDEX_MIGRATION: {
-    path: "/admin/document-index-migration",
-    icon: SvgArrowExchange,
-    title: "Document Index Migration",
-    sidebarLabel: "Document Index Migration",
   },
   HOOKS: {
     path: "/admin/hooks",
@@ -233,11 +260,23 @@ export const ADMIN_ROUTES = {
     title: "SCIM",
     sidebarLabel: "SCIM",
   },
-  DEBUG: {
-    path: "/admin/debug",
-    icon: SvgDownload,
-    title: "Debug Logs",
-    sidebarLabel: "Debug Logs",
+  OAUTH_TEST: {
+    path: "/admin/oauth-test",
+    icon: SvgUserKey,
+    title: "OAuth Test",
+    sidebarLabel: "OAuth Test",
+  },
+  SECURITY_HARDENING: {
+    path: "/admin/security",
+    icon: SvgShield,
+    title: "Security & Hardening",
+    sidebarLabel: "Security & Hardening",
+  },
+  SSO_PROVIDERS: {
+    path: "/admin/sso-providers",
+    icon: SvgUserKey,
+    title: "SSO Providers",
+    sidebarLabel: "SSO Providers",
   },
   // Prefix-only entries used for layout matching — not rendered as sidebar
   // items or page headers.
@@ -261,4 +300,24 @@ export const ADMIN_ROUTES = {
  */
 export function sidebarItem(route: AdminRouteEntry) {
   return { name: route.sidebarLabel, icon: route.icon, link: route.path };
+}
+
+/**
+ * Connector/indexing admin route prefixes that need a vector DB. In Lite mode
+ * these render an informational notice instead of their normal content.
+ */
+export const VECTOR_DB_REQUIRED_ROUTE_PREFIXES: readonly string[] = [
+  ADMIN_ROUTES.INDEXING_STATUS.path,
+  ADMIN_ROUTES.ADD_CONNECTOR.path,
+  // Covers /sets, /explorer, and /feedback — all require a vector DB.
+  ADMIN_ROUTES.DOCUMENTS.path,
+  ADMIN_ROUTES.INDEX_SETTINGS.path,
+  "/admin/connector",
+  "/admin/federated",
+];
+
+export function isVectorDbRequiredRoute(pathname: string): boolean {
+  return VECTOR_DB_REQUIRED_ROUTE_PREFIXES.some((prefix) =>
+    pathname.startsWith(prefix)
+  );
 }

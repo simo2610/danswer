@@ -10,15 +10,18 @@ from onyx.chat.models import AnswerStreamPart
 from onyx.chat.process_message import handle_stream_message_objects
 from onyx.configs.constants import DocumentSource
 from onyx.context.search.models import SearchDoc
-from onyx.db.models import ChatSession
-from onyx.db.models import User
+from onyx.db.models import ChatSession, User
 from onyx.llm.override_models import LLMOverride
-from onyx.server.query_and_chat.models import ChatSessionCreationRequest
-from onyx.server.query_and_chat.models import SendMessageRequest
+from onyx.server.query_and_chat.models import (
+    ChatSessionCreationRequest,
+    SendMessageRequest,
+)
 from onyx.server.query_and_chat.placement import Placement
-from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
-from onyx.server.query_and_chat.streaming_models import Packet
-from onyx.server.query_and_chat.streaming_models import ReasoningDelta
+from onyx.server.query_and_chat.streaming_models import (
+    AgentResponseDelta,
+    Packet,
+    ReasoningDelta,
+)
 from tests.external_dependency_unit.mock_content_provider import MockWebContent
 from tests.external_dependency_unit.mock_search_provider import MockWebSearchResult
 
@@ -40,7 +43,6 @@ def create_placement(
 def submit_query(
     query: str,
     chat_session_id: UUID | None,
-    db_session: Session,
     user: User,
     llm_override: LLMOverride | None = None,
 ) -> Iterator[AnswerStreamPart]:
@@ -57,7 +59,6 @@ def submit_query(
     return handle_stream_message_objects(
         new_msg_req=request,
         user=user,
-        db_session=db_session,
     )
 
 
@@ -67,7 +68,7 @@ def create_chat_session(
 ) -> ChatSession:
     return create_chat_session_from_request(
         chat_session_request=ChatSessionCreationRequest(),
-        user_id=user.id,
+        user=user,
         db_session=db_session,
     )
 

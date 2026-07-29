@@ -2,8 +2,9 @@
 .vscode/*
 !/.vscode/env_template.txt
 !/.vscode/env.web_template.txt
+!/.vscode/.env.k8s.template
 !/.vscode/launch.json
-!/.vscode/tasks.template.jsonc
+!/.vscode/tasks.json
 .zed
 .cursor
 !/.cursor/mcp.json
@@ -16,6 +17,7 @@
 .venv
 .mypy_cache
 .idea
+__pycache__/
 
 # testing
 /web/test-results/
@@ -57,8 +59,12 @@ node_modules
 # MCP configs
 .playwright-mcp
 
-# plans
-plans/
+# plans (include symlinked plans dir too)
+plans
 
 # Added context for LLMs
-onyx-llm-context/
+.claude/CLAUDE.md
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+!.claude/settings.json

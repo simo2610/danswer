@@ -7,8 +7,10 @@ from github.Repository import Repository
 from onyx.access.models import ExternalAccess
 from onyx.connectors.github.models import SerializedRepository
 from onyx.utils.logger import setup_logger
-from onyx.utils.variable_functionality import fetch_versioned_implementation
-from onyx.utils.variable_functionality import global_version
+from onyx.utils.variable_functionality import (
+    fetch_versioned_implementation,
+    global_version,
+)
 
 logger = setup_logger()
 
@@ -57,7 +59,7 @@ def deserialize_repository(
     except Exception as e:
         # If all else fails, re-fetch the repo directly
         logger.warning(
-            f"Failed to deserialize repository: {e}. Attempting to re-fetch."
+            "Failed to deserialize repository: %s. Attempting to re-fetch.", e
         )
         repo_id = cached_repo.id
         return github_client.get_repo(repo_id)

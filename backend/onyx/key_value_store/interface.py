@@ -13,7 +13,7 @@ def unwrap_str(val: JSON_ro) -> str:
     Also handles legacy plain-string values cached in Redis."""
     if isinstance(val, dict):
         try:
-            return cast(str, val["value"])
+            return cast(str, val["value"])  # ty: ignore[invalid-argument-type]
         except KeyError:
             raise ValueError(
                 f"Expected dict with 'value' key, got keys: {list(val.keys())}"
@@ -25,7 +25,7 @@ class KeyValueStore:
     # In the Multi Tenant case, the tenant context is picked up automatically, it does not need to be passed in
     # It's read from the global thread level variable
     @abc.abstractmethod
-    def store(self, key: str, val: JSON_ro, encrypt: bool = False) -> None:
+    def store(self, key: str, val: JSON_ro) -> None:
         raise NotImplementedError
 
     @abc.abstractmethod

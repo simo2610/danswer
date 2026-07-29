@@ -1,24 +1,23 @@
-from typing import cast
-
-from redis import Redis
 from sqlalchemy.orm import Session
 
-from ee.onyx.db.user_group import delete_user_group
-from ee.onyx.db.user_group import fetch_user_group
-from ee.onyx.db.user_group import mark_user_group_as_synced
-from ee.onyx.db.user_group import prepare_user_group_for_deletion
+from ee.onyx.db.user_group import (
+    delete_user_group,
+    fetch_user_group,
+    mark_user_group_as_synced,
+    prepare_user_group_for_deletion,
+)
 from onyx.background.celery.apps.app_base import task_logger
-from onyx.db.enums import SyncStatus
-from onyx.db.enums import SyncType
+from onyx.db.enums import SyncStatus, SyncType
 from onyx.db.sync_record import update_sync_record_status
 from onyx.redis.redis_usergroup import RedisUserGroup
+from onyx.redis.tenant_redis_client import TenantRedisClient
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
 
 def monitor_usergroup_taskset(
-    tenant_id: str, key_bytes: bytes, r: Redis, db_session: Session
+    tenant_id: str, key_bytes: bytes, r: TenantRedisClient, db_session: Session
 ) -> None:
     """This function is likely to move in the worker refactor happening next."""
     fence_key = key_bytes.decode("utf-8")
@@ -41,7 +40,7 @@ def monitor_usergroup_taskset(
     if initial_count is None:
         return
 
-    count = cast(int, r.scard(rug.taskset_key))
+    count = r.scard(rug.taskset_key)
     task_logger.info(
         f"User group sync progress: usergroup_id={usergroup_id} remaining={count} initial={initial_count}"
     )

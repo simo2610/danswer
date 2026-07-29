@@ -1,6 +1,4 @@
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -10,15 +8,11 @@ from slack_sdk import WebClient
 from typing_extensions import override
 
 from onyx.context.search.federated.slack_search import slack_retrieval
-from onyx.context.search.models import ChunkIndexRequest
-from onyx.context.search.models import InferenceChunk
+from onyx.context.search.models import ChunkIndexRequest, InferenceChunk
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.federated_connectors.interfaces import FederatedConnector
-from onyx.federated_connectors.models import CredentialField
-from onyx.federated_connectors.models import EntityField
-from onyx.federated_connectors.models import OAuthResult
-from onyx.federated_connectors.slack.models import SlackCredentials
-from onyx.federated_connectors.slack.models import SlackEntities
+from onyx.federated_connectors.models import CredentialField, EntityField, OAuthResult
+from onyx.federated_connectors.slack.models import SlackCredentials, SlackEntities
 from onyx.onyxbot.slack.models import SlackContext
 from onyx.utils.logger import setup_logger
 
@@ -57,10 +51,10 @@ class SlackFederatedConnector(FederatedConnector):
             SlackEntities(**entities)
             return True
         except ValidationError as e:
-            logger.warning(f"Validation error for Slack entities: {e}")
+            logger.warning("Validation error for Slack entities: %s", e)
             return False
         except Exception as e:
-            logger.error(f"Error validating Slack entities: {e}")
+            logger.error("Error validating Slack entities: %s", e)
             return False
 
     @classmethod
@@ -290,7 +284,7 @@ class SlackFederatedConnector(FederatedConnector):
         Returns:
             Search results in SlackSearchResponse format
         """
-        logger.debug(f"Slack federated search called with entities: {entities}")
+        logger.debug("Slack federated search called with entities: %s", entities)
 
         # Get team_id from Slack API for caching and filtering
         team_id = None
@@ -300,11 +294,13 @@ class SlackFederatedConnector(FederatedConnector):
             auth_response.validate()
 
             # Cast response.data to dict for type checking
-            auth_data: dict[str, Any] = auth_response.data  # type: ignore
+            auth_data: dict[str, Any] = (  # ty: ignore[invalid-assignment]
+                auth_response.data
+            )
             team_id = auth_data.get("team_id")
-            logger.debug(f"Slack team_id: {team_id}")
+            logger.debug("Slack team_id: %s", team_id)
         except Exception as e:
-            logger.warning(f"Could not fetch team_id from Slack API: {e}")
+            logger.warning("Could not fetch team_id from Slack API: %s", e)
 
         with get_session_with_current_tenant() as db_session:
             return slack_retrieval(

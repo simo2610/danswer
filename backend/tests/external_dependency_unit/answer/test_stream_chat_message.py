@@ -9,60 +9,62 @@ from sqlalchemy.orm import Session
 from onyx.chat.models import CreateChatSessionID
 from onyx.configs.constants import DocumentSource
 from onyx.server.query_and_chat.models import MessageResponseIDInfo
-from onyx.server.query_and_chat.streaming_models import AgentResponseStart
-from onyx.server.query_and_chat.streaming_models import GeneratedImage
-from onyx.server.query_and_chat.streaming_models import ImageGenerationFinal
-from onyx.server.query_and_chat.streaming_models import ImageGenerationToolHeartbeat
-from onyx.server.query_and_chat.streaming_models import ImageGenerationToolStart
-from onyx.server.query_and_chat.streaming_models import OpenUrlDocuments
-from onyx.server.query_and_chat.streaming_models import OpenUrlStart
-from onyx.server.query_and_chat.streaming_models import OpenUrlUrls
-from onyx.server.query_and_chat.streaming_models import OverallStop
-from onyx.server.query_and_chat.streaming_models import Packet
-from onyx.server.query_and_chat.streaming_models import ReasoningDone
-from onyx.server.query_and_chat.streaming_models import ReasoningStart
-from onyx.server.query_and_chat.streaming_models import SearchToolDocumentsDelta
-from onyx.server.query_and_chat.streaming_models import SearchToolQueriesDelta
-from onyx.server.query_and_chat.streaming_models import SearchToolStart
-from onyx.server.query_and_chat.streaming_models import SectionEnd
-from onyx.server.query_and_chat.streaming_models import TopLevelBranching
+from onyx.server.query_and_chat.streaming_models import (
+    AgentResponseStart,
+    GeneratedImage,
+    ImageGenerationFinal,
+    ImageGenerationToolHeartbeat,
+    ImageGenerationToolStart,
+    OpenUrlDocuments,
+    OpenUrlStart,
+    OpenUrlUrls,
+    OverallStop,
+    Packet,
+    ReasoningDone,
+    ReasoningStart,
+    SearchToolDocumentsDelta,
+    SearchToolQueriesDelta,
+    SearchToolStart,
+    SectionEnd,
+    TopLevelBranching,
+)
 from tests.external_dependency_unit.answer.conftest import ensure_default_llm_provider
 from tests.external_dependency_unit.answer.stream_test_assertions import (
     assert_answer_stream_part_correct,
 )
 from tests.external_dependency_unit.answer.stream_test_builder import StreamTestBuilder
-from tests.external_dependency_unit.answer.stream_test_utils import create_chat_session
 from tests.external_dependency_unit.answer.stream_test_utils import (
+    create_chat_session,
     create_packet_with_agent_response_delta,
-)
-from tests.external_dependency_unit.answer.stream_test_utils import (
     create_packet_with_reasoning_delta,
-)
-from tests.external_dependency_unit.answer.stream_test_utils import create_placement
-from tests.external_dependency_unit.answer.stream_test_utils import (
+    create_placement,
     mock_web_content_to_search_doc,
-)
-from tests.external_dependency_unit.answer.stream_test_utils import (
     mock_web_search_result_to_search_doc,
+    submit_query,
+    tokenise,
 )
-from tests.external_dependency_unit.answer.stream_test_utils import submit_query
-from tests.external_dependency_unit.answer.stream_test_utils import tokenise
 from tests.external_dependency_unit.conftest import create_test_user
-from tests.external_dependency_unit.mock_content_provider import MockWebContent
 from tests.external_dependency_unit.mock_content_provider import (
+    MockWebContent,
     use_mock_content_provider,
 )
 from tests.external_dependency_unit.mock_image_provider import (
     use_mock_image_generation_provider,
 )
-from tests.external_dependency_unit.mock_llm import LLMAnswerResponse
-from tests.external_dependency_unit.mock_llm import LLMReasoningResponse
-from tests.external_dependency_unit.mock_llm import LLMToolCallResponse
-from tests.external_dependency_unit.mock_llm import use_mock_llm
-from tests.external_dependency_unit.mock_search_pipeline import MockInternalSearchResult
-from tests.external_dependency_unit.mock_search_pipeline import use_mock_search_pipeline
-from tests.external_dependency_unit.mock_search_provider import MockWebSearchResult
-from tests.external_dependency_unit.mock_search_provider import use_mock_web_provider
+from tests.external_dependency_unit.mock_llm import (
+    LLMAnswerResponse,
+    LLMReasoningResponse,
+    LLMToolCallResponse,
+    use_mock_llm,
+)
+from tests.external_dependency_unit.mock_search_pipeline import (
+    MockInternalSearchResult,
+    use_mock_search_pipeline,
+)
+from tests.external_dependency_unit.mock_search_provider import (
+    MockWebSearchResult,
+    use_mock_web_provider,
+)
 
 
 def test_stream_chat_with_answer(
@@ -91,7 +93,6 @@ def test_stream_chat_with_answer(
         answer_stream = submit_query(
             query=query,
             chat_session_id=chat_session.id,
-            db_session=db_session,
             user=test_user,
         )
 
@@ -135,7 +136,6 @@ def test_stream_chat_with_answer_create_chat(
         answer_stream = submit_query(
             query=query,
             chat_session_id=None,
-            db_session=db_session,
             user=test_user,
         )
 
@@ -222,7 +222,7 @@ def test_stream_chat_with_search_and_openurl_tools(
     ]
 
     REASONING_RESPONSE_3 = (
-        "I now know everything that I need to know. " "I can now answer the question."
+        "I now know everything that I need to know. I can now answer the question."
     )
 
     ANSWER_RESPONSE_1 = (
@@ -243,7 +243,6 @@ def test_stream_chat_with_search_and_openurl_tools(
         answer_stream = submit_query(
             query=QUERY,
             chat_session_id=chat_session.id,
-            db_session=db_session,
             user=test_user,
         )
 
@@ -279,9 +278,7 @@ def test_stream_chat_with_search_and_openurl_tools(
                 create_packet_with_reasoning_delta(token, 0)
                 for token in tokenise(REASONING_RESPONSE_1)
             ]
-        ).expect(
-            Packet(placement=create_placement(0), obj=ReasoningDone())
-        ).expect(
+        ).expect(Packet(placement=create_placement(0), obj=ReasoningDone())).expect(
             Packet(
                 placement=create_placement(1),
                 obj=SearchToolStart(
@@ -314,9 +311,7 @@ def test_stream_chat_with_search_and_openurl_tools(
                 placement=create_placement(1),
                 obj=SectionEnd(),
             )
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # LLM Stream Response 2
         for content in CONTENT1:
@@ -369,9 +364,7 @@ def test_stream_chat_with_search_and_openurl_tools(
                 placement=create_placement(3),
                 obj=SectionEnd(),
             )
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # LLM Stream Response 3
         handler.add_response(
@@ -401,9 +394,7 @@ def test_stream_chat_with_search_and_openurl_tools(
             ]
             + [mock_web_search_result_to_search_doc(result) for result in RESULTS2]
             + [mock_web_content_to_search_doc(content) for content in CONTENT1],
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         with pytest.raises(StopIteration):
             next(answer_stream)
@@ -441,7 +432,6 @@ def test_image_generation_tool_no_reasoning(
         answer_stream = submit_query(
             query=QUERY,
             chat_session_id=chat_session.id,
-            db_session=db_session,
             user=test_user,
         )
 
@@ -504,9 +494,7 @@ def test_image_generation_tool_no_reasoning(
                 obj=SectionEnd(),
             ),
             forward=False,
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # LLM Stream Response 2 - the answer comes after the tool call, so turn_index=1
         handler.add_response(
@@ -528,9 +516,7 @@ def test_image_generation_tool_no_reasoning(
                 placement=create_placement(1),
                 obj=OverallStop(),
             )
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         with pytest.raises(StopIteration):
             next(answer_stream)
@@ -767,7 +753,6 @@ def test_parallel_internal_and_web_search_tool_calls(
         answer_stream = submit_query(
             query=QUERY,
             chat_session_id=chat_session.id,
-            db_session=db_session,
             user=test_user,
         )
 
@@ -857,9 +842,7 @@ def test_parallel_internal_and_web_search_tool_calls(
                 placement=create_placement(1, 1),
                 obj=SectionEnd(),
             )
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # LLM Stream Response 2
         for content in OPEN_URL_DOCUMENTS_1:
@@ -900,9 +883,7 @@ def test_parallel_internal_and_web_search_tool_calls(
                 obj=SectionEnd(),
             ),
             forward=False,
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # LLM Stream Response 3
         for content in OPEN_URL_DOCUMENTS_2:
@@ -944,9 +925,7 @@ def test_parallel_internal_and_web_search_tool_calls(
                 placement=create_placement(4),
                 obj=SectionEnd(),
             )
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # LLM Stream Response 4
         handler.add_response(
@@ -973,9 +952,7 @@ def test_parallel_internal_and_web_search_tool_calls(
                 mock_web_content_to_search_doc(content)
                 for content in OPEN_URL_DOCUMENTS_2
             ],
-        ).run_and_validate(
-            stream=answer_stream
-        )
+        ).run_and_validate(stream=answer_stream)
 
         # End stream
         with pytest.raises(StopIteration):

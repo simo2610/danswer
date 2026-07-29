@@ -1,39 +1,44 @@
 import io
 import os
 from collections.abc import Generator
-from datetime import datetime
-from datetime import timezone
-from typing import Any
-from typing import IO
+from datetime import datetime, timezone
+from typing import IO, Any
 from urllib.parse import quote
 
 from pydantic import Field
 
-from onyx.configs.app_configs import EGNYTE_CLIENT_ID
-from onyx.configs.app_configs import EGNYTE_CLIENT_SECRET
-from onyx.configs.app_configs import INDEX_BATCH_SIZE
+from onyx.configs.app_configs import (
+    EGNYTE_CLIENT_ID,
+    EGNYTE_CLIENT_SECRET,
+    INDEX_BATCH_SIZE,
+)
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
     get_oauth_callback_uri,
 )
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import OAuthConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.models import BasicExpertInfo
-from onyx.connectors.models import ConnectorMissingCredentialError
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import TextSection
-from onyx.file_processing.extract_file_text import detect_encoding
-from onyx.file_processing.extract_file_text import extract_file_text
-from onyx.file_processing.extract_file_text import get_file_ext
-from onyx.file_processing.extract_file_text import read_text_file
+from onyx.connectors.interfaces import (
+    GenerateDocumentsOutput,
+    LoadConnector,
+    OAuthConnector,
+    PollConnector,
+    SecondsSinceUnixEpoch,
+)
+from onyx.connectors.models import (
+    BasicExpertInfo,
+    ConnectorMissingCredentialError,
+    Document,
+    HierarchyNode,
+    TextSection,
+)
+from onyx.file_processing.extract_file_text import (
+    detect_encoding,
+    extract_file_text,
+    get_file_ext,
+    read_text_file,
+)
 from onyx.file_processing.file_types import OnyxFileExtensions
 from onyx.utils.logger import setup_logger
 from onyx.utils.retry_wrapper import request_with_retries
-
 
 logger = setup_logger()
 
@@ -72,7 +77,7 @@ def _process_egnyte_file(
 
     # Explicitly excluding image extensions here. TODO: consider allowing images
     if extension not in OnyxFileExtensions.TEXT_AND_DOCUMENT_EXTENSIONS:
-        logger.warning(f"Skipping file '{file_name}' with extension '{extension}'")
+        logger.warning("Skipping file '%s' with extension '%s'", file_name, extension)
         return None
 
     # Extract text content based on file type
@@ -284,7 +289,7 @@ class EgnyteConnector(LoadConnector, PollConnector, OAuthConnector):
         # Iterate through yielded files and filter them
         for file in self._get_files_list(self.folder_path):
             if not self._should_index_file(file, start_time, end_time):
-                logger.debug(f"Skipping file '{file['path']}'.")
+                logger.debug("Skipping file '%s'.", file["path"])
                 continue
 
             try:
@@ -303,7 +308,9 @@ class EgnyteConnector(LoadConnector, PollConnector, OAuthConnector):
 
                 if not response.ok:
                     logger.error(
-                        f"Failed to fetch file content: {file['path']} (status code: {response.status_code})"
+                        "Failed to fetch file content: %s (status code: %s)",
+                        file["path"],
+                        response.status_code,
                     )
                     continue
 
@@ -332,7 +339,7 @@ class EgnyteConnector(LoadConnector, PollConnector, OAuthConnector):
                         current_batch = []
 
             except Exception:
-                logger.exception(f"Failed to process file {file['path']}")
+                logger.exception("Failed to process file %s", file["path"])
                 continue
 
         if current_batch:

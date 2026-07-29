@@ -1,8 +1,7 @@
 """Discord registration key generation and parsing."""
 
 import secrets
-from urllib.parse import quote
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from onyx.utils.logger import setup_logger
 
@@ -21,7 +20,7 @@ def generate_discord_registration_key(tenant_id: str) -> str:
     encoded_tenant = quote(tenant_id)
     random_token = secrets.token_urlsafe(16)
 
-    logger.info(f"Generated Discord registration key for tenant {tenant_id}")
+    logger.info("Generated Discord registration key for tenant %s", tenant_id)
     return f"{REGISTRATION_KEY_PREFIX}{encoded_tenant}.{random_token}"
 
 

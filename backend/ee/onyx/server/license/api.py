@@ -11,25 +11,26 @@ Cloud licensing is managed via the control plane and gated_tenants Redis key.
 """
 
 import requests
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import File
-from fastapi import UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from ee.onyx.configs.app_configs import CLOUD_DATA_PLANE_URL
 from ee.onyx.db.license import delete_license as db_delete_license
-from ee.onyx.db.license import get_license
-from ee.onyx.db.license import get_license_metadata
-from ee.onyx.db.license import invalidate_license_cache
-from ee.onyx.db.license import refresh_license_cache
-from ee.onyx.db.license import update_license_cache
-from ee.onyx.db.license import upsert_license
-from ee.onyx.server.license.models import LicenseResponse
-from ee.onyx.server.license.models import LicenseSource
-from ee.onyx.server.license.models import LicenseStatusResponse
-from ee.onyx.server.license.models import LicenseUploadResponse
-from ee.onyx.server.license.models import SeatUsageResponse
+from ee.onyx.db.license import (
+    get_license,
+    get_license_metadata,
+    invalidate_license_cache,
+    refresh_license_cache,
+    update_license_cache,
+    upsert_license,
+)
+from ee.onyx.server.license.models import (
+    LicenseResponse,
+    LicenseSource,
+    LicenseStatusResponse,
+    LicenseUploadResponse,
+    SeatUsageResponse,
+)
 from ee.onyx.utils.license import verify_license_signature
 from onyx.auth.permissions import require_permission
 from onyx.auth.users import User
@@ -79,6 +80,7 @@ async def get_license_status(
         expires_at=metadata.expires_at,
         grace_period_end=metadata.grace_period_end,
         status=metadata.status,
+        expiry_warning_stage=metadata.expiry_warning_stage,
         source=metadata.source,
     )
 
@@ -187,10 +189,12 @@ async def claim_license(
         try:
             update_license_cache(payload, source=LicenseSource.AUTO_FETCH)
         except Exception as cache_error:
-            logger.warning(f"Failed to update license cache: {cache_error}")
+            logger.warning("Failed to update license cache: %s", cache_error)
 
         logger.info(
-            f"License claimed: seats={payload.seats}, expires={payload.expires_at.date()}"
+            "License claimed: seats=%s, expires=%s",
+            payload.seats,
+            payload.expires_at.date(),
         )
         return LicenseResponse(success=True, license=payload)
 
@@ -254,7 +258,7 @@ async def upload_license(
     try:
         update_license_cache(payload, source=LicenseSource.MANUAL_UPLOAD)
     except Exception as cache_error:
-        logger.warning(f"Failed to update license cache: {cache_error}")
+        logger.warning("Failed to update license cache: %s", cache_error)
 
     return LicenseUploadResponse(
         success=True,
@@ -287,6 +291,7 @@ async def refresh_license_cache_endpoint(
         expires_at=metadata.expires_at,
         grace_period_end=metadata.grace_period_end,
         status=metadata.status,
+        expiry_warning_stage=metadata.expiry_warning_stage,
         source=metadata.source,
     )
 
@@ -310,7 +315,7 @@ async def delete_license(
     try:
         invalidate_license_cache()
     except Exception as cache_error:
-        logger.warning(f"Failed to invalidate license cache: {cache_error}")
+        logger.warning("Failed to invalidate license cache: %s", cache_error)
 
     deleted = db_delete_license(db_session)
 

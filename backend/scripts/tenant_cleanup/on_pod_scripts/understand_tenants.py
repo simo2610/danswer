@@ -6,8 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
-from onyx.db.engine.sql_engine import get_session_with_shared_schema
-from onyx.db.engine.sql_engine import SqlEngine
+from onyx.db.engine.sql_engine import SqlEngine, get_session_with_shared_schema
 
 
 def get_tenant_activity_summary(session: Session) -> list[dict[str, Any]]:
@@ -17,16 +16,14 @@ def get_tenant_activity_summary(session: Session) -> list[dict[str, Any]]:
     tenant_schemas = [
         row[0]
         for row in session.execute(
-            text(
-                """
+            text("""
             SELECT nspname
             FROM pg_namespace
             WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'public')
                 AND nspname NOT LIKE 'pg_toast%%'
                 AND nspname NOT LIKE 'pg_temp%%'
             ORDER BY nspname
-        """
-            )
+        """)
         )
     ]
 
@@ -41,8 +38,7 @@ def get_tenant_activity_summary(session: Session) -> list[dict[str, Any]]:
 
         try:
             # Use a single query to get all data at once
-            query = text(
-                f"""
+            query = text(f"""
                 SELECT
                     :tenant_id AS tenant_id,
                     (
@@ -61,8 +57,7 @@ def get_tenant_activity_summary(session: Session) -> list[dict[str, Any]]:
                     ) AS last_query_text,
                     (SELECT COUNT(*) FROM "{schema}".document) AS num_documents,
                     (SELECT COUNT(*) FROM "{schema}".user) AS num_users
-            """
-            )
+            """)
 
             result = session.execute(query, {"tenant_id": schema}).mappings().first()
 
@@ -83,7 +78,6 @@ def get_tenant_activity_summary(session: Session) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-
     SqlEngine.init_engine(pool_size=5, max_overflow=2)
 
     with get_session_with_shared_schema() as session:

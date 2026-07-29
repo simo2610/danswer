@@ -1,6 +1,8 @@
 from ee.onyx.db.connector_credential_pair import get_all_auto_sync_cc_pairs
-from ee.onyx.external_permissions.sync_params import get_all_censoring_enabled_sources
-from ee.onyx.external_permissions.sync_params import get_source_perm_sync_config
+from ee.onyx.external_permissions.sync_params import (
+    get_all_censoring_enabled_sources,
+    get_source_perm_sync_config,
+)
 from onyx.configs.constants import DocumentSource
 from onyx.context.search.pipeline import InferenceChunk
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
@@ -69,7 +71,9 @@ def _post_query_chunk_censoring(
             censored_chunks = censor_chunks_for_source(chunks_for_source, user.email)
         except Exception as e:
             logger.exception(
-                f"Failed to censor chunks for source {source} so throwing out all chunks for this source and continuing: {e}"
+                "Failed to censor chunks for source %s so throwing out all chunks for this source and continuing: %s",
+                source,
+                e,
             )
             continue
 

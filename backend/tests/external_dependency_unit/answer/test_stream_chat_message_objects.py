@@ -5,16 +5,13 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
-from onyx.chat.models import AnswerStreamPart
-from onyx.chat.models import StreamingError
+from onyx.chat.models import AnswerStreamPart, StreamingError
 from onyx.chat.process_message import handle_stream_message_objects
 from onyx.db.chat import create_chat_session
 from onyx.db.models import User
 from onyx.db.persona import upsert_persona
-from onyx.server.query_and_chat.models import MessageResponseIDInfo
-from onyx.server.query_and_chat.models import SendMessageRequest
-from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
-from onyx.server.query_and_chat.streaming_models import Packet
+from onyx.server.query_and_chat.models import MessageResponseIDInfo, SendMessageRequest
+from onyx.server.query_and_chat.streaming_models import AgentResponseDelta, Packet
 from tests.external_dependency_unit.answer.conftest import ensure_default_llm_provider
 from tests.external_dependency_unit.conftest import create_test_user
 
@@ -73,8 +70,6 @@ def test_stream_chat_message_objects_without_web_search(
         user=None,  # System persona
         name=f"Test Persona {uuid.uuid4()}",
         description="Test persona with no tools for web search test",
-        llm_model_provider_override=None,
-        llm_model_version_override=None,
         starter_messages=None,
         system_prompt=None,
         task_prompt=None,
@@ -84,6 +79,7 @@ def test_stream_chat_message_objects_without_web_search(
         tool_ids=[],  # Explicitly no tools
         document_set_ids=None,
         is_listed=True,
+        default_model_configuration_id=None,
     )
 
     # Create a chat session with our test persona
@@ -102,7 +98,6 @@ def test_stream_chat_message_objects_without_web_search(
     response_generator = handle_stream_message_objects(
         new_msg_req=chat_request,
         user=test_user,
-        db_session=db_session,
     )
     # Collect all packets from the response
     raw_answer_stream: list[AnswerStreamPart] = []

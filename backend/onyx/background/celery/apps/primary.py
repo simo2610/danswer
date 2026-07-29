@@ -1,19 +1,17 @@
 import logging
 import os
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
-from celery import bootsteps  # type: ignore
-from celery import Celery
-from celery import signals
-from celery import Task
+from celery import (
+    Celery,
+    Task,
+    bootsteps,
+    signals,
+)
 from celery.apps.worker import Worker
 from celery.exceptions import WorkerShutdown
 from celery.result import AsyncResult
-from celery.signals import celeryd_init
-from celery.signals import worker_init
-from celery.signals import worker_ready
-from celery.signals import worker_shutdown
+from celery.signals import celeryd_init, worker_init, worker_ready, worker_shutdown
 from redis.lock import Lock as RedisLock
 
 import onyx.background.celery.apps.app_base as app_base
@@ -21,14 +19,14 @@ from onyx.background.celery.apps.app_base import task_logger
 from onyx.background.celery.celery_utils import celery_is_worker_primary
 from onyx.background.celery.tasks.vespa.document_sync import reset_document_sync
 from onyx.configs.app_configs import CELERY_WORKER_PRIMARY_POOL_OVERFLOW
-from onyx.configs.constants import CELERY_PRIMARY_WORKER_LOCK_TIMEOUT
-from onyx.configs.constants import OnyxRedisConstants
-from onyx.configs.constants import OnyxRedisLocks
-from onyx.configs.constants import POSTGRES_CELERY_WORKER_PRIMARY_APP_NAME
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.engine.sql_engine import SqlEngine
-from onyx.db.index_attempt import get_index_attempt
-from onyx.db.index_attempt import mark_attempt_canceled
+from onyx.configs.constants import (
+    CELERY_PRIMARY_WORKER_LOCK_TIMEOUT,
+    POSTGRES_CELERY_WORKER_PRIMARY_APP_NAME,
+    OnyxRedisConstants,
+    OnyxRedisLocks,
+)
+from onyx.db.engine.sql_engine import SqlEngine, get_session_with_current_tenant
+from onyx.db.index_attempt import get_index_attempt, mark_attempt_canceled
 from onyx.db.indexing_coordination import IndexingCoordination
 from onyx.redis.redis_connector_delete import RedisConnectorDelete
 from onyx.redis.redis_connector_doc_perm_sync import RedisConnectorPermissionSync
@@ -38,15 +36,22 @@ from onyx.redis.redis_connector_stop import RedisConnectorStop
 from onyx.redis.redis_document_set import RedisDocumentSet
 from onyx.redis.redis_pool import get_redis_client
 from onyx.redis.redis_usergroup import RedisUserGroup
+from onyx.server.metrics.celery_task_metrics import (
+    on_celery_task_postrun,
+    on_celery_task_prerun,
+    on_celery_task_rejected,
+    on_celery_task_retry,
+    on_celery_task_revoked,
+)
+from onyx.server.metrics.metrics_server import start_metrics_server
 from onyx.utils.logger import setup_logger
-from shared_configs.configs import MULTI_TENANT
-from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
+from shared_configs.configs import MULTI_TENANT, POSTGRES_DEFAULT_SCHEMA
 
 logger = setup_logger()
 
 celery_app = Celery(__name__)
 celery_app.config_from_object("onyx.background.celery.configs.primary")
-celery_app.Task = app_base.TenantAwareTask  # type: ignore [misc]
+celery_app.Task = app_base.TenantAwareTask  # ty: ignore[invalid-assignment]
 
 
 @signals.task_prerun.connect
@@ -59,6 +64,7 @@ def on_task_prerun(
     **kwds: Any,
 ) -> None:
     app_base.on_task_prerun(sender, task_id, task, args, kwargs, **kwds)
+    on_celery_task_prerun(task_id, task)
 
 
 @signals.task_postrun.connect
@@ -73,6 +79,31 @@ def on_task_postrun(
     **kwds: Any,
 ) -> None:
     app_base.on_task_postrun(sender, task_id, task, args, kwargs, retval, state, **kwds)
+    on_celery_task_postrun(task_id, task, state)
+
+
+@signals.task_retry.connect
+def on_task_retry(sender: Any | None = None, **kwargs: Any) -> None:  # noqa: ARG001
+    task_id = getattr(getattr(sender, "request", None), "id", None)
+    on_celery_task_retry(task_id, sender)
+
+
+@signals.task_revoked.connect
+def on_task_revoked(sender: Any | None = None, **kwargs: Any) -> None:
+    task_name = getattr(sender, "name", None) or str(sender)
+    on_celery_task_revoked(kwargs.get("task_id"), task_name)
+
+
+@signals.task_rejected.connect
+def on_task_rejected(sender: Any | None = None, **kwargs: Any) -> None:  # noqa: ARG001
+    message = kwargs.get("message")
+    task_name: str | None = None
+    if message is not None:
+        headers = getattr(message, "headers", None) or {}
+        task_name = headers.get("task")
+    if task_name is None:
+        task_name = "unknown"
+    on_celery_task_rejected(None, task_name)
 
 
 @celeryd_init.connect
@@ -85,16 +116,16 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
     logger.info("worker_init signal received.")
 
     SqlEngine.set_app_name(POSTGRES_CELERY_WORKER_PRIMARY_APP_NAME)
-    pool_size = cast(int, sender.concurrency)  # type: ignore
+    pool_size = cast(int, sender.concurrency)  # ty: ignore[unresolved-attribute]
     SqlEngine.init_engine(
         pool_size=pool_size, max_overflow=CELERY_WORKER_PRIMARY_POOL_OVERFLOW
     )
 
     app_base.wait_for_redis(sender, **kwargs)
     app_base.wait_for_db(sender, **kwargs)
-    app_base.wait_for_vespa_or_shutdown(sender, **kwargs)
+    app_base.wait_for_document_index_or_shutdown()
 
-    logger.info(f"Running as the primary celery worker: pid={os.getpid()}")
+    logger.info("Running as the primary celery worker: pid=%s", os.getpid())
 
     # Less startup checks in multi-tenant case
     if MULTI_TENANT:
@@ -110,13 +141,13 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
     connected_slaves: int = replication_info.get("connected_slaves", 0)
 
     logger.info(
-        f"Redis INFO REPLICATION: role={role} connected_slaves={connected_slaves}"
+        "Redis INFO REPLICATION: role=%s connected_slaves=%s", role, connected_slaves
     )
 
     memory_info: dict[str, Any] = cast(dict, r.info("memory"))
     maxmemory_policy: str = cast(str, memory_info.get("maxmemory_policy", ""))
 
-    logger.info(f"Redis INFO MEMORY: maxmemory_policy={maxmemory_policy}")
+    logger.info("Redis INFO MEMORY: maxmemory_policy=%s", maxmemory_policy)
 
     # For the moment, we're assuming that we are the only primary worker
     # that should be running.
@@ -145,7 +176,7 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
         raise WorkerShutdown("Primary worker lock could not be acquired!")
 
     # tacking on our own user data to the sender
-    sender.primary_worker_lock = lock  # type: ignore
+    sender.primary_worker_lock = lock  # ty: ignore[unresolved-attribute]
 
     # As currently designed, when this worker starts as "primary", we reinitialize redis
     # to a clean state (for our purposes, anyway)
@@ -206,12 +237,15 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
             except Exception:
                 # If we can't check the task status, be conservative and continue
                 logger.warning(
-                    f"Could not verify Celery task status on startup for attempt {attempt.id}, task_id={attempt.celery_task_id}"
+                    "Could not verify Celery task status on startup for attempt %s, task_id=%s",
+                    attempt.id,
+                    attempt.celery_task_id,
                 )
 
 
 @worker_ready.connect
 def on_worker_ready(sender: Any, **kwargs: Any) -> None:
+    start_metrics_server("primary")
     app_base.on_worker_ready(sender, **kwargs)
 
 
@@ -246,7 +280,7 @@ class HubPeriodicTask(bootsteps.StartStopStep):
         self.interval = CELERY_PRIMARY_WORKER_LOCK_TIMEOUT / 8  # Interval in seconds
         self.task_tref = None
 
-    def start(self, worker: Any) -> None:
+    def start(self, worker: Any) -> None:  # ty: ignore[invalid-method-override]
         if not celery_is_worker_primary(worker):
             return
 
@@ -297,7 +331,7 @@ class HubPeriodicTask(bootsteps.StartStopStep):
         except Exception:
             task_logger.exception("Periodic task failed.")
 
-    def stop(self, worker: Any) -> None:  # noqa: ARG002
+    def stop(self, worker: Any) -> None:  # noqa: ARG002  # ty: ignore[invalid-method-override]
         # Cancel the scheduled task when the worker stops
         if self.task_tref:
             self.task_tref.cancel()
@@ -315,9 +349,11 @@ celery_app.autodiscover_tasks(
         [
             "onyx.background.celery.tasks.connector_deletion",
             "onyx.background.celery.tasks.docprocessing",
+            "onyx.background.celery.tasks.port",
             "onyx.background.celery.tasks.evals",
             "onyx.background.celery.tasks.hierarchyfetching",
             "onyx.background.celery.tasks.pruning",
+            "onyx.background.celery.tasks.scheduled_tasks",
             "onyx.background.celery.tasks.shared",
             "onyx.background.celery.tasks.vespa",
             "onyx.background.celery.tasks.llm_model_update",

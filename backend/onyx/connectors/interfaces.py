@@ -1,20 +1,19 @@
 import abc
-from collections.abc import Generator
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from types import TracebackType
-from typing import Any
-from typing import Generic
-from typing import TypeAlias
-from typing import TypeVar
+from typing import Any, Generic, TypeAlias, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.models import ConnectorCheckpoint
-from onyx.connectors.models import ConnectorFailure
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import SlimDocument
+from onyx.connectors.models import (
+    ConnectorCheckpoint,
+    ConnectorFailure,
+    Document,
+    HierarchyNode,
+    SlimDocument,
+)
+from onyx.file_store.staging import RawFileCallback
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
 
@@ -33,14 +32,21 @@ class NormalizationResult(BaseModel):
     Attributes:
         normalized_url: The normalized URL string, or None if normalization failed
         use_default: If True, fall back to default normalizer. If False, return None.
+        candidate_document_ids: Additional canonical Document.id values a single URL
+            may map to (e.g. a Google Drive file id whose type isn't encoded in the
+            pasted URL). Resolution matches whichever candidate exists in the index.
     """
 
     normalized_url: str | None
     use_default: bool = False
+    candidate_document_ids: list[str] = Field(default_factory=list)
 
 
 class BaseConnector(abc.ABC, Generic[CT]):
     REDIS_KEY_PREFIX = "da_connector_data:"
+
+    # Optional raw-file persistence hook to save original file
+    raw_file_callback: RawFileCallback | None = None
 
     @abc.abstractmethod
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
@@ -88,6 +94,15 @@ class BaseConnector(abc.ABC, Generic[CT]):
         """Implement if the underlying connector wants to skip/allow image downloading
         based on the application level image analysis setting."""
 
+    def set_raw_file_callback(self, callback: RawFileCallback) -> None:
+        """Inject the per-attempt raw-file persistence callback.
+
+        Wired up by the docfetching entrypoint via `instantiate_connector`.
+        Connectors that don't care about persisting raw bytes can ignore this
+        — `raw_file_callback` simply stays `None`.
+        """
+        self.raw_file_callback = callback
+
     @classmethod
     def normalize_url(cls, url: str) -> "NormalizationResult":  # noqa: ARG003
         """Normalize a URL to match the canonical Document.id format used during ingestion.
@@ -98,8 +113,7 @@ class BaseConnector(abc.ABC, Generic[CT]):
         return NormalizationResult(normalized_url=None, use_default=True)
 
     def build_dummy_checkpoint(self) -> CT:
-        # TODO: find a way to make this work without type: ignore
-        return ConnectorCheckpoint(has_more=True)  # type: ignore
+        return ConnectorCheckpoint(has_more=True)  # ty: ignore[invalid-return-type]
 
 
 # Large set update or reindex, generally pulling a complete state or from a savestate file
@@ -303,7 +317,7 @@ class CheckpointedConnectorWithPermSync(CheckpointedConnector[CT]):
 
 class Resolver(BaseConnector):
     @abc.abstractmethod
-    def resolve_errors(
+    def reindex(
         self,
         errors: list[ConnectorFailure],
         include_permissions: bool = False,

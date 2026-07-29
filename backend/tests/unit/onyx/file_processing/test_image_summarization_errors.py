@@ -7,13 +7,14 @@ Verifies that:
 3. The ValueError raised on LLM failure preserves the original exception
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from onyx.file_processing.image_summarization import _summarize_image
-from onyx.file_processing.image_summarization import summarize_image_with_error_handling
+from onyx.file_processing.image_summarization import (
+    _summarize_image,
+    summarize_image_with_error_handling,
+)
 
 
 class TestSummarizeImageErrorMessage:
@@ -67,7 +68,8 @@ class TestUnsupportedMimeTypeLogging:
         ).UnsupportedImageFormatError("unsupported"),
     )
     def test_logs_magic_bytes_and_size(
-        self, mock_pipeline: MagicMock  # noqa: ARG002
+        self,
+        mock_pipeline: MagicMock,  # noqa: ARG002
     ) -> None:
         """The info log should include magic bytes hex and image size."""
         mock_llm = MagicMock()

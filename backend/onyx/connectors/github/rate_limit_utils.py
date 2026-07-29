@@ -1,7 +1,5 @@
 import time
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 from github import Github
 
@@ -21,5 +19,7 @@ def sleep_after_rate_limit_exception(github_client: Github) -> None:
         tzinfo=timezone.utc
     ) - datetime.now(tz=timezone.utc)
     sleep_time += timedelta(minutes=1)  # add an extra minute just to be safe
-    logger.notice(f"Ran into Github rate-limit. Sleeping {sleep_time.seconds} seconds.")
+    logger.notice(
+        "Ran into Github rate-limit. Sleeping %s seconds.", sleep_time.seconds
+    )
     time.sleep(sleep_time.total_seconds())

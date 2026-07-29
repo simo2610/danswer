@@ -2,21 +2,21 @@ import datetime
 from collections import defaultdict
 from typing import List
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ee.onyx.db.analytics import fetch_assistant_message_analytics
-from ee.onyx.db.analytics import fetch_assistant_unique_users
-from ee.onyx.db.analytics import fetch_assistant_unique_users_total
-from ee.onyx.db.analytics import fetch_onyxbot_analytics
-from ee.onyx.db.analytics import fetch_per_user_query_analytics
-from ee.onyx.db.analytics import fetch_persona_message_analytics
-from ee.onyx.db.analytics import fetch_persona_unique_users
-from ee.onyx.db.analytics import fetch_query_analytics
-from ee.onyx.db.analytics import user_can_view_assistant_stats
+from ee.onyx.db.analytics import (
+    fetch_assistant_message_analytics,
+    fetch_assistant_unique_users,
+    fetch_assistant_unique_users_total,
+    fetch_onyxbot_analytics,
+    fetch_per_user_query_analytics,
+    fetch_persona_message_analytics,
+    fetch_persona_unique_users,
+    fetch_query_analytics,
+    user_can_view_assistant_stats,
+)
 from onyx.auth.permissions import require_permission
 from onyx.configs.constants import PUBLIC_API_TAGS
 from onyx.db.engine.sql_engine import get_session
@@ -46,9 +46,10 @@ def get_query_analytics(
     daily_query_usage_info = fetch_query_analytics(
         start=start
         or (
-            datetime.datetime.utcnow() - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+            datetime.datetime.now(tz=datetime.timezone.utc)
+            - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
         ),  # default is 30d lookback
-        end=end or datetime.datetime.utcnow(),
+        end=end or datetime.datetime.now(tz=datetime.timezone.utc),
         db_session=db_session,
     )
     return [
@@ -77,9 +78,10 @@ def get_user_analytics(
     daily_query_usage_info_per_user = fetch_per_user_query_analytics(
         start=start
         or (
-            datetime.datetime.utcnow() - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+            datetime.datetime.now(tz=datetime.timezone.utc)
+            - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
         ),  # default is 30d lookback
-        end=end or datetime.datetime.utcnow(),
+        end=end or datetime.datetime.now(tz=datetime.timezone.utc),
         db_session=db_session,
     )
 
@@ -111,9 +113,10 @@ def get_onyxbot_analytics(
     daily_onyxbot_info = fetch_onyxbot_analytics(
         start=start
         or (
-            datetime.datetime.utcnow() - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+            datetime.datetime.now(tz=datetime.timezone.utc)
+            - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
         ),  # default is 30d lookback
-        end=end or datetime.datetime.utcnow(),
+        end=end or datetime.datetime.now(tz=datetime.timezone.utc),
         db_session=db_session,
     )
 
@@ -146,9 +149,10 @@ def get_persona_messages(
 ) -> list[PersonaMessageAnalyticsResponse]:
     """Fetch daily message counts for a single persona within the given time range."""
     start = start or (
-        datetime.datetime.utcnow() - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+        datetime.datetime.now(tz=datetime.timezone.utc)
+        - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
     )
-    end = end or datetime.datetime.utcnow()
+    end = end or datetime.datetime.now(tz=datetime.timezone.utc)
 
     persona_message_counts = []
     for count, date in fetch_persona_message_analytics(
@@ -226,9 +230,10 @@ def get_assistant_stats(
     along with the overall total messages and total distinct users.
     """
     start = start or (
-        datetime.datetime.utcnow() - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+        datetime.datetime.now(tz=datetime.timezone.utc)
+        - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS)
     )
-    end = end or datetime.datetime.utcnow()
+    end = end or datetime.datetime.now(tz=datetime.timezone.utc)
 
     if not user_can_view_assistant_stats(db_session, user, assistant_id):
         raise HTTPException(

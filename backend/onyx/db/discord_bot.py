@@ -1,25 +1,22 @@
 """CRUD operations for Discord bot models."""
 
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import delete
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from onyx.auth.api_key import build_displayable_api_key
-from onyx.auth.api_key import generate_api_key
-from onyx.auth.api_key import hash_api_key
+from onyx.auth.api_key import build_displayable_api_key, generate_api_key, hash_api_key
 from onyx.auth.schemas import UserRole
 from onyx.configs.constants import DISCORD_SERVICE_API_KEY_NAME
 from onyx.db.api_key import insert_api_key
-from onyx.db.models import ApiKey
-from onyx.db.models import DiscordBotConfig
-from onyx.db.models import DiscordChannelConfig
-from onyx.db.models import DiscordGuildConfig
-from onyx.db.models import User
+from onyx.db.models import (
+    ApiKey,
+    DiscordBotConfig,
+    DiscordChannelConfig,
+    DiscordGuildConfig,
+    User,
+)
 from onyx.db.utils import DiscordChannelView
 from onyx.server.api_key.models import APIKeyArgs
 from onyx.utils.logger import setup_logger
@@ -62,7 +59,7 @@ def delete_discord_bot_config(db_session: Session) -> bool:
     """Delete the Discord bot config. Returns True if deleted."""
     result = db_session.execute(delete(DiscordBotConfig))
     db_session.flush()
-    return result.rowcount > 0  # type: ignore[attr-defined]
+    return result.rowcount > 0  # ty: ignore[unresolved-attribute]
 
 
 # === Discord Service API Key ===
@@ -100,7 +97,8 @@ def get_or_create_discord_service_api_key(
         # Database only stores the hash, so we must regenerate to get the raw key.
         # This is safe since the Discord bot is the only consumer of this key.
         logger.debug(
-            f"Found existing Discord service API key for tenant {tenant_id} that isn't in cache, regenerating to update cache"
+            "Found existing Discord service API key for tenant %s that isn't in cache, regenerating to update cache",
+            tenant_id,
         )
         new_api_key = generate_api_key(tenant_id)
         existing.hashed_api_key = hash_api_key(new_api_key)
@@ -109,10 +107,10 @@ def get_or_create_discord_service_api_key(
         return new_api_key
 
     # Create new API key
-    logger.info(f"Creating Discord service API key for tenant {tenant_id}")
+    logger.info("Creating Discord service API key for tenant %s", tenant_id)
     api_key_args = APIKeyArgs(
         name=DISCORD_SERVICE_API_KEY_NAME,
-        role=UserRole.LIMITED,  # Limited role is sufficient for chat requests
+        role=UserRole.LIMITED,  # insert_api_key grants LIMITED keys chat scope
     )
     api_key_descriptor = insert_api_key(
         db_session=db_session,
@@ -147,7 +145,9 @@ def delete_discord_service_api_key(db_session: Session) -> bool:
 
     # Also delete the associated user
     api_key_user = db_session.scalar(
-        select(User).where(User.id == existing_key.user_id)  # type: ignore[arg-type]
+        select(User).where(
+            User.id == existing_key.user_id  # ty: ignore[invalid-argument-type]
+        )
     )
 
     db_session.delete(existing_key)
@@ -252,7 +252,7 @@ def delete_guild_config(
         delete(DiscordGuildConfig).where(DiscordGuildConfig.id == internal_id)
     )
     db_session.flush()
-    return result.rowcount > 0  # type: ignore[attr-defined]
+    return result.rowcount > 0  # ty: ignore[unresolved-attribute]
 
 
 # === DiscordChannelConfig ===
@@ -334,7 +334,7 @@ def delete_discord_channel_config(
         )
     )
     db_session.flush()
-    return result.rowcount > 0  # type: ignore[attr-defined]
+    return result.rowcount > 0  # ty: ignore[unresolved-attribute]
 
 
 def create_channel_config(

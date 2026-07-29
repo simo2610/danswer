@@ -3,14 +3,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from onyx.deep_research.dr_mock_tools import GENERATE_REPORT_TOOL_NAME
-from onyx.deep_research.dr_mock_tools import THINK_TOOL_NAME
+from onyx.deep_research.dr_mock_tools import GENERATE_REPORT_TOOL_NAME, THINK_TOOL_NAME
 from onyx.deep_research.models import SpecialToolCalls
-from onyx.llm.model_response import ChatCompletionDeltaToolCall
-from onyx.llm.model_response import Delta
-from onyx.llm.model_response import FunctionCall
+from onyx.llm.model_response import ChatCompletionDeltaToolCall, Delta, FunctionCall
 from onyx.tools.models import ToolCallKickoff
-
 
 # JSON prefixes to detect in think_tool arguments
 # The schema is: {"reasoning": "...content..."}
@@ -118,9 +114,9 @@ def _extract_reasoning_chunk(state: ThinkToolProcessorState) -> str | None:
     return to_emit if to_emit else None
 
 
-def create_think_tool_token_processor() -> (
-    Callable[[Delta | None, Any], tuple[Delta | None, Any]]
-):
+def create_think_tool_token_processor() -> Callable[
+    [Delta | None, Any], tuple[Delta | None, Any]
+]:
     """
     Create a custom token processor that converts think_tool calls to reasoning content.
 

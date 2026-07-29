@@ -6,9 +6,7 @@ UniqueViolation errors, which would occur if the upsert logic
 isn't properly implemented.
 """
 
-from concurrent.futures import as_completed
-from concurrent.futures import Future
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Union
 from uuid import uuid4
 
@@ -17,10 +15,8 @@ from sqlalchemy.orm import Session
 
 from onyx.configs.constants import DocumentSource
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.models import Document
-from onyx.db.models import Tag
-from onyx.db.tag import create_or_add_document_tag
-from onyx.db.tag import create_or_add_document_tag_list
+from onyx.db.models import Document, Tag
+from onyx.db.tag import create_or_add_document_tag, create_or_add_document_tag_list
 
 
 def _create_test_document(db_session: Session, doc_id: str) -> Document:
@@ -196,9 +192,9 @@ class TestTagRaceCondition:
                 .all()
             )
 
-        assert len(tags) == len(
-            test_tag_values
-        ), f"Expected {len(test_tag_values)} tags, found {len(tags)}"
+        assert len(tags) == len(test_tag_values), (
+            f"Expected {len(test_tag_values)} tags, found {len(tags)}"
+        )
 
     def test_concurrent_mixed_tag_operations(
         self,
@@ -282,8 +278,8 @@ class TestTagRaceCondition:
                 .all()
             )
 
-        assert (
-            len(tags) == 2
-        ), f"Expected 2 tags (is_list=True and False), found {len(tags)}"
+        assert len(tags) == 2, (
+            f"Expected 2 tags (is_list=True and False), found {len(tags)}"
+        )
         is_list_values = {tag.is_list for tag in tags}
         assert is_list_values == {True, False}

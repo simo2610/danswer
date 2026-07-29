@@ -1,8 +1,6 @@
-from collections.abc import Callable
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from typing import Any
-from typing import IO
+from typing import IO, Any
 
 from onyx.file_processing.extract_file_text import get_file_ext
 from onyx.utils.logger import setup_logger
@@ -62,7 +60,7 @@ def is_xlsx_protected(file: IO[Any]) -> bool:
 
 
 def is_office_file_protected(file: IO[Any]) -> bool:
-    import msoffcrypto  # type: ignore[import-untyped]
+    import msoffcrypto
 
     with preserve_position(file):
         office = msoffcrypto.OfficeFile(file)
@@ -90,7 +88,7 @@ def is_file_password_protected(
 
     if extension not in extension_to_function:
         logger.warning(
-            f"Extension={extension} can be password protected, but no function found"
+            "Extension=%s can be password protected, but no function found", extension
         )
         return False
 

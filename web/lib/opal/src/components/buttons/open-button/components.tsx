@@ -9,7 +9,13 @@ import type {
   IconFunctionComponent,
   RichStr,
 } from "@opal/types";
-import { Text, Tooltip, type TooltipSide } from "@opal/components";
+import {
+  Text,
+  Tooltip,
+  type TextColor,
+  type TextFont,
+  type TooltipSide,
+} from "@opal/components";
 import type { InteractiveContainerRoundingVariant } from "@opal/core";
 import { cn } from "@opal/utils";
 import { iconWrapper } from "@opal/components/buttons/icon-wrapper";
@@ -63,6 +69,12 @@ type OpenButtonProps = Omit<InteractiveStatefulProps, "variant"> & {
      */
     justifyContent?: "between";
 
+    /** Override the label font (defaults to the size-derived body font). */
+    labelFont?: TextFont;
+
+    /** Override the label color (defaults to the variant's interactive color). */
+    labelColor?: TextColor;
+
     /** Tooltip text shown on hover. */
     tooltip?: string;
 
@@ -70,7 +82,7 @@ type OpenButtonProps = Omit<InteractiveStatefulProps, "variant"> & {
     tooltipSide?: TooltipSide;
 
     /** Override the default rounding derived from `size`. */
-    roundingVariant?: InteractiveContainerRoundingVariant;
+    rounding?: InteractiveContainerRoundingVariant;
 
     /** Applies disabled styling and suppresses clicks. */
     disabled?: boolean;
@@ -87,9 +99,11 @@ function OpenButton({
   foldable,
   width,
   justifyContent,
+  labelFont,
+  labelColor,
   tooltip,
   tooltipSide = "top",
-  roundingVariant: roundingVariantOverride,
+  rounding: roundingOverride,
   interaction,
   variant = "select-heavy",
   disabled,
@@ -106,8 +120,8 @@ function OpenButton({
 
   const labelEl = children ? (
     <Text
-      font={isLarge ? "main-ui-body" : "secondary-body"}
-      color="inherit"
+      font={labelFont ?? (isLarge ? "main-ui-body" : "secondary-body")}
+      color={labelColor ?? "inherit"}
       nowrap
     >
       {children}
@@ -123,11 +137,10 @@ function OpenButton({
     >
       <Interactive.Container
         type="button"
-        heightVariant={size}
-        widthVariant={width}
-        roundingVariant={
-          roundingVariantOverride ??
-          (isLarge ? "md" : size === "2xs" ? "xs" : "sm")
+        size={size}
+        width={width}
+        rounding={
+          roundingOverride ?? (isLarge ? "md" : size === "2xs" ? "xs" : "sm")
         }
       >
         <div

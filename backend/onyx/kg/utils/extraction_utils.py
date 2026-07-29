@@ -1,42 +1,45 @@
 import json
 
-from onyx.configs.constants import DocumentSource
-from onyx.configs.constants import OnyxCallTypes
+from onyx.configs.constants import DocumentSource, OnyxCallTypes
 from onyx.configs.kg_configs import KG_METADATA_TRACKING_THRESHOLD
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.entities import get_kg_entity_by_document
 from onyx.db.entity_type import get_entity_types
 from onyx.db.kg_config import KGConfigSettings
-from onyx.db.models import Document
-from onyx.db.models import KGEntityType
-from onyx.db.models import KGRelationshipType
+from onyx.db.models import Document, KGEntityType, KGRelationshipType
 from onyx.db.tag import get_structured_tags_for_document
-from onyx.kg.models import KGAttributeEntityOption
-from onyx.kg.models import KGAttributeTrackInfo
-from onyx.kg.models import KGAttributeTrackType
-from onyx.kg.models import KGChunkFormat
-from onyx.kg.models import KGClassificationInstructions
-from onyx.kg.models import KGClassificationResult
-from onyx.kg.models import KGDocumentDeepExtractionResults
-from onyx.kg.models import KGEnhancedDocumentMetadata
-from onyx.kg.models import KGImpliedExtractionResults
-from onyx.kg.models import KGMetadataContent
-from onyx.kg.utils.formatting_utils import extract_email
-from onyx.kg.utils.formatting_utils import get_entity_type
-from onyx.kg.utils.formatting_utils import kg_email_processing
-from onyx.kg.utils.formatting_utils import make_entity_id
-from onyx.kg.utils.formatting_utils import make_relationship_id
-from onyx.kg.utils.formatting_utils import make_relationship_type_id
+from onyx.kg.models import (
+    KGAttributeEntityOption,
+    KGAttributeTrackInfo,
+    KGAttributeTrackType,
+    KGChunkFormat,
+    KGClassificationInstructions,
+    KGClassificationResult,
+    KGDocumentDeepExtractionResults,
+    KGEnhancedDocumentMetadata,
+    KGImpliedExtractionResults,
+    KGMetadataContent,
+)
+from onyx.kg.utils.formatting_utils import (
+    extract_email,
+    get_entity_type,
+    kg_email_processing,
+    make_entity_id,
+    make_relationship_id,
+    make_relationship_type_id,
+)
 from onyx.kg.vespa.vespa_interactions import get_document_vespa_contents
 from onyx.llm.factory import get_default_llm
 from onyx.llm.models import UserMessage
 from onyx.llm.utils import llm_response_to_string
-from onyx.prompts.kg_prompts import CALL_CHUNK_PREPROCESSING_PROMPT
-from onyx.prompts.kg_prompts import CALL_DOCUMENT_CLASSIFICATION_PROMPT
-from onyx.prompts.kg_prompts import GENERAL_CHUNK_PREPROCESSING_PROMPT
-from onyx.prompts.kg_prompts import MASTER_EXTRACTION_PROMPT
-from onyx.tracing.llm_utils import llm_generation_span
-from onyx.tracing.llm_utils import record_llm_response
+from onyx.prompts.kg_prompts import (
+    CALL_CHUNK_PREPROCESSING_PROMPT,
+    CALL_DOCUMENT_CLASSIFICATION_PROMPT,
+    GENERAL_CHUNK_PREPROCESSING_PROMPT,
+    MASTER_EXTRACTION_PROMPT,
+)
+from onyx.tracing.flows import LLMFlow
+from onyx.tracing.llm_utils import llm_generation_span, record_llm_response
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -296,7 +299,7 @@ def kg_implied_extraction(
                 if process_results is None:
                     continue
 
-                (implied_entity, implied_relationship, _, _) = process_results
+                implied_entity, implied_relationship, _, _ = process_results
                 implied_entities.add(implied_entity)
                 implied_relationships.add(implied_relationship)
             else:
@@ -422,7 +425,9 @@ def kg_classify_document(
     try:
         prompt_msg = UserMessage(content=prompt)
         with llm_generation_span(
-            llm=llm, flow="kg_document_classification", input_messages=[prompt_msg]
+            llm=llm,
+            flow=LLMFlow.KG_DOCUMENT_CLASSIFICATION,
+            input_messages=[prompt_msg],
         ) as span_generation:
             response = llm.invoke(prompt_msg)
             record_llm_response(span_generation, response)
@@ -443,7 +448,9 @@ def kg_classify_document(
                 classification_class=classification_class,
             )
     except Exception as e:
-        logger.error(f"Failed to classify document {document_entity}. Error: {str(e)}")
+        logger.error(
+            "Failed to classify document %s. Error: %s", document_entity, str(e)
+        )
     return None
 
 
@@ -493,7 +500,7 @@ def kg_deep_extract_chunks(
     try:
         prompt_msg = UserMessage(content=prompt)
         with llm_generation_span(
-            llm=llm, flow="kg_deep_extraction", input_messages=[prompt_msg]
+            llm=llm, flow=LLMFlow.KG_DEEP_EXTRACTION, input_messages=[prompt_msg]
         ) as span_generation:
             response = llm.invoke(prompt_msg)
             record_llm_response(span_generation, response)
@@ -520,7 +527,10 @@ def kg_deep_extract_chunks(
     except Exception as e:
         failed_chunks = [chunk.chunk_id for chunk in chunk_batch]
         logger.error(
-            f"Failed to process chunks {failed_chunks} from document {document_entity}. Error: {str(e)}"
+            "Failed to process chunks %s from document %s. Error: %s",
+            failed_chunks,
+            document_entity,
+            str(e),
         )
     return None
 
@@ -591,7 +601,9 @@ def get_batch_documents_metadata(
     return batch_metadata
 
 
-def trackinfo_to_str(trackinfo: KGAttributeTrackInfo | None) -> str:
+def trackinfo_to_str(
+    trackinfo: KGAttributeTrackInfo | None,
+) -> str:  # ty: ignore[invalid-return-type]
     """Convert trackinfo to an LLM friendly string"""
     if trackinfo is None:
         return ""

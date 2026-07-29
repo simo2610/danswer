@@ -9,7 +9,8 @@ import LineItem from "@/refresh-components/buttons/LineItem";
 import { Tooltip } from "@opal/components";
 import IconButton from "@/refresh-components/buttons/IconButton";
 import { Button } from "@opal/components";
-import { cn, noProp } from "@/lib/utils";
+import { noProp } from "@/lib/utils";
+import { cn } from "@opal/utils";
 import type { IconProps } from "@opal/types";
 import { SvgChevronRight, SvgKey, SvgSettings, SvgSlash } from "@opal/icons";
 import { useProjectsContext } from "@/providers/ProjectsContext";
@@ -128,21 +129,22 @@ export default function ActionLineItem({
               />
             )}
 
-            {!isSearchToolWithNoConnectors && !isUnavailable && (
-              // TODO(@raunakab): migrate to opal Button once className/iconClassName is resolved
-              <IconButton
-                icon={SvgSlash}
-                onClick={noProp(onToggle)}
-                internal
-                aria-label={disabled ? "Enable" : "Disable"}
-                className={cn(
-                  !disabled && "invisible group-hover/LineItem:visible",
-                  // Hide when showing source count (it has its own hover behavior)
-                  shouldShowSourceCount && "!hidden"
-                )}
-                tooltip={disabled ? "Enable" : "Disable"}
-              />
-            )}
+            {!isSearchToolWithNoConnectors &&
+              !isUnavailable && (
+                // TODO(@raunakab): migrate to opal Button once className/iconClassName is resolved
+                <IconButton
+                  icon={SvgSlash}
+                  onClick={noProp(onToggle)}
+                  internal
+                  aria-label={disabled ? "Enable" : "Disable"}
+                  className={cn(
+                    !disabled && "invisible group-hover/LineItem:visible",
+                    // Hide when showing source count (it has its own hover behavior)
+                    shouldShowSourceCount && "hidden!"
+                  )}
+                  tooltip={disabled ? "Enable" : "Disable"}
+                />
+              )}
 
             {isUnavailable && showAdminConfigure && adminConfigureHref && (
               <Button

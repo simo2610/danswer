@@ -1,4 +1,4 @@
-import { toast } from "@/hooks/useToast";
+import { toast } from "@opal/layouts";
 import { useState } from "react";
 import {
   Table,
@@ -15,7 +15,7 @@ import { numToDisplay } from "./constants";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import { getErrorMsg } from "@/lib/fetchUtils";
 import { HoverPopup } from "@/components/HoverPopup";
-import Checkbox from "@/refresh-components/inputs/Checkbox";
+import { Checkbox } from "@opal/components";
 import { ScoreSection } from "../ScoreEditor";
 import { truncateString } from "@/lib/utils";
 

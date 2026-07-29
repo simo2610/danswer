@@ -9,27 +9,33 @@ from fastapi_users.password import PasswordHelper
 from sqlalchemy.orm import Session
 
 from onyx.db.enums import AccountType
-from onyx.db.llm import fetch_existing_llm_provider
-from onyx.db.llm import remove_llm_provider
-from onyx.db.llm import update_default_provider
-from onyx.db.llm import upsert_llm_provider
-from onyx.db.models import User
-from onyx.db.models import UserRole
+from onyx.db.llm import (
+    fetch_existing_llm_provider,
+    remove_llm_provider,
+    update_default_provider,
+    upsert_llm_provider,
+)
+from onyx.db.models import User, UserRole
 from onyx.llm.constants import LlmProviderNames
 from onyx.llm.override_models import LLMOverride
-from onyx.server.manage.llm.models import LLMProviderUpsertRequest
-from onyx.server.manage.llm.models import ModelConfigurationUpsertRequest
+from onyx.server.manage.llm.models import (
+    LLMProviderUpsertRequest,
+    ModelConfigurationUpsertRequest,
+)
 from onyx.server.query_and_chat.chat_backend import create_new_chat_session
-from onyx.server.query_and_chat.models import ChatSessionCreationRequest
-from onyx.server.query_and_chat.models import MessageResponseIDInfo
+from onyx.server.query_and_chat.models import (
+    ChatSessionCreationRequest,
+    MessageResponseIDInfo,
+)
 from tests.external_dependency_unit.answer.stream_test_assertions import (
     assert_answer_stream_part_correct,
 )
 from tests.external_dependency_unit.answer.stream_test_builder import StreamTestBuilder
-from tests.external_dependency_unit.answer.stream_test_utils import submit_query
-from tests.external_dependency_unit.answer.stream_test_utils import tokenise
-from tests.external_dependency_unit.mock_llm import LLMAnswerResponse
-from tests.external_dependency_unit.mock_llm import MockLLM
+from tests.external_dependency_unit.answer.stream_test_utils import (
+    submit_query,
+    tokenise,
+)
+from tests.external_dependency_unit.mock_llm import LLMAnswerResponse, MockLLM
 
 
 def _create_admin(db_session: Session) -> User:
@@ -80,9 +86,9 @@ def _create_provider(
 
 
 @contextmanager
-def use_mock_llm() -> (
-    Generator[tuple[MockLLM, dict[str, bool | str | None]], None, None]
-):
+def use_mock_llm() -> Generator[
+    tuple[MockLLM, dict[str, bool | str | None]], None, None
+]:
     """Context manager that patches LLM factory functions and tracks which ones are called."""
     mock_llm = MockLLM()
 
@@ -125,15 +131,15 @@ def _assert_llm_calls(
     call_tracker: dict[str, bool | str | None], expected_provider: str
 ) -> None:
     """Assert that get_llm was called with expected provider and get_default_llm was not called."""
-    assert not call_tracker[
-        "get_default_llm_called"
-    ], "get_default_llm should not be called when using private provider"
-    assert call_tracker[
-        "get_llm_called"
-    ], "get_llm should be called when using private provider"
-    assert (
-        call_tracker["provider"] == expected_provider
-    ), f"Expected provider '{expected_provider}', got '{call_tracker['provider']}'"
+    assert not call_tracker["get_default_llm_called"], (
+        "get_default_llm should not be called when using private provider"
+    )
+    assert call_tracker["get_llm_called"], (
+        "get_llm should be called when using private provider"
+    )
+    assert call_tracker["provider"] == expected_provider, (
+        f"Expected provider '{expected_provider}', got '{call_tracker['provider']}'"
+    )
 
 
 def _reset_call_tracker(call_tracker: dict[str, bool | str | None]) -> None:
@@ -179,7 +185,6 @@ def test_user_sends_message_to_private_provider(
             answer_stream = submit_query(
                 query="Hello, how are you?",
                 chat_session_id=chat_session_id,
-                db_session=db_session,
                 user=admin_user,
                 llm_override=LLMOverride(
                     model_provider="private-provider",
@@ -211,7 +216,6 @@ def test_user_sends_message_to_private_provider(
             answer_stream = submit_query(
                 query="I'm good, thank you!",
                 chat_session_id=chat_session_id,
-                db_session=db_session,
                 user=admin_user,
                 llm_override=LLMOverride(
                     model_provider="private-provider",

@@ -6,8 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from onyx.configs.constants import DEV_VERSION_PATTERN
-from onyx.configs.constants import STABLE_VERSION_PATTERN
+from onyx.configs.constants import DEV_VERSION_PATTERN, STABLE_VERSION_PATTERN
 from onyx.main import fetch_versioned_implementation
 from onyx.utils.logger import setup_logger
 
@@ -127,9 +126,9 @@ def test_versions_endpoint(client: TestClient) -> None:
 
     # Verify stable version follows correct pattern (v1.2.3)
     # If this fails, revise latest Github release for typo or incorrect version name
-    assert STABLE_VERSION_PATTERN.match(
-        stable["onyx"]
-    ), f"Stable version {stable['onyx']} doesn't match pattern v(number).(number).(number)"
+    assert STABLE_VERSION_PATTERN.match(stable["onyx"]), (
+        f"Stable version {stable['onyx']} doesn't match pattern v(number).(number).(number)"
+    )
 
     # Verify dev configuration
     dev = data["dev"]
@@ -139,9 +138,9 @@ def test_versions_endpoint(client: TestClient) -> None:
     assert "nginx" in dev
 
     # Verify dev version follows correct pattern (v1.2.3-beta.4)
-    assert DEV_VERSION_PATTERN.match(
-        dev["onyx"]
-    ), f"Dev version {dev['onyx']} doesn't match pattern v(number).(number).(number)-beta.(number)"
+    assert DEV_VERSION_PATTERN.match(dev["onyx"]), (
+        f"Dev version {dev['onyx']} doesn't match pattern v(number).(number).(number)-beta.(number)"
+    )
 
     # Verify migration configuration
     migration = data["migration"]
@@ -166,9 +165,9 @@ def test_versions_endpoint(client: TestClient) -> None:
         ("migration", migration),
     ]:
         for field_name, field_value in config.items():
-            assert isinstance(
-                field_value, str
-            ), f"{config_name}.{field_name} should be a string, got {type(field_value)}"
-            assert (
-                field_value.strip() != ""
-            ), f"{config_name}.{field_name} should not be empty"
+            assert isinstance(field_value, str), (
+                f"{config_name}.{field_name} should be a string, got {type(field_value)}"
+            )
+            assert field_value.strip() != "", (
+                f"{config_name}.{field_name} should not be empty"
+            )

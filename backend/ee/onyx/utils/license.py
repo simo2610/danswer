@@ -3,18 +3,15 @@
 import base64
 import json
 import os
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
-from ee.onyx.server.license.models import LicenseData
-from ee.onyx.server.license.models import LicensePayload
+from ee.onyx.server.license.models import LicenseData, LicensePayload
 from onyx.server.settings.models import ApplicationStatus
 from onyx.utils.logger import setup_logger
 
@@ -91,11 +88,11 @@ def verify_license_signature(license_data: str) -> LicensePayload:
         logger.error("[verify_license] FAILED: Signature verification failed")
         raise ValueError("Invalid license signature")
     except json.JSONDecodeError as e:
-        logger.error(f"[verify_license] FAILED: JSON decode error: {e}")
+        logger.error("[verify_license] FAILED: JSON decode error: %s", e)
         raise ValueError("Invalid license format: not valid JSON")
     except (ValueError, KeyError, TypeError) as e:
         logger.error(
-            f"[verify_license] FAILED: Validation error: {type(e).__name__}: {e}"
+            "[verify_license] FAILED: Validation error: %s: %s", type(e).__name__, e
         )
         raise ValueError(f"Invalid license format: {type(e).__name__}: {e}")
     except Exception:

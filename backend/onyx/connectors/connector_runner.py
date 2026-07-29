@@ -2,21 +2,23 @@ import sys
 import time
 from collections.abc import Generator
 from datetime import datetime
-from typing import Generic
-from typing import TypeVar
+from typing import Generic, TypeVar
 
-from onyx.connectors.interfaces import BaseConnector
-from onyx.connectors.interfaces import CheckpointedConnector
-from onyx.connectors.interfaces import CheckpointedConnectorWithPermSync
-from onyx.connectors.interfaces import CheckpointOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.models import ConnectorCheckpoint
-from onyx.connectors.models import ConnectorFailure
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
+from onyx.connectors.interfaces import (
+    BaseConnector,
+    CheckpointedConnector,
+    CheckpointedConnectorWithPermSync,
+    CheckpointOutput,
+    LoadConnector,
+    PollConnector,
+)
+from onyx.connectors.models import (
+    ConnectorCheckpoint,
+    ConnectorFailure,
+    Document,
+    HierarchyNode,
+)
 from onyx.utils.logger import setup_logger
-
 
 logger = setup_logger()
 
@@ -125,7 +127,9 @@ class ConnectorRunner(Generic[CT]):
         self.doc_batch: list[Document] = []
         self.hierarchy_node_batch: list[HierarchyNode] = []
 
-    def run(self, checkpoint: CT) -> Generator[
+    def run(
+        self, checkpoint: CT
+    ) -> Generator[
         tuple[
             list[Document] | None,
             list[HierarchyNode] | None,
@@ -165,7 +169,7 @@ class ConnectorRunner(Generic[CT]):
                 checkpoint_connector_generator = load_from_checkpoint(
                     start=self.time_range[0].timestamp(),
                     end=self.time_range[1].timestamp(),
-                    checkpoint=checkpoint,
+                    checkpoint=checkpoint,  # ty: ignore[invalid-argument-type]
                 )
                 next_checkpoint: CT | None = None
                 # this is guaranteed to always run at least once with next_checkpoint being non-None
@@ -174,7 +178,9 @@ class ConnectorRunner(Generic[CT]):
                     hierarchy_node,
                     failure,
                     next_checkpoint,
-                ) in CheckpointOutputWrapper[CT]()(checkpoint_connector_generator):
+                ) in CheckpointOutputWrapper[CT]()(
+                    checkpoint_connector_generator  # ty: ignore[invalid-argument-type]
+                ):
                     if document is not None:
                         self.doc_batch.append(document)
 
@@ -212,7 +218,8 @@ class ConnectorRunner(Generic[CT]):
                 yield None, None, None, next_checkpoint
 
                 logger.debug(
-                    f"Connector took {time.monotonic() - start} seconds to get to the next checkpoint."
+                    "Connector took %s seconds to get to the next checkpoint.",
+                    time.monotonic() - start,
                 )
 
             else:
@@ -263,7 +270,9 @@ class ConnectorRunner(Generic[CT]):
                 f"{key}: {value}" for key, value in local_vars.items()
             )
             logger.error(
-                f"Error in connector. type: {exc_type};\nlocal_vars below -> \n{local_vars_str[:1024]}"
+                "Error in connector. type: %s;\nlocal_vars below -> \n%s",
+                exc_type,
+                local_vars_str[:1024],
             )
             raise
 

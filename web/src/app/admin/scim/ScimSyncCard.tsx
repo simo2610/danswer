@@ -4,7 +4,7 @@ import { Section } from "@/layouts/general-layouts";
 import Card from "@/refresh-components/cards/Card";
 import { Button, Divider } from "@opal/components";
 import Text from "@/refresh-components/texts/Text";
-import { timeAgo } from "@/lib/time";
+import { timeAgo } from "@opal/time";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -40,7 +40,7 @@ export default function ScimSyncCard({
         description="Connect your identity provider to import and sync users and groups."
         sizePreset="main-ui"
         variant="section"
-        paddingVariant="fit"
+        padding="fit"
         rightChildren={
           hasToken ? (
             <Button

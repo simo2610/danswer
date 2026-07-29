@@ -9,13 +9,14 @@ This test verifies the full flow: provisioning failure → rollback → schema c
 """
 
 import uuid
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import text
 
-from ee.onyx.server.tenants.schema_management import create_schema_if_not_exists
-from ee.onyx.server.tenants.schema_management import drop_schema
+from ee.onyx.server.tenants.schema_management import (
+    create_schema_if_not_exists,
+    drop_schema,
+)
 from onyx.db.engine.sql_engine import get_session_with_shared_schema
 from shared_configs.configs import TENANT_ID_PREFIX
 
@@ -81,12 +82,12 @@ class TestTenantProvisioningRollback:
 
         # Verify that the schema was created and then cleaned up
         assert created_tenant_id is not None, "Schema should have been created"
-        assert created_tenant_id.startswith(
-            TENANT_ID_PREFIX
-        ), f"Should have tenant prefix: {created_tenant_id}"
-        assert not _schema_exists(
-            created_tenant_id
-        ), f"Schema {created_tenant_id} should have been rolled back"
+        assert created_tenant_id.startswith(TENANT_ID_PREFIX), (
+            f"Should have tenant prefix: {created_tenant_id}"
+        )
+        assert not _schema_exists(created_tenant_id), (
+            f"Schema {created_tenant_id} should have been rolled back"
+        )
 
     def test_drop_schema_works_with_uuid_tenant_id(self) -> None:
         """

@@ -4,12 +4,16 @@ import aiohttp
 
 from onyx.chat.models import ChatFullResponse
 from onyx.onyxbot.discord.constants import API_REQUEST_TIMEOUT
-from onyx.onyxbot.discord.exceptions import APIConnectionError
-from onyx.onyxbot.discord.exceptions import APIResponseError
-from onyx.onyxbot.discord.exceptions import APITimeoutError
-from onyx.server.query_and_chat.models import ChatSessionCreationRequest
-from onyx.server.query_and_chat.models import MessageOrigin
-from onyx.server.query_and_chat.models import SendMessageRequest
+from onyx.onyxbot.discord.exceptions import (
+    APIConnectionError,
+    APIResponseError,
+    APITimeoutError,
+)
+from onyx.server.query_and_chat.models import (
+    ChatSessionCreationRequest,
+    MessageOrigin,
+    SendMessageRequest,
+)
 from onyx.utils.logger import setup_logger
 from onyx.utils.variable_functionality import build_api_server_url_for_http_requests
 
@@ -70,7 +74,7 @@ class OnyxAPIClient:
             connect=30,  # 30 seconds to establish connection
         )
         self._session = aiohttp.ClientSession(timeout=timeout)
-        logger.info(f"API client initialized with base URL: {self._base_url}")
+        logger.info("API client initialized with base URL: %s", self._base_url)
 
     async def close(self) -> None:
         """Close the aiohttp session.
@@ -174,24 +178,26 @@ class OnyxAPIClient:
                 response_obj = ChatFullResponse.model_validate(data)
 
                 if response_obj.error_msg:
-                    logger.warning(f"Chat API returned error: {response_obj.error_msg}")
+                    logger.warning(
+                        "Chat API returned error: %s", response_obj.error_msg
+                    )
 
                 return response_obj
 
         except aiohttp.ClientConnectorError as e:
-            logger.error(f"Failed to connect to API: {e}")
+            logger.error("Failed to connect to API: %s", e)
             raise APIConnectionError(
                 f"Failed to connect to API at {self._base_url}: {e}"
             ) from e
 
         except TimeoutError as e:
-            logger.error(f"API request timed out after {self._timeout}s")
+            logger.error("API request timed out after %ss", self._timeout)
             raise APITimeoutError(
                 f"Request timed out after {self._timeout} seconds"
             ) from e
 
         except aiohttp.ClientError as e:
-            logger.error(f"HTTP client error: {e}")
+            logger.error("HTTP client error: %s", e)
             raise APIConnectionError(f"HTTP client error: {e}") from e
 
     async def health_check(self) -> bool:
@@ -211,5 +217,5 @@ class OnyxAPIClient:
             ) as response:
                 return response.status == 200
         except Exception as e:
-            logger.warning(f"API server health check failed: {e}")
+            logger.warning("API server health check failed: %s", e)
             return False

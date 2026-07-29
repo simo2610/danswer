@@ -1,15 +1,10 @@
 import base64
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
 import requests
 from requests.adapters import HTTPAdapter
-from requests.exceptions import HTTPError
-from requests.exceptions import RequestException
-from requests.exceptions import Timeout
+from requests.exceptions import HTTPError, RequestException, Timeout
 from urllib3.util.retry import Retry
 
 from onyx.utils.logger import setup_logger
@@ -141,7 +136,7 @@ class HighspotClient:
             request_headers.update(headers)
 
         try:
-            logger.debug(f"Making {method} request to {url}")
+            logger.debug("Making %s request to %s", method, url)
             response = self.session.request(
                 method=method,
                 url=url,
@@ -200,13 +195,15 @@ class HighspotClient:
             params = {"right": "view", "start": current_offset, "limit": PAGE_SIZE}
             response = self._make_request("GET", "spots", params=params)
             found_spots = response.get("collection", [])
-            logger.info(f"Received {len(found_spots)} spots at offset {current_offset}")
+            logger.info(
+                "Received %s spots at offset %s", len(found_spots), current_offset
+            )
             all_spots.extend(found_spots)
             if len(found_spots) < PAGE_SIZE:
                 has_more = False
             else:
                 current_offset += PAGE_SIZE
-        logger.info(f"Total spots retrieved: {len(all_spots)}")
+        logger.info("Total spots retrieved: %s", len(all_spots))
         return all_spots
 
     def get_spot(self, spot_id: str) -> Dict[str, Any]:

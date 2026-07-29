@@ -3,26 +3,32 @@ import pathlib
 import threading
 import time
 
-from onyx.llm.constants import LlmProviderNames
-from onyx.llm.constants import PROVIDER_DISPLAY_NAMES
-from onyx.llm.constants import WELL_KNOWN_PROVIDER_NAMES
-from onyx.llm.utils import get_max_input_tokens
+from onyx.llm.constants import (
+    PROVIDER_DISPLAY_NAMES,
+    WELL_KNOWN_PROVIDER_NAMES,
+    LlmProviderNames,
+)
+from onyx.llm.model_capabilities import get_max_input_tokens
 from onyx.llm.utils import model_supports_image_input
 from onyx.llm.well_known_providers.auto_update_models import LLMRecommendations
 from onyx.llm.well_known_providers.auto_update_service import (
     fetch_llm_recommendations_from_github,
 )
-from onyx.llm.well_known_providers.constants import ANTHROPIC_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import AZURE_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import BEDROCK_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import BIFROST_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import LITELLM_PROXY_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import LM_STUDIO_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import OLLAMA_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import OPENAI_COMPATIBLE_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import OPENAI_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import OPENROUTER_PROVIDER_NAME
-from onyx.llm.well_known_providers.constants import VERTEXAI_PROVIDER_NAME
+from onyx.llm.well_known_providers.constants import (
+    ANTHROPIC_PROVIDER_NAME,
+    AZURE_PROVIDER_NAME,
+    BEDROCK_PROVIDER_NAME,
+    BIFROST_PROVIDER_NAME,
+    LITELLM_PROXY_PROVIDER_NAME,
+    LM_STUDIO_PROVIDER_NAME,
+    NEBIUS_TOKENFACTORY_PROVIDER_NAME,
+    OLLAMA_PROVIDER_NAME,
+    OPENAI_COMPATIBLE_PROVIDER_NAME,
+    OPENAI_PROVIDER_NAME,
+    OPENROUTER_PROVIDER_NAME,
+    PORTKEY_PROVIDER_NAME,
+    VERTEXAI_PROVIDER_NAME,
+)
 from onyx.llm.well_known_providers.models import WellKnownLLMProviderDescriptor
 from onyx.server.manage.llm.models import ModelConfigurationView
 from onyx.utils.logger import setup_logger
@@ -53,6 +59,8 @@ def _get_provider_to_models_map() -> dict[str, list[str]]:
         LITELLM_PROXY_PROVIDER_NAME: [],  # Dynamic - fetched from LiteLLM proxy API
         BIFROST_PROVIDER_NAME: [],  # Dynamic - fetched from Bifrost API
         OPENAI_COMPATIBLE_PROVIDER_NAME: [],  # Dynamic - fetched from OpenAI-compatible API
+        NEBIUS_TOKENFACTORY_PROVIDER_NAME: [],  # Dynamic - fetched from /v1/models
+        PORTKEY_PROVIDER_NAME: [],  # Dynamic - fetched from the Portkey gateway
     }
 
 
@@ -138,6 +146,7 @@ def is_obsolete_model(model_name: str, provider: str) -> bool:
 def get_openai_model_names() -> list[str]:
     """Get OpenAI model names dynamically from litellm."""
     import re
+
     import litellm
 
     # TODO: remove these lists once we have a comprehensive model configuration page
@@ -251,6 +260,11 @@ def model_configurations_for_provider(
 ) -> list[ModelConfigurationView]:
     recommended_visible_models = llm_recommendations.get_visible_models(provider_name)
     recommended_visible_models_names = [m.name for m in recommended_visible_models]
+    display_name_by_name = {
+        m.name: m.display_name for m in recommended_visible_models if m.display_name
+    }
+    default_model = llm_recommendations.get_default_model(provider_name)
+    default_model_name = default_model.name if default_model else None
 
     # Preserve provider-defined ordering while de-duplicating.
     model_names: list[str] = []
@@ -272,8 +286,10 @@ def model_configurations_for_provider(
         ModelConfigurationView(
             name=model_name,
             is_visible=model_name in recommended_visible_models_names,
+            is_recommended_default=model_name == default_model_name,
             max_input_tokens=get_max_input_tokens(model_name, provider_name),
             supports_image_input=model_supports_image_input(model_name, provider_name),
+            display_name=display_name_by_name.get(model_name),
         )
         for model_name in model_names
     ]
@@ -339,6 +355,8 @@ def get_provider_display_name(provider_name: str) -> str:
         OPENROUTER_PROVIDER_NAME: "OpenRouter",
         LITELLM_PROXY_PROVIDER_NAME: "LiteLLM Proxy",
         OPENAI_COMPATIBLE_PROVIDER_NAME: "OpenAI-Compatible",
+        NEBIUS_TOKENFACTORY_PROVIDER_NAME: "Nebius TokenFactory",
+        PORTKEY_PROVIDER_NAME: "Portkey",
     }
 
     if provider_name in _ONYX_PROVIDER_DISPLAY_NAMES:

@@ -6,13 +6,14 @@ on every send_task call to prevent phantom task accumulation if the worker
 is down or slow.
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from onyx.configs.constants import CELERY_USER_FILE_PROCESSING_TASK_EXPIRES
-from onyx.configs.constants import OnyxCeleryQueues
-from onyx.configs.constants import OnyxCeleryTask
+from onyx.configs.constants import (
+    CELERY_USER_FILE_PROCESSING_TASK_EXPIRES,
+    OnyxCeleryQueues,
+    OnyxCeleryTask,
+)
 from onyx.db.models import UserFile
 from onyx.db.projects import upload_files_to_user_files_with_indexing
 
@@ -60,6 +61,6 @@ def test_send_task_includes_expires(
     for call in mock_client_app.send_task.call_args_list:
         assert call.args[0] == OnyxCeleryTask.PROCESS_SINGLE_USER_FILE
         assert call.kwargs.get("queue") == OnyxCeleryQueues.USER_FILE_PROCESSING
-        assert (
-            call.kwargs.get("expires") == CELERY_USER_FILE_PROCESSING_TASK_EXPIRES
-        ), "send_task must include expires= to prevent phantom task accumulation"
+        assert call.kwargs.get("expires") == CELERY_USER_FILE_PROCESSING_TASK_EXPIRES, (
+            "send_task must include expires= to prevent phantom task accumulation"
+        )

@@ -1,17 +1,16 @@
-import os
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from onyx.connectors.hubspot.connector import AVAILABLE_OBJECT_TYPES
-from onyx.connectors.hubspot.connector import HubSpotConnector
-from onyx.connectors.models import ConnectorMissingCredentialError
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
+from onyx.connectors.hubspot.connector import AVAILABLE_OBJECT_TYPES, HubSpotConnector
+from onyx.connectors.models import (
+    ConnectorMissingCredentialError,
+    Document,
+    HierarchyNode,
+)
+from tests.utils.secret_names import TestSecret
 
 
 class TestHubSpotConnector:
@@ -23,9 +22,12 @@ class TestHubSpotConnector:
         return HubSpotConnector(batch_size=10)
 
     @pytest.fixture
-    def credentials(self) -> dict[str, Any]:
+    def credentials(
+        self,
+        test_secrets: dict[TestSecret, str],
+    ) -> dict[str, Any]:
         """Provide test credentials."""
-        return {"hubspot_access_token": os.environ["HUBSPOT_ACCESS_TOKEN"]}
+        return {"hubspot_access_token": test_secrets[TestSecret.HUBSPOT_ACCESS_TOKEN]}
 
     def test_credentials_properties_raise_exception_when_none(self) -> None:
         """Test that access_token and portal_id properties raise exceptions when not set."""
@@ -41,6 +43,7 @@ class TestHubSpotConnector:
             _ = connector.portal_id
         assert "HubSpot portal ID not set" in str(exc_info.value)
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_load_credentials(
         self, connector: HubSpotConnector, credentials: dict[str, Any]
     ) -> None:
@@ -52,6 +55,7 @@ class TestHubSpotConnector:
         assert connector.portal_id is not None
         assert isinstance(connector.portal_id, str)
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_load_from_state_basic_functionality(
         self, connector: HubSpotConnector, credentials: dict[str, Any]
     ) -> None:
@@ -83,6 +87,7 @@ class TestHubSpotConnector:
         assert doc.sections[0].text is not None
         assert doc.sections[0].link is not None
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_document_metadata_structure(
         self, connector: HubSpotConnector, credentials: dict[str, Any]
     ) -> None:
@@ -150,6 +155,7 @@ class TestHubSpotConnector:
                     assert len(doc.metadata[key]) > 0
                     assert all(isinstance(id_val, str) for id_val in doc.metadata[key])
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_associated_objects_as_sections(
         self, connector: HubSpotConnector, credentials: dict[str, Any]
     ) -> None:
@@ -206,6 +212,7 @@ class TestHubSpotConnector:
         else:
             print("⚠ No documents with associated objects found in test data")
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_poll_source_functionality(
         self, connector: HubSpotConnector, credentials: dict[str, Any]
     ) -> None:
@@ -238,6 +245,7 @@ class TestHubSpotConnector:
         else:
             print("⚠ No documents found in the specified time range")
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_all_object_types_processed(
         self, connector: HubSpotConnector, credentials: dict[str, Any]
     ) -> None:
@@ -360,6 +368,7 @@ class TestHubSpotConnector:
         assert connector.object_types == expected_set
         assert len(connector.object_types) == 0
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_selective_object_fetching_tickets_only(
         self, credentials: dict[str, Any]
     ) -> None:
@@ -391,6 +400,7 @@ class TestHubSpotConnector:
         else:
             print("⚠ No ticket documents found in test data")
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_selective_object_fetching_companies_and_deals(
         self, credentials: dict[str, Any]
     ) -> None:
@@ -437,6 +447,7 @@ class TestHubSpotConnector:
         else:
             print("⚠ No company/deal documents found in test data")
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_empty_object_types_fetches_nothing(
         self, credentials: dict[str, Any]
     ) -> None:
@@ -461,6 +472,7 @@ class TestHubSpotConnector:
         assert len(all_docs) == 0
         print("✓ No documents fetched with empty object_types as expected")
 
+    @pytest.mark.secrets(TestSecret.HUBSPOT_ACCESS_TOKEN)
     def test_poll_source_respects_object_types(
         self, credentials: dict[str, Any]
     ) -> None:

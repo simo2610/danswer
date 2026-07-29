@@ -4,14 +4,18 @@ from chonkie import SentenceChunker
 
 from onyx.configs.constants import SECTION_SEPARATOR
 from onyx.connectors.models import Section
-from onyx.indexing.chunking.section_chunker import AccumulatorState
-from onyx.indexing.chunking.section_chunker import ChunkPayload
-from onyx.indexing.chunking.section_chunker import SectionChunker
-from onyx.indexing.chunking.section_chunker import SectionChunkerOutput
-from onyx.natural_language_processing.utils import BaseTokenizer
-from onyx.natural_language_processing.utils import count_tokens
-from onyx.utils.text_processing import clean_text
-from onyx.utils.text_processing import shared_precompare_cleanup
+from onyx.indexing.chunking.section_chunker import (
+    AccumulatorState,
+    ChunkPayload,
+    SectionChunker,
+    SectionChunkerOutput,
+)
+from onyx.natural_language_processing.utils import (
+    BaseTokenizer,
+    count_tokens,
+    split_text_by_tokens,
+)
+from onyx.utils.text_processing import clean_text, shared_precompare_cleanup
 from shared_configs.configs import STRICT_CHUNK_TOKEN_LIMIT
 
 
@@ -90,8 +94,8 @@ class TextChunker(SectionChunker):
                 STRICT_CHUNK_TOKEN_LIMIT
                 and count_tokens(split_text, self.tokenizer) > content_token_limit
             ):
-                smaller_chunks = self._split_oversized_chunk(
-                    split_text, content_token_limit
+                smaller_chunks = split_text_by_tokens(
+                    split_text, self.tokenizer, content_token_limit
                 )
                 for j, small_chunk in enumerate(smaller_chunks):
                     payloads.append(
@@ -114,16 +118,3 @@ class TextChunker(SectionChunker):
             payloads=payloads,
             accumulator=AccumulatorState(),
         )
-
-    def _split_oversized_chunk(self, text: str, content_token_limit: int) -> list[str]:
-        tokens = self.tokenizer.tokenize(text)
-        chunks: list[str] = []
-        start = 0
-        total_tokens = len(tokens)
-        while start < total_tokens:
-            end = min(start + content_token_limit, total_tokens)
-            token_chunk = tokens[start:end]
-            chunk_text = " ".join(token_chunk)
-            chunks.append(chunk_text)
-            start = end
-        return chunks

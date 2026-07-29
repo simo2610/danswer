@@ -3,12 +3,11 @@
 import { useState } from "react";
 
 import { SvgUserSync } from "@opal/icons";
-import { toast } from "@/hooks/useToast";
 import { useScimToken } from "@/hooks/useScimToken";
-import { useCreateModal } from "@/refresh-components/contexts/ModalContext";
-import * as SettingsLayouts from "@/layouts/settings-layouts";
+import { useCreateModal } from "@opal/components";
+import { SettingsLayouts, toast } from "@opal/layouts";
 import Text from "@/refresh-components/texts/Text";
-import { ThreeDotsLoader } from "@/components/Loading";
+import { PageLoader } from "@opal/layouts";
 
 import type { ScimTokenCreatedResponse, ScimModalView } from "./interfaces";
 import { generateScimToken } from "./svc";
@@ -30,18 +29,11 @@ function ScimContent() {
   const hasToken = !!token;
   const isConnected = hasToken && token.last_used_at !== null;
 
-  // 404 means no active token — not an error
-  const is404 =
-    tokenError &&
-    typeof tokenError === "object" &&
-    "status" in tokenError &&
-    (tokenError as { status: number }).status === 404;
-
   if (isLoading) {
-    return <ThreeDotsLoader />;
+    return <PageLoader />;
   }
 
-  if (tokenError && !is404) {
+  if (tokenError) {
     return (
       <Text as="p" text03>
         Failed to load SCIM token status.
@@ -130,7 +122,7 @@ export default function Page() {
         icon={SvgUserSync}
         title="SCIM"
         description="Sync users and groups via System for Cross-domain Identity Management (SCIM) protocol."
-        separator
+        divider
       />
       <SettingsLayouts.Body>
         <ScimContent />

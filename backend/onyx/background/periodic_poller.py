@@ -15,8 +15,7 @@ that runs from the API server process.  Two responsibilities:
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 
 from onyx.utils.logger import setup_logger
 
@@ -66,10 +65,12 @@ def _run_cache_cleanup() -> None:
 
 
 def _run_scheduled_eval() -> None:
-    from onyx.configs.app_configs import BRAINTRUST_API_KEY
-    from onyx.configs.app_configs import SCHEDULED_EVAL_DATASET_NAMES
-    from onyx.configs.app_configs import SCHEDULED_EVAL_PERMISSIONS_EMAIL
-    from onyx.configs.app_configs import SCHEDULED_EVAL_PROJECT
+    from onyx.configs.app_configs import (
+        BRAINTRUST_API_KEY,
+        SCHEDULED_EVAL_DATASET_NAMES,
+        SCHEDULED_EVAL_PERMISSIONS_EMAIL,
+        SCHEDULED_EVAL_PROJECT,
+    )
 
     if not all(
         [
@@ -81,8 +82,7 @@ def _run_scheduled_eval() -> None:
     ):
         return
 
-    from datetime import datetime
-    from datetime import timezone
+    from datetime import datetime, timezone
 
     from onyx.evals.eval import run_eval
     from onyx.evals.models import EvalConfigurationOptions
@@ -102,7 +102,7 @@ def _run_scheduled_eval() -> None:
             )
         except Exception:
             logger.exception(
-                f"Periodic poller - Failed scheduled eval for dataset {dataset_name}"
+                "Periodic poller - Failed scheduled eval for dataset %s", dataset_name
             )
 
 
@@ -111,10 +111,12 @@ _CACHE_CLEANUP_INTERVAL_SECONDS = 300
 
 def _build_periodic_tasks() -> list[_PeriodicTaskDef]:
     from onyx.cache.interface import CacheBackendType
-    from onyx.configs.app_configs import AUTO_LLM_CONFIG_URL
-    from onyx.configs.app_configs import AUTO_LLM_UPDATE_INTERVAL_SECONDS
-    from onyx.configs.app_configs import CACHE_BACKEND
-    from onyx.configs.app_configs import SCHEDULED_EVAL_DATASET_NAMES
+    from onyx.configs.app_configs import (
+        AUTO_LLM_CONFIG_URL,
+        AUTO_LLM_UPDATE_INTERVAL_SECONDS,
+        CACHE_BACKEND,
+        SCHEDULED_EVAL_DATASET_NAMES,
+    )
 
     tasks: list[_PeriodicTaskDef] = []
     if CACHE_BACKEND == CacheBackendType.POSTGRES:
@@ -159,8 +161,7 @@ def _try_claim_task(task_def: _PeriodicTaskDef) -> bool:
     ``KVStore`` timestamp for cross-instance dedup.  The DB session is held
     only for this brief claim transaction, not during task execution.
     """
-    from datetime import datetime
-    from datetime import timezone
+    from datetime import datetime, timezone
 
     from sqlalchemy import text
 
@@ -208,7 +209,7 @@ def _try_run_periodic_task(task_def: _PeriodicTaskDef) -> None:
         task_def.last_run_at = now
     except Exception:
         logger.exception(
-            f"Periodic poller - Error running periodic task {task_def.name}"
+            "Periodic poller - Error running periodic task %s", task_def.name
         )
 
 
@@ -218,9 +219,11 @@ def _try_run_periodic_task(task_def: _PeriodicTaskDef) -> None:
 
 
 def _run_drain_loops(tenant_id: str) -> None:
-    from onyx.background.task_utils import drain_delete_loop
-    from onyx.background.task_utils import drain_processing_loop
-    from onyx.background.task_utils import drain_project_sync_loop
+    from onyx.background.task_utils import (
+        drain_delete_loop,
+        drain_processing_loop,
+        drain_project_sync_loop,
+    )
 
     drain_processing_loop(tenant_id)
     drain_delete_loop(tenant_id)
@@ -259,7 +262,9 @@ def _poller_loop(tenant_id: str) -> None:
 
     periodic_tasks = _build_periodic_tasks()
     logger.info(
-        f"Periodic poller started with {len(periodic_tasks)} periodic task(s): {[t.name for t in periodic_tasks]}"
+        "Periodic poller started with %s periodic task(s): %s",
+        len(periodic_tasks),
+        [t.name for t in periodic_tasks],
     )
 
     while not _shutdown_event.is_set():
@@ -273,7 +278,7 @@ def _poller_loop(tenant_id: str) -> None:
                 _try_run_periodic_task(task_def)
             except Exception:
                 logger.exception(
-                    f"Periodic poller - Unhandled error checking task {task_def.name}"
+                    "Periodic poller - Unhandled error checking task %s", task_def.name
                 )
 
         _shutdown_event.wait(RECOVERY_INTERVAL_SECONDS)

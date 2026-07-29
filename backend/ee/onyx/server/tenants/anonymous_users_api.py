@@ -1,22 +1,20 @@
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import HTTPException
-from fastapi import Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 
 from ee.onyx.auth.users import generate_anonymous_user_jwt_token
-from ee.onyx.server.tenants.anonymous_user_path import get_anonymous_user_path
 from ee.onyx.server.tenants.anonymous_user_path import (
+    get_anonymous_user_path,
     get_tenant_id_for_anonymous_user_path,
+    modify_anonymous_user_path,
+    validate_anonymous_user_path,
 )
-from ee.onyx.server.tenants.anonymous_user_path import modify_anonymous_user_path
-from ee.onyx.server.tenants.anonymous_user_path import validate_anonymous_user_path
 from ee.onyx.server.tenants.models import AnonymousUserPath
 from onyx.auth.permissions import require_permission
-from onyx.auth.users import anonymous_user_enabled
-from onyx.auth.users import User
-from onyx.configs.constants import ANONYMOUS_USER_COOKIE_NAME
-from onyx.configs.constants import FASTAPI_USERS_AUTH_COOKIE_NAME
+from onyx.auth.users import User, anonymous_user_enabled
+from onyx.configs.constants import (
+    ANONYMOUS_USER_COOKIE_NAME,
+    FASTAPI_USERS_AUTH_COOKIE_NAME,
+)
 from onyx.db.engine.sql_engine import get_session_with_shared_schema
 from onyx.db.enums import Permission
 from onyx.utils.logger import setup_logger
@@ -62,7 +60,7 @@ async def set_anonymous_user_path_api(
                 detail="The anonymous user path is already in use. Please choose a different path.",
             )
         except Exception as e:
-            logger.exception(f"Failed to modify anonymous user path: {str(e)}")
+            logger.exception("Failed to modify anonymous user path: %s", str(e))
             raise HTTPException(
                 status_code=500,
                 detail="An unexpected error occurred while modifying the anonymous user path",

@@ -1,26 +1,31 @@
 import json
 from collections.abc import Generator
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from oauthlib.oauth2 import BackendApplicationClient
-from requests_oauthlib import OAuth2Session  # type: ignore
+from requests_oauthlib import OAuth2Session
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.models import BasicExpertInfo
-from onyx.connectors.models import ConnectorMissingCredentialError
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import TextSection
-from onyx.file_processing.html_utils import parse_html_page_basic
-from onyx.file_processing.html_utils import strip_excessive_newlines_and_spaces
+from onyx.connectors.interfaces import (
+    GenerateDocumentsOutput,
+    LoadConnector,
+    PollConnector,
+    SecondsSinceUnixEpoch,
+)
+from onyx.connectors.models import (
+    BasicExpertInfo,
+    ConnectorMissingCredentialError,
+    Document,
+    HierarchyNode,
+    TextSection,
+)
+from onyx.file_processing.html_utils import (
+    parse_html_page_basic,
+    strip_excessive_newlines_and_spaces,
+)
 from onyx.utils.logger import setup_logger
 
 LOOPIO_API_BASE = "https://api.loopio.com/"
@@ -65,7 +70,9 @@ class LoopioConnector(LoadConnector, PollConnector):
             )
             if response.status_code == 400:
                 logger.error(
-                    f"Loopio API returned 400 for {resource} with params {params}",
+                    "Loopio API returned 400 for %s with params %s",
+                    resource,
+                    params,
                 )
                 logger.error(response.text)
             response.raise_for_status()
@@ -123,14 +130,15 @@ class LoopioConnector(LoadConnector, PollConnector):
                 answer_text = entry.get("answer", {}).get("text", "")
                 if not answer_text:
                     logger.warning(
-                        f"The Library entry {entry['id']} has no answer text. Skipping."
+                        "The Library entry %s has no answer text. Skipping.",
+                        entry["id"],
                     )
                     continue
 
                 try:
                     answer = parse_html_page_basic(answer_text)
                 except Exception as e:
-                    logger.error(f"Error parsing HTML for entry {entry['id']}: {e}")
+                    logger.error("Error parsing HTML for entry %s: %s", entry["id"], e)
                     continue
 
                 questions = [
@@ -147,6 +155,7 @@ class LoopioConnector(LoadConnector, PollConnector):
                 )
 
                 last_updated = time_str_to_utc(entry["lastUpdatedDate"])
+                created = time_str_to_utc(entry["createdDate"])
                 last_reviewed = (
                     time_str_to_utc(entry["lastReviewedDate"])
                     if entry.get("lastReviewedDate")
@@ -179,6 +188,8 @@ class LoopioConnector(LoadConnector, PollConnector):
                         source=DocumentSource.LOOPIO,
                         semantic_identifier=questions[0],
                         doc_updated_at=latest_time,
+                        # NOTE: doc_created_at population not yet verified against live data
+                        doc_created_at=created,
                         primary_owners=primary_owners,
                         secondary_owners=secondary_owners,
                         metadata={

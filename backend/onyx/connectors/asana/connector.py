@@ -1,17 +1,16 @@
 import datetime
 from typing import Any
 
-from onyx.configs.app_configs import CONTINUE_ON_CONNECTOR_FAILURE
-from onyx.configs.app_configs import INDEX_BATCH_SIZE
+from onyx.configs.app_configs import CONTINUE_ON_CONNECTOR_FAILURE, INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.asana import asana_api
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import TextSection
+from onyx.connectors.interfaces import (
+    GenerateDocumentsOutput,
+    LoadConnector,
+    PollConnector,
+    SecondsSinceUnixEpoch,
+)
+from onyx.connectors.models import Document, HierarchyNode, TextSection
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -40,7 +39,7 @@ class AsanaConnector(LoadConnector, PollConnector):
         self.batch_size = batch_size
         self.continue_on_failure = continue_on_failure
         logger.info(
-            f"AsanaConnector initialized with workspace_id: {asana_workspace_id}"
+            "AsanaConnector initialized with workspace_id: %s", asana_workspace_id
         )
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
@@ -59,7 +58,7 @@ class AsanaConnector(LoadConnector, PollConnector):
         end: SecondsSinceUnixEpoch | None,  # noqa: ARG002
     ) -> GenerateDocumentsOutput:
         start_time = datetime.datetime.fromtimestamp(start).isoformat()
-        logger.info(f"Starting Asana poll from {start_time}")
+        logger.info("Starting Asana poll from %s", start_time)
         asana = asana_api.AsanaAPI(
             api_token=self.api_token,
             workspace_gid=self.workspace_id,
@@ -73,12 +72,12 @@ class AsanaConnector(LoadConnector, PollConnector):
             docs_batch.append(doc)
 
             if len(docs_batch) >= self.batch_size:
-                logger.info(f"Yielding batch of {len(docs_batch)} documents")
+                logger.info("Yielding batch of %s documents", len(docs_batch))
                 yield docs_batch
                 docs_batch = []
 
         if docs_batch:
-            logger.info(f"Yielding final batch of {len(docs_batch)} documents")
+            logger.info("Yielding final batch of %s documents", len(docs_batch))
             yield docs_batch
 
         logger.info("Asana poll completed")
@@ -88,11 +87,13 @@ class AsanaConnector(LoadConnector, PollConnector):
         return self.poll_source(start=0, end=None)
 
     def _message_to_doc(self, task: asana_api.AsanaTask) -> Document:
-        logger.debug(f"Converting Asana task {task.id} to Document")
+        logger.debug("Converting Asana task %s to Document", task.id)
         return Document(
             id=task.id,
             sections=[TextSection(link=task.link, text=task.text)],
             doc_updated_at=task.last_modified,
+            # NOTE: doc_created_at population not yet verified against live data
+            doc_created_at=task.created_at,
             source=DocumentSource.ASANA,
             semantic_identifier=task.title,
             metadata={
@@ -103,8 +104,8 @@ class AsanaConnector(LoadConnector, PollConnector):
 
 
 if __name__ == "__main__":
-    import time
     import os
+    import time
 
     logger.notice("Starting Asana connector test")
     connector = AsanaConnector(

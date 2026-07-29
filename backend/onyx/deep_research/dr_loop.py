@@ -8,68 +8,71 @@ from collections.abc import Callable
 from typing import cast
 
 from onyx.chat.chat_state import ChatStateContainer
-from onyx.chat.citation_processor import CitationMapping
-from onyx.chat.citation_processor import DynamicCitationProcessor
+from onyx.chat.citation_processor import CitationMapping, DynamicCitationProcessor
 from onyx.chat.emitter import Emitter
 from onyx.chat.llm_loop import construct_message_history
-from onyx.chat.llm_step import run_llm_step
-from onyx.chat.llm_step import run_llm_step_pkt_generator
-from onyx.chat.models import ChatMessageSimple
-from onyx.chat.models import FileToolMetadata
-from onyx.chat.models import LlmStepResult
-from onyx.chat.models import ToolCallSimple
-from onyx.configs.chat_configs import SKIP_DEEP_RESEARCH_CLARIFICATION
+from onyx.chat.llm_step import run_llm_step, run_llm_step_pkt_generator
+from onyx.chat.models import (
+    ChatMessageSimple,
+    FileToolMetadata,
+    LlmStepResult,
+    ToolCallSimple,
+)
+from onyx.configs.chat_configs import (
+    DR_REPORT_LLM_TIMEOUT_S,
+    SKIP_DEEP_RESEARCH_CLARIFICATION,
+)
 from onyx.configs.constants import MessageType
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.tools import get_tool_by_name
-from onyx.deep_research.dr_mock_tools import get_clarification_tool_definitions
-from onyx.deep_research.dr_mock_tools import get_orchestrator_tools
-from onyx.deep_research.dr_mock_tools import RESEARCH_AGENT_TOOL_NAME
-from onyx.deep_research.dr_mock_tools import THINK_TOOL_RESPONSE_MESSAGE
-from onyx.deep_research.dr_mock_tools import THINK_TOOL_RESPONSE_TOKEN_COUNT
-from onyx.deep_research.utils import check_special_tool_calls
-from onyx.deep_research.utils import create_think_tool_token_processor
-from onyx.llm.interfaces import LLM
-from onyx.llm.interfaces import LLMUserIdentity
-from onyx.llm.models import ToolChoiceOptions
-from onyx.llm.utils import model_is_reasoning_model
-from onyx.prompts.deep_research.orchestration_layer import CLARIFICATION_PROMPT
-from onyx.prompts.deep_research.orchestration_layer import FINAL_REPORT_PROMPT
-from onyx.prompts.deep_research.orchestration_layer import FIRST_CYCLE_REMINDER
-from onyx.prompts.deep_research.orchestration_layer import FIRST_CYCLE_REMINDER_TOKENS
+from onyx.deep_research.dr_mock_tools import (
+    RESEARCH_AGENT_TOOL_NAME,
+    THINK_TOOL_RESPONSE_MESSAGE,
+    THINK_TOOL_RESPONSE_TOKEN_COUNT,
+    get_clarification_tool_definitions,
+    get_orchestrator_tools,
+)
+from onyx.deep_research.utils import (
+    check_special_tool_calls,
+    create_think_tool_token_processor,
+)
+from onyx.llm.interfaces import LLM, LLMUserIdentity
+from onyx.llm.model_capabilities import model_is_reasoning_model
+from onyx.llm.models import ReasoningEffort, ToolChoiceOptions
 from onyx.prompts.deep_research.orchestration_layer import (
+    CLARIFICATION_PROMPT,
+    FINAL_REPORT_PROMPT,
+    FIRST_CYCLE_REMINDER,
+    FIRST_CYCLE_REMINDER_TOKENS,
     INTERNAL_SEARCH_CLARIFICATION_GUIDANCE,
-)
-from onyx.prompts.deep_research.orchestration_layer import (
     INTERNAL_SEARCH_RESEARCH_TASK_GUIDANCE,
+    ORCHESTRATOR_PROMPT,
+    ORCHESTRATOR_PROMPT_REASONING,
+    RESEARCH_PLAN_PROMPT,
+    RESEARCH_PLAN_REMINDER,
+    USER_FINAL_REPORT_QUERY,
 )
-from onyx.prompts.deep_research.orchestration_layer import ORCHESTRATOR_PROMPT
-from onyx.prompts.deep_research.orchestration_layer import ORCHESTRATOR_PROMPT_REASONING
-from onyx.prompts.deep_research.orchestration_layer import RESEARCH_PLAN_PROMPT
-from onyx.prompts.deep_research.orchestration_layer import RESEARCH_PLAN_REMINDER
-from onyx.prompts.deep_research.orchestration_layer import USER_FINAL_REPORT_QUERY
 from onyx.prompts.prompt_utils import get_current_llm_day_time
 from onyx.server.query_and_chat.placement import Placement
-from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
-from onyx.server.query_and_chat.streaming_models import AgentResponseStart
-from onyx.server.query_and_chat.streaming_models import DeepResearchPlanDelta
-from onyx.server.query_and_chat.streaming_models import DeepResearchPlanStart
-from onyx.server.query_and_chat.streaming_models import OverallStop
-from onyx.server.query_and_chat.streaming_models import Packet
-from onyx.server.query_and_chat.streaming_models import SectionEnd
-from onyx.server.query_and_chat.streaming_models import TopLevelBranching
+from onyx.server.query_and_chat.streaming_models import (
+    AgentResponseDelta,
+    AgentResponseStart,
+    DeepResearchPlanDelta,
+    DeepResearchPlanStart,
+    OverallStop,
+    Packet,
+    SectionEnd,
+    TopLevelBranching,
+)
 from onyx.tools.fake_tools.research_agent import run_research_agent_calls
 from onyx.tools.interface import Tool
-from onyx.tools.models import ToolCallInfo
-from onyx.tools.models import ToolCallKickoff
+from onyx.tools.models import ToolCallInfo, ToolCallKickoff
 from onyx.tools.tool_implementations.open_url.open_url_tool import OpenURLTool
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
 from onyx.tools.tool_implementations.web_search.web_search_tool import WebSearchTool
-from onyx.tracing.framework.create import function_span
-from onyx.tracing.framework.create import trace
+from onyx.tracing.framework.create import ChatTraceMetadata, function_span, trace
 from onyx.utils.logger import setup_logger
 from onyx.utils.timing import log_function_time
-from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
 
@@ -107,6 +110,7 @@ def generate_final_report(
     turn_index: int,
     citation_mapping: CitationMapping,
     user_identity: LLMUserIdentity | None,
+    reasoning_effort: ReasoningEffort = ReasoningEffort.AUTO,
     saved_reasoning: str | None = None,
     pre_answer_processing_time: float | None = None,
     all_injected_file_metadata: dict[str, FileToolMetadata] | None = None,
@@ -155,6 +159,7 @@ def generate_final_report(
             tool_definitions=[],
             tool_choice=ToolChoiceOptions.NONE,
             llm=llm,
+            reasoning_effort=reasoning_effort,
             placement=Placement(turn_index=turn_index),
             citation_processor=citation_processor,
             state_container=state_container,
@@ -163,7 +168,7 @@ def generate_final_report(
             max_tokens=MAX_FINAL_REPORT_TOKENS,
             is_deep_research=True,
             pre_answer_processing_time=pre_answer_processing_time,
-            timeout_override=300,  # 5 minute read timeout for long report generation
+            timeout_override=DR_REPORT_LLM_TIMEOUT_S,
         )
 
         # Save citation mapping to state_container so citations are persisted
@@ -200,6 +205,7 @@ def run_deep_research_llm_loop(
     custom_agent_prompt: str | None,  # noqa: ARG001
     llm: LLM,
     token_counter: Callable[[str], int],
+    reasoning_effort: ReasoningEffort = ReasoningEffort.AUTO,
     skip_clarification: bool = False,
     user_identity: LLMUserIdentity | None = None,
     chat_session_id: str | None = None,
@@ -208,10 +214,10 @@ def run_deep_research_llm_loop(
     with trace(
         "run_deep_research_llm_loop",
         group_id=chat_session_id,
-        metadata={
-            "tenant_id": get_current_tenant_id(),
-            "chat_session_id": chat_session_id,
-        },
+        metadata=ChatTraceMetadata(
+            chat_session_id=chat_session_id,
+            user_id=user_identity.user_id if user_identity else None,
+        ).model_dump(),
     ):
         # Here for lazy load LiteLLM
         from onyx.llm.litellm_singleton.config import initialize_litellm
@@ -278,6 +284,7 @@ def run_deep_research_llm_loop(
                     tool_definitions=get_clarification_tool_definitions(),
                     tool_choice=ToolChoiceOptions.AUTO,
                     llm=llm,
+                    reasoning_effort=reasoning_effort,
                     placement=Placement(turn_index=0),
                     # No citations in this step, it should just pass through all
                     # tokens directly so initialized as an empty citation processor
@@ -338,6 +345,7 @@ def run_deep_research_llm_loop(
                 tool_definitions=[],
                 tool_choice=ToolChoiceOptions.NONE,
                 llm=llm,
+                reasoning_effort=reasoning_effort,
                 placement=Placement(turn_index=0),
                 citation_processor=None,
                 state_container=state_container,
@@ -426,9 +434,7 @@ def run_deep_research_llm_loop(
             reasoning_cycles = 0
             most_recent_reasoning: str | None = None
             citation_mapping: CitationMapping = {}
-            final_turn_index: int = (
-                orchestrator_start_turn_index  # Track the final turn_index for stop packet
-            )
+            final_turn_index: int = orchestrator_start_turn_index  # Track the final turn_index for stop packet
             for cycle in range(max_orchestrator_cycles):
                 # Check if we've exceeded the time limit or reached the last cycle
                 # - if so, skip LLM and generate final report
@@ -439,8 +445,9 @@ def run_deep_research_llm_loop(
                 if timed_out or is_last_cycle:
                     if timed_out:
                         logger.info(
-                            f"Deep research exceeded {DEEP_RESEARCH_FORCE_REPORT_SECONDS}s "
-                            f"(elapsed: {elapsed_seconds:.1f}s), forcing final report generation"
+                            "Deep research exceeded %ss (elapsed: %ss), forcing final report generation",
+                            DEEP_RESEARCH_FORCE_REPORT_SECONDS,
+                            format(elapsed_seconds, ".1f"),
                         )
                     report_turn_index = (
                         orchestrator_start_turn_index + cycle + reasoning_cycles
@@ -455,6 +462,7 @@ def run_deep_research_llm_loop(
                         turn_index=report_turn_index,
                         citation_mapping=citation_mapping,
                         user_identity=user_identity,
+                        reasoning_effort=reasoning_effort,
                         pre_answer_processing_time=elapsed_seconds,
                         all_injected_file_metadata=all_injected_file_metadata,
                     )
@@ -513,6 +521,7 @@ def run_deep_research_llm_loop(
                     ),
                     tool_choice=ToolChoiceOptions.REQUIRED,
                     llm=llm,
+                    reasoning_effort=reasoning_effort,
                     placement=Placement(
                         turn_index=orchestrator_start_turn_index
                         + cycle
@@ -558,6 +567,7 @@ def run_deep_research_llm_loop(
                         turn_index=report_turn_index,
                         citation_mapping=citation_mapping,
                         user_identity=user_identity,
+                        reasoning_effort=reasoning_effort,
                         pre_answer_processing_time=time.monotonic()
                         - processing_start_time,
                         all_injected_file_metadata=all_injected_file_metadata,
@@ -568,9 +578,7 @@ def run_deep_research_llm_loop(
                 special_tool_calls = check_special_tool_calls(tool_calls=tool_calls)
 
                 if special_tool_calls.generate_report_tool_call:
-                    report_turn_index = (
-                        special_tool_calls.generate_report_tool_call.placement.turn_index
-                    )
+                    report_turn_index = special_tool_calls.generate_report_tool_call.placement.turn_index
                     report_reasoned = generate_final_report(
                         history=simple_chat_history,
                         research_plan=research_plan,
@@ -581,6 +589,7 @@ def run_deep_research_llm_loop(
                         turn_index=report_turn_index,
                         citation_mapping=citation_mapping,
                         user_identity=user_identity,
+                        reasoning_effort=reasoning_effort,
                         saved_reasoning=most_recent_reasoning,
                         pre_answer_processing_time=time.monotonic()
                         - processing_start_time,
@@ -632,7 +641,7 @@ def run_deep_research_llm_loop(
                     for tool_call in tool_calls:
                         if tool_call.tool_name != RESEARCH_AGENT_TOOL_NAME:
                             logger.warning(
-                                f"Unexpected tool call: {tool_call.tool_name}"
+                                "Unexpected tool call: %s", tool_call.tool_name
                             )
                             continue
 
@@ -655,6 +664,7 @@ def run_deep_research_llm_loop(
                             turn_index=report_turn_index,
                             citation_mapping=citation_mapping,
                             user_identity=user_identity,
+                            reasoning_effort=reasoning_effort,
                             pre_answer_processing_time=time.monotonic()
                             - processing_start_time,
                             all_injected_file_metadata=all_injected_file_metadata,
@@ -692,6 +702,12 @@ def run_deep_research_llm_loop(
                         token_counter=token_counter,
                         citation_mapping=citation_mapping,
                         user_identity=user_identity,
+                        # Session override wins in sub-agents. AUTO keeps the tuned LOW default.
+                        reasoning_effort=(
+                            reasoning_effort
+                            if reasoning_effort is not ReasoningEffort.AUTO
+                            else ReasoningEffort.LOW
+                        ),
                     )
 
                     citation_mapping = research_results.citation_mapping
@@ -728,10 +744,26 @@ def run_deep_research_llm_loop(
                         research_results.intermediate_reports
                     ):
                         if report is None:
-                            # The LLM will not see that this research was even attempted, it may try
-                            # something similar again but this is not bad.
+                            # Every tool_use id in the preceding assistant message must have a
+                            # matching TOOL_CALL_RESPONSE or strict providers (e.g. AWS Bedrock
+                            # Converse) reject the next request with 400 "Expected toolResult
+                            # blocks at messages.N.content for the following Ids: ...". Emit a
+                            # synthetic failure response so the invariant holds and the LLM
+                            # knows the call failed.
                             logger.error(
-                                f"Research agent call at tab_index {tab_index} failed, skipping"
+                                "Research agent call at tab_index %s failed; emitting synthetic failure response",
+                                tab_index,
+                            )
+                            failed_tool_call = research_agent_calls[tab_index]
+                            failure_message = "Research agent call failed. Try a different approach or continue without this result."
+                            simple_chat_history.append(
+                                ChatMessageSimple(
+                                    message=failure_message,
+                                    token_count=token_counter(failure_message),
+                                    message_type=MessageType.TOOL_CALL_RESPONSE,
+                                    tool_call_id=failed_tool_call.tool_call_id,
+                                    image_files=None,
+                                )
                             )
                             continue
 

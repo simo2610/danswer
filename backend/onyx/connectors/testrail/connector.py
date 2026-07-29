@@ -1,32 +1,34 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
-from datetime import timezone
-from typing import Any
-from typing import ClassVar
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, ClassVar, Optional
 
 import requests
 from bs4 import BeautifulSoup
 
-from onyx.configs.app_configs import INDEX_BATCH_SIZE
+from onyx.configs.app_configs import INDEX_BATCH_SIZE, REQUEST_TIMEOUT_SECONDS
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.exceptions import CredentialExpiredError
-from onyx.connectors.exceptions import InsufficientPermissionsError
-from onyx.connectors.exceptions import UnexpectedValidationError
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.models import ConnectorMissingCredentialError
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import TextSection
+from onyx.connectors.exceptions import (
+    CredentialExpiredError,
+    InsufficientPermissionsError,
+    UnexpectedValidationError,
+)
+from onyx.connectors.interfaces import (
+    GenerateDocumentsOutput,
+    LoadConnector,
+    PollConnector,
+    SecondsSinceUnixEpoch,
+)
+from onyx.connectors.models import (
+    ConnectorMissingCredentialError,
+    Document,
+    HierarchyNode,
+    TextSection,
+)
 from onyx.file_processing.html_utils import format_document_soup
 from onyx.utils.logger import setup_logger
 from onyx.utils.text_processing import remove_markdown_image_references
-
 
 logger = setup_logger()
 
@@ -155,6 +157,7 @@ class TestRailConnector(LoadConnector, PollConnector):
                 url,
                 auth=(self.username, self.api_key),
                 params=params,
+                timeout=REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -204,7 +207,7 @@ class TestRailConnector(LoadConnector, PollConnector):
             fields = self._api_get("get_case_fields")
             return fields if isinstance(fields, list) else []
         except Exception as e:
-            logger.warning(f"Failed to fetch case fields from TestRail: {e}")
+            logger.warning("Failed to fetch case fields from TestRail: %s", e)
             return []
 
     def _parse_items_string(self, items_str: str) -> dict[str, str]:
@@ -262,7 +265,7 @@ class TestRailConnector(LoadConnector, PollConnector):
                             )
 
         except Exception as e:
-            logger.warning(f"Failed to build field maps from TestRail: {e}")
+            logger.warning("Failed to build field maps from TestRail: %s", e)
 
         return field_labels, value_maps
 
@@ -386,6 +389,13 @@ class TestRailConnector(LoadConnector, PollConnector):
             else None
         )
 
+        created = case.get("created_on")
+        created_dt = (
+            datetime.fromtimestamp(created, tz=timezone.utc)
+            if isinstance(created, (int, float))
+            else None
+        )
+
         text_lines: list[str] = []
         if case.get("title"):
             text_lines.append(f"Title: {case['title']}")
@@ -420,8 +430,12 @@ class TestRailConnector(LoadConnector, PollConnector):
         if isinstance(steps_separated, list) and steps_separated:
             rendered_steps: list[str] = []
             for idx, step_item in enumerate(steps_separated, start=1):
-                step_content = self._sanitize_rich_text(step_item.get("content"))
-                step_expected = self._sanitize_rich_text(step_item.get("expected"))
+                step_content = self._sanitize_rich_text(
+                    step_item.get("content")  # ty: ignore[unresolved-attribute]
+                )
+                step_expected = self._sanitize_rich_text(
+                    step_item.get("expected")  # ty: ignore[unresolved-attribute]
+                )
                 parts: list[str] = []
                 if step_content:
                     parts.append(f"Step {idx}: {step_content}")
@@ -449,7 +463,9 @@ class TestRailConnector(LoadConnector, PollConnector):
         full_text = "\n".join(text_lines)
         if len(full_text) > self.skip_doc_absolute_chars:
             logger.warning(
-                f"Skipping TestRail case {case_id} due to excessive size: {len(full_text)} chars"
+                "Skipping TestRail case %s due to excessive size: %s chars",
+                case_id,
+                len(full_text),
             )
             return None
 
@@ -469,6 +485,8 @@ class TestRailConnector(LoadConnector, PollConnector):
             sections=[TextSection(link=link, text=full_text)],
             metadata=metadata,
             doc_updated_at=updated_dt,
+            # NOTE: doc_created_at population not yet verified against live data
+            doc_created_at=created_dt,
         )
 
     def _generate_documents(

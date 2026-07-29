@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const (
 	EnvServerURL      = "ONYX_SERVER_URL"
-	EnvAPIKey         = "ONYX_API_KEY"
+	EnvAPIPrefix      = "ONYX_API_PREFIX"
+	EnvAPIKey         = "ONYX_PAT"
 	EnvAgentID        = "ONYX_PERSONA_ID"
 	EnvSSHHostKey     = "ONYX_SSH_HOST_KEY"
 	EnvStreamMarkdown = "ONYX_STREAM_MARKDOWN"
@@ -50,9 +52,43 @@ func (f Features) StreamMarkdownEnabled() bool {
 	return true
 }
 
-// IsConfigured returns true if the config has an API key.
+// IsConfigured returns true if the config has a personal access token (PAT).
 func (c OnyxCliConfig) IsConfigured() bool {
 	return c.APIKey != ""
+}
+
+func apiPrefix() string {
+	prefix := "/api"
+	if value, ok := os.LookupEnv(EnvAPIPrefix); ok {
+		prefix = value
+	}
+	return strings.Trim(prefix, "/")
+}
+
+// APIURL returns the API base for a server origin or an already-prefixed URL.
+// Set ONYX_API_PREFIX="" for direct backend access without a proxy path.
+func APIURL(serverURL string) string {
+	baseURL := strings.TrimRight(serverURL, "/")
+	prefix := apiPrefix()
+	if prefix == "" {
+		return baseURL
+	}
+
+	suffix := "/" + prefix
+	if strings.HasSuffix(baseURL, suffix) {
+		return baseURL
+	}
+	return baseURL + suffix
+}
+
+// OnyxWebURL removes an API prefix when the configured URL already includes it.
+func OnyxWebURL(serverURL string) string {
+	baseURL := strings.TrimRight(serverURL, "/")
+	prefix := apiPrefix()
+	if prefix == "" {
+		return baseURL
+	}
+	return strings.TrimSuffix(baseURL, "/"+prefix)
 }
 
 // ConfigDir returns ~/.config/onyx-cli

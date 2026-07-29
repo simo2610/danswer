@@ -1,34 +1,27 @@
 import math
 import time
 from collections.abc import Callable
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any
-from typing import cast
-from typing import TYPE_CHECKING
-from typing import TypeVar
-from urllib.parse import parse_qs
-from urllib.parse import quote
-from urllib.parse import urljoin
-from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import requests
 from pydantic import BaseModel
 
 from onyx.configs.app_configs import (
     CONFLUENCE_CONNECTOR_ATTACHMENT_CHAR_COUNT_THRESHOLD,
+    CONFLUENCE_CONNECTOR_ATTACHMENT_SIZE_THRESHOLD,
+    REQUEST_TIMEOUT_SECONDS,
 )
-from onyx.configs.app_configs import CONFLUENCE_CONNECTOR_ATTACHMENT_SIZE_THRESHOLD
 from onyx.configs.constants import FileOrigin
-from onyx.file_processing.extract_file_text import extract_file_text
-from onyx.file_processing.extract_file_text import get_file_ext
-from onyx.file_processing.file_types import OnyxFileExtensions
-from onyx.file_processing.file_types import OnyxMimeTypes
+from onyx.file_processing.extract_file_text import extract_file_text, get_file_ext
+from onyx.file_processing.file_types import OnyxFileExtensions, OnyxMimeTypes
 from onyx.file_processing.image_utils import store_image_and_create_section
+from onyx.utils.datetime import datetime_to_utc
 from onyx.utils.logger import setup_logger
+from onyx.utils.retry_after import parse_retry_after_seconds
 
 if TYPE_CHECKING:
     from onyx.connectors.confluence.onyx_confluence import OnyxConfluence
@@ -81,11 +74,12 @@ class AttachmentProcessingResult(BaseModel):
 def _make_attachment_link(
     confluence_client: "OnyxConfluence",
     attachment: dict[str, Any],
-    parent_content_id: str | None = None,
+    parent_content_id: str | None,
+    is_cloud: bool,
 ) -> str | None:
     download_link = ""
 
-    if "api.atlassian.com" in confluence_client.url:
+    if is_cloud:
         # https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content---attachments/#api-wiki-rest-api-content-id-child-attachment-attachmentid-download-get
         if not parent_content_id:
             logger.warning(
@@ -108,6 +102,7 @@ def process_attachment(
     attachment: dict[str, Any],
     parent_content_id: str | None,
     allow_images: bool,
+    is_cloud: bool,
 ) -> AttachmentProcessingResult:
     """
     Processes a Confluence attachment. If it's a document, extracts text,
@@ -125,7 +120,7 @@ def process_attachment(
             )
 
         attachment_link = _make_attachment_link(
-            confluence_client, attachment, parent_content_id
+            confluence_client, attachment, parent_content_id, is_cloud
         )
         if not attachment_link:
             return AttachmentProcessingResult(
@@ -144,9 +139,10 @@ def process_attachment(
         else:
             if attachment_size > CONFLUENCE_CONNECTOR_ATTACHMENT_SIZE_THRESHOLD:
                 logger.warning(
-                    f"Skipping {attachment_link} due to size. "
-                    f"size={attachment_size} "
-                    f"threshold={CONFLUENCE_CONNECTOR_ATTACHMENT_SIZE_THRESHOLD}"
+                    "Skipping %s due to size. size=%s threshold=%s",
+                    attachment_link,
+                    attachment_size,
+                    CONFLUENCE_CONNECTOR_ATTACHMENT_SIZE_THRESHOLD,
                 )
                 return AttachmentProcessingResult(
                     text=None,
@@ -155,14 +151,19 @@ def process_attachment(
                 )
 
         logger.info(
-            f"Downloading attachment: title={attachment['title']} length={attachment_size} link={attachment_link}"
+            "Downloading attachment: title=%s length=%s link=%s",
+            attachment["title"],
+            attachment_size,
+            attachment_link,
         )
 
         # Download the attachment
         resp: requests.Response = confluence_client._session.get(attachment_link)
         if resp.status_code != 200:
             logger.warning(
-                f"Failed to fetch {attachment_link} with status code {resp.status_code}"
+                "Failed to fetch %s with status code %s",
+                attachment_link,
+                resp.status_code,
             )
             return AttachmentProcessingResult(
                 text=None,
@@ -225,7 +226,7 @@ def _process_image_attachment(
             media_type=media_type,
             file_origin=FileOrigin.CONNECTOR,
         )
-        logger.info(f"Stored image attachment with file name: {file_name}")
+        logger.info("Stored image attachment with file name: %s", file_name)
 
         # Return empty text but include the file_name for later processing
         return AttachmentProcessingResult(text="", file_name=file_name, error=None)
@@ -240,6 +241,7 @@ def convert_attachment_to_content(
     attachment: dict[str, Any],
     page_id: str,
     allow_images: bool,
+    is_cloud: bool,
 ) -> tuple[str | None, str | None] | None:
     """
     Facade function which:
@@ -251,14 +253,18 @@ def convert_attachment_to_content(
     # Quick check for unsupported types:
     if media_type.startswith("video/") or media_type == "application/gliffy+json":
         logger.warning(
-            f"Skipping unsupported attachment type: '{media_type}' for {attachment['title']}"
+            "Skipping unsupported attachment type: '%s' for %s",
+            media_type,
+            attachment["title"],
         )
         return None
 
-    result = process_attachment(confluence_client, attachment, page_id, allow_images)
+    result = process_attachment(
+        confluence_client, attachment, page_id, allow_images, is_cloud
+    )
     if result.error is not None:
         logger.warning(
-            f"Attachment {attachment['title']} encountered error: {result.error}"
+            "Attachment %s encountered error: %s", attachment["title"], result.error
         )
         return None
 
@@ -290,16 +296,7 @@ def build_confluence_document_id(
 
 
 def datetime_from_string(datetime_string: str) -> datetime:
-    datetime_object = datetime.fromisoformat(datetime_string)
-
-    if datetime_object.tzinfo is None:
-        # If no timezone info, assume it is UTC
-        datetime_object = datetime_object.replace(tzinfo=timezone.utc)
-    else:
-        # If not in UTC, translate it
-        datetime_object = datetime_object.astimezone(timezone.utc)
-
-    return datetime_object
+    return datetime_to_utc(datetime.fromisoformat(datetime_string))
 
 
 def confluence_refresh_tokens(
@@ -318,6 +315,7 @@ def confluence_refresh_tokens(
             "client_secret": client_secret,
             "refresh_token": refresh_token,
         },
+        timeout=REQUEST_TIMEOUT_SECONDS,
     )
 
     try:
@@ -365,7 +363,8 @@ def handle_confluence_rate_limit(confluence_call: F) -> F:
             except requests.HTTPError as e:
                 delay_until = _handle_http_error(e, attempt, MAX_RETRIES)
                 logger.warning(
-                    f"HTTPError in confluence call. Retrying in {delay_until} seconds..."
+                    "HTTPError in confluence call. Retrying in %s seconds...",
+                    delay_until,
                 )
                 while time.monotonic() < delay_until:
                     # in the future, check a signal here to exit
@@ -401,8 +400,8 @@ def _handle_http_error(e: requests.HTTPError, attempt: int, max_retries: int) ->
         FORBIDDEN_RETRY_DELAY = 10
         if attempt < FORBIDDEN_MAX_RETRY_ATTEMPTS:
             logger.warning(
-                "403 error. This sometimes happens when we hit "
-                f"Confluence rate limits. Retrying in {FORBIDDEN_RETRY_DELAY} seconds..."
+                "403 error. This sometimes happens when we hit Confluence rate limits. Retrying in %s seconds...",
+                FORBIDDEN_RETRY_DELAY,
             )
             return FORBIDDEN_RETRY_DELAY
 
@@ -414,8 +413,10 @@ def _handle_http_error(e: requests.HTTPError, attempt: int, max_retries: int) ->
 
         delay = min(STARTING_DELAY * (BACKOFF**attempt), MAX_DELAY)
         logger.warning(
-            f"Server error {e.response.status_code}. "
-            f"Retrying in {delay} seconds (attempt {attempt + 1})..."
+            "Server error %s. Retrying in %s seconds (attempt %s)...",
+            e.response.status_code,
+            delay,
+            attempt + 1,
         )
         return math.ceil(time.monotonic() + delay)
 
@@ -425,25 +426,21 @@ def _handle_http_error(e: requests.HTTPError, attempt: int, max_retries: int) ->
     ):
         raise e
 
-    retry_after = None
-
-    retry_after_header = e.response.headers.get("Retry-After")
-    if retry_after_header is not None:
-        try:
-            retry_after = int(retry_after_header)
-            if retry_after > MAX_DELAY:
-                logger.warning(
-                    f"Clamping retry_after from {retry_after} to {MAX_DELAY} seconds..."
-                )
-                retry_after = MAX_DELAY
-            if retry_after < MIN_DELAY:
-                retry_after = MIN_DELAY
-        except ValueError:
-            pass
+    retry_after = parse_retry_after_seconds(e.response.headers.get("Retry-After"))
+    if retry_after is not None:
+        if retry_after > MAX_DELAY:
+            logger.warning(
+                "Clamping retry_after from %s to %s seconds...",
+                retry_after,
+                MAX_DELAY,
+            )
+            retry_after = MAX_DELAY
+        if retry_after < MIN_DELAY:
+            retry_after = MIN_DELAY
 
     if retry_after is not None:
         logger.warning(
-            f"Rate limiting with retry header. Retrying after {retry_after} seconds..."
+            "Rate limiting with retry header. Retrying after %s seconds...", retry_after
         )
         delay = retry_after
     else:

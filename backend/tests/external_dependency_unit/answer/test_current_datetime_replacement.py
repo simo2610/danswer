@@ -3,14 +3,12 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from onyx.chat.models import AnswerStreamPart
-from onyx.chat.models import StreamingError
+from onyx.chat.models import AnswerStreamPart, StreamingError
 from onyx.chat.process_message import handle_stream_message_objects
 from onyx.db.chat import create_chat_session
 from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
-from onyx.server.query_and_chat.models import MessageResponseIDInfo
-from onyx.server.query_and_chat.models import SendMessageRequest
+from onyx.server.query_and_chat.models import MessageResponseIDInfo, SendMessageRequest
 from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
 from tests.external_dependency_unit.answer.conftest import ensure_default_llm_provider
 from tests.external_dependency_unit.conftest import create_test_user
@@ -49,7 +47,6 @@ def test_stream_chat_current_date_response(
     gen = handle_stream_message_objects(
         new_msg_req=chat_request,
         user=test_user,
-        db_session=db_session,
     )
 
     raw: list[AnswerStreamPart] = []
@@ -66,9 +63,9 @@ def test_stream_chat_current_date_response(
             break
 
     assert not had_error, "Should not error when answering current date"
-    assert any(
-        isinstance(p, MessageResponseIDInfo) for p in raw
-    ), "Should yield a message ID"
+    assert any(isinstance(p, MessageResponseIDInfo) for p in raw), (
+        "Should yield a message ID"
+    )
     assert len(content) > 0, "Should stream some assistant content"
 
     # Validate the response contains a properly formatted current date string
@@ -79,12 +76,12 @@ def test_stream_chat_current_date_response(
     timestamp_dt = datetime.strptime(timestamp_str, "%A %B %d, %Y")
     now = datetime.now()
 
-    assert timestamp_dt.strftime("%A") == now.strftime(
-        "%A"
-    ), f"Expected weekday {now.strftime('%A')}, got {timestamp_dt.strftime('%A')}"
-    assert timestamp_dt.strftime("%B") == now.strftime(
-        "%B"
-    ), f"Expected month {now.strftime('%B')}, got {timestamp_dt.strftime('%B')}"
+    assert timestamp_dt.strftime("%A") == now.strftime("%A"), (
+        f"Expected weekday {now.strftime('%A')}, got {timestamp_dt.strftime('%A')}"
+    )
+    assert timestamp_dt.strftime("%B") == now.strftime("%B"), (
+        f"Expected month {now.strftime('%B')}, got {timestamp_dt.strftime('%B')}"
+    )
     assert timestamp_dt.day == now.day and timestamp_dt.year == now.year, (
         f"Expected day {now.strftime('%d')} and year {now.strftime('%Y')}, "
         f"got {timestamp_dt.strftime('%d')} {timestamp_dt.strftime('%Y')}"

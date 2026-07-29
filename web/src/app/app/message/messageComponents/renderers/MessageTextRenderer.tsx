@@ -4,6 +4,7 @@ import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
+import { useHighlightLanguages } from "@/hooks/useHighlightLanguages";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
@@ -27,7 +28,10 @@ import { extractCodeText } from "@/app/app/message/codeUtils";
 import { CodeBlock } from "@/app/app/message/CodeBlock";
 import { InMessageImage } from "@/app/app/components/files/images/InMessageImage";
 import { extractChatImageFileId } from "@/app/app/components/files/images/utils";
-import { cn, transformLinkUri } from "@/lib/utils";
+import { transformLinkUri } from "@/lib/utils";
+import { cn } from "@opal/utils";
+import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
+import { useChatSessionStore } from "@/app/app/stores/useChatSessionStore";
 
 /** Maps a visible-char count to a markdown index (skips formatting chars,
  *  extends to word boundary). Used by the voice-sync reveal path only. */
@@ -71,15 +75,15 @@ function getRevealPosition(markdown: string, cleanChars: number): number {
   return mdIndex;
 }
 
-// Cheap streaming plugins (gfm only) → cheap per-frame parse. Full
-// pipeline flips in once, at the end, for syntax highlighting + math.
-const STREAMING_REMARK_PLUGINS: PluggableList = [remarkGfm];
-const STREAMING_REHYPE_PLUGINS: PluggableList = [];
-const FULL_REMARK_PLUGINS: PluggableList = [
+// Streaming pipeline runs gfm + math so LaTeX renders live.
+// Syntax highlighting is the heavier of the two and stays deferred —
+// rehype-highlight only flips in once the stream is fully displayed.
+const STREAMING_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   [remarkMath, { singleDollarTextMath: true }],
 ];
-const FULL_REHYPE_PLUGINS: PluggableList = [rehypeHighlight, rehypeKatex];
+const STREAMING_REHYPE_PLUGINS: PluggableList = [rehypeKatex];
+const FULL_REMARK_PLUGINS: PluggableList = STREAMING_REMARK_PLUGINS;
 
 export const MessageTextRenderer: MessageRenderer<
   ChatPacket,
@@ -96,6 +100,14 @@ export const MessageTextRenderer: MessageRenderer<
   stopReason,
   children,
 }) => {
+  const { enabled: smoothStreamingEnabled } = useSmoothStreaming();
+  const setLatestMessageRenderComplete = useChatSessionStore(
+    (state) => state.setLatestMessageRenderComplete
+  );
+  const setIsStreamDraining = useChatSessionStore(
+    (state) => state.setIsStreamDraining
+  );
+
   const lastStableSyncedContentRef = useRef("");
   const lastVisibleContentRef = useRef("");
 
@@ -247,17 +259,47 @@ export const MessageTextRenderer: MessageRenderer<
   const isStreamingAnimationEnabled =
     animate &&
     !shouldUseAutoPlaybackSync &&
-    stopReason !== StopReason.USER_CANCELLED;
+    stopReason !== StopReason.USER_CANCELLED &&
+    smoothStreamingEnabled;
 
   const isStreamFinished = isFinalAnswerComplete(packets);
 
-  const displayedContent = useTypewriter(content, isStreamingAnimationEnabled);
+  const { displayed: displayedContent, isDraining } = useTypewriter(
+    content,
+    isStreamingAnimationEnabled,
+    isStreamFinished
+  );
 
   // One-way signal: stream done AND typewriter caught up. Do NOT derive
   // this from "typewriter currently behind" — it oscillates mid-stream
   // between packet bursts and would thrash the plugin pipeline.
   const streamFullyDisplayed =
     isStreamFinished && displayedContent.length >= content.length;
+
+  // Syntax-highlighting grammars load dynamically, and only once the stream is
+  // fully displayed — keeps the ~170 KB corpus off the critical path. Until
+  // they resolve we fall back to the streaming (katex-only) plugin set.
+  const highlightLanguages = useHighlightLanguages(streamFullyDisplayed);
+  const fullRehypePlugins = useMemo<PluggableList>(
+    () =>
+      highlightLanguages
+        ? [[rehypeHighlight, { languages: highlightLanguages }], rehypeKatex]
+        : STREAMING_REHYPE_PLUGINS,
+    [highlightLanguages]
+  );
+
+  // Capture `animate` at mount. `animate = !stopPacketSeen`, which only
+  // ever goes true→false during a renderer's lifetime, so its mount-time
+  // value distinguishes "actively-streaming renderer" (animate=true) from
+  // "historical mount" (animate=false). Used to gate the queue-release
+  // write below.
+  const wasEverAnimatingRef = useRef(animate);
+
+  // Bind sessionId at mount so a navigation while the typewriter is still
+  // draining doesn't write the completion flag to the newly-active session.
+  const sessionIdAtMountRef = useRef(
+    useChatSessionStore.getState().currentSessionId
+  );
 
   // Fire onComplete exactly once per mount. `onComplete` is an inline
   // arrow in AgentMessage so its identity changes on every parent render;
@@ -268,8 +310,24 @@ export const MessageTextRenderer: MessageRenderer<
     if (streamFullyDisplayed && !onCompleteFiredRef.current) {
       onCompleteFiredRef.current = true;
       onComplete();
+      // Only the renderer that was actively streaming (mounted with
+      // animate=true) flips the chat-session gate back to "rendered".
+      // Historical mounts leave the flag alone so they don't release the
+      // queue while a newer stream is still in flight.
+      if (wasEverAnimatingRef.current && sessionIdAtMountRef.current) {
+        setLatestMessageRenderComplete(sessionIdAtMountRef.current, true);
+      }
     }
-  }, [streamFullyDisplayed, onComplete]);
+  }, [streamFullyDisplayed, onComplete, setLatestMessageRenderComplete]);
+
+  // Mirror the typewriter's drain state into the chat-session store so
+  // ChatScrollContainer can pause auto-scroll while the drain runs. Only
+  // the actively-animating renderer writes — historical mounts never
+  // enter the drain branch in useTypewriter.
+  useEffect(() => {
+    if (!wasEverAnimatingRef.current || !sessionIdAtMountRef.current) return;
+    setIsStreamDraining(sessionIdAtMountRef.current, isDraining);
+  }, [isDraining, setIsStreamDraining]);
 
   const processedContent = useMemo(
     () => processContent(displayedContent),
@@ -394,7 +452,10 @@ export const MessageTextRenderer: MessageRenderer<
             Thinking
           </Text>
         ) : displayedContent.length > 0 ? (
-          <div dir="auto">
+          <div
+            dir="auto"
+            className={cn(!streamFullyDisplayed && "streaming-katex")}
+          >
             <ReactMarkdown
               className="prose prose-onyx font-main-content-body max-w-full"
               components={markdownComponents}
@@ -405,7 +466,7 @@ export const MessageTextRenderer: MessageRenderer<
               }
               rehypePlugins={
                 streamFullyDisplayed
-                  ? FULL_REHYPE_PLUGINS
+                  ? fullRehypePlugins
                   : STREAMING_REHYPE_PLUGINS
               }
               urlTransform={transformLinkUri}

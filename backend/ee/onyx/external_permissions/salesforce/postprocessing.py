@@ -3,9 +3,7 @@ import time
 from ee.onyx.db.external_perm import fetch_external_groups_for_user_email_and_group_ids
 from ee.onyx.external_permissions.salesforce.utils import (
     get_any_salesforce_client_for_doc_id,
-)
-from ee.onyx.external_permissions.salesforce.utils import get_objects_access_for_user_id
-from ee.onyx.external_permissions.salesforce.utils import (
+    get_objects_access_for_user_id,
     get_salesforce_user_id_from_email,
 )
 from onyx.configs.app_configs import BLURB_SIZE
@@ -57,10 +55,10 @@ def _get_objects_access_for_user_email_from_salesforce(
     user_id = get_salesforce_user_id_from_email(salesforce_client, user_email)
     end_time = time.monotonic()
     logger.info(
-        f"Time taken to get Salesforce user ID: {end_time - start_time} seconds"
+        "Time taken to get Salesforce user ID: %s seconds", end_time - start_time
     )
     if user_id is None:
-        logger.warning(f"User '{user_email}' not found in Salesforce")
+        logger.warning("User '%s' not found in Salesforce", user_email)
         return None
 
     # This is the only query that is not cached in the function
@@ -68,7 +66,7 @@ def _get_objects_access_for_user_email_from_salesforce(
     object_id_to_access = get_objects_access_for_user_id(
         salesforce_client, user_id, list(object_ids)
     )
-    logger.debug(f"Object ID to access: {object_id_to_access}")
+    logger.debug("Object ID to access: %s", object_id_to_access)
     return object_id_to_access
 
 

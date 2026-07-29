@@ -25,27 +25,24 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy import Select, SQLColumnExpression, func, select
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func
-from sqlalchemy import Select
-from sqlalchemy import select
-from sqlalchemy import SQLColumnExpression
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from ee.onyx.server.scim.filtering import ScimFilter
-from ee.onyx.server.scim.filtering import ScimFilterOperator
+from ee.onyx.server.scim.filtering import ScimFilter, ScimFilterOperator
 from ee.onyx.server.scim.models import ScimMappingFields
 from onyx.db.dal import DAL
-from onyx.db.enums import AccountType
-from onyx.db.enums import GrantSource
-from onyx.db.enums import Permission
-from onyx.db.models import PermissionGrant
-from onyx.db.models import ScimGroupMapping
-from onyx.db.models import ScimToken
-from onyx.db.models import ScimUserMapping
-from onyx.db.models import User
-from onyx.db.models import User__UserGroup
-from onyx.db.models import UserGroup
+from onyx.db.enums import AccountType, GrantSource, Permission
+from onyx.db.models import (
+    PermissionGrant,
+    ScimGroupMapping,
+    ScimToken,
+    ScimUserMapping,
+    User,
+    User__UserGroup,
+    UserGroup,
+    UserRole,
+)
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -121,7 +118,7 @@ class ScimDAL(DAL):
         """Update the last_used_at timestamp for a token."""
         token = self._session.get(ScimToken, token_id)
         if token:
-            token.last_used_at = func.now()  # type: ignore[assignment]
+            token.last_used_at = func.now()
 
     # ------------------------------------------------------------------
     # User mapping operations
@@ -229,7 +226,7 @@ class ScimDAL(DAL):
     def get_user(self, user_id: UUID) -> User | None:
         """Fetch a user by ID."""
         return self._session.scalar(
-            select(User).where(User.id == user_id)  # type: ignore[arg-type]
+            select(User).where(User.id == user_id)  # ty: ignore[invalid-argument-type]
         )
 
     def get_user_by_email(self, email: str) -> User | None:
@@ -250,6 +247,8 @@ class ScimDAL(DAL):
         email: str | None = None,
         is_active: bool | None = None,
         personal_name: str | None = None,
+        role: UserRole | None = None,
+        account_type: AccountType | None = None,
     ) -> None:
         """Update user attributes. Only sets fields that are provided."""
         if email is not None:
@@ -258,6 +257,10 @@ class ScimDAL(DAL):
             user.is_active = is_active
         if personal_name is not None:
             user.personal_name = personal_name
+        if role is not None:
+            user.role = role
+        if account_type is not None:
+            user.account_type = account_type
 
     def deactivate_user(self, user: User) -> None:
         """Mark a user as inactive."""
@@ -293,16 +296,24 @@ class ScimDAL(DAL):
             if attr == "username":
                 # arg-type: fastapi-users types User.email as str, not a column expression
                 # assignment: union return type widens but query is still Select[tuple[User]]
-                query = _apply_scim_string_op(query, User.email, scim_filter)  # type: ignore[arg-type, assignment]
+                query = _apply_scim_string_op(
+                    query,
+                    User.email,  # ty: ignore[invalid-argument-type]
+                    scim_filter,
+                )
             elif attr == "active":
                 query = query.where(
-                    User.is_active.is_(scim_filter.value.lower() == "true")  # type: ignore[attr-defined]
+                    User.is_active.is_(  # ty: ignore[unresolved-attribute]
+                        scim_filter.value.lower() == "true"
+                    )
                 )
             elif attr == "externalid":
                 mapping = self.get_user_mapping_by_external_id(scim_filter.value)
                 if not mapping:
                     return [], 0
-                query = query.where(User.id == mapping.user_id)  # type: ignore[arg-type]
+                query = query.where(
+                    User.id == mapping.user_id  # ty: ignore[invalid-argument-type]
+                )
             else:
                 raise ValueError(
                     f"Unsupported filter attribute: {scim_filter.attribute}"
@@ -318,7 +329,9 @@ class ScimDAL(DAL):
         offset = max(start_index - 1, 0)
         users = list(
             self._session.scalars(
-                query.order_by(User.id).offset(offset).limit(count)  # type: ignore[arg-type]
+                query.order_by(User.id)  # ty: ignore[invalid-argument-type]
+                .offset(offset)
+                .limit(count)
             )
             .unique()
             .all()
@@ -577,7 +590,7 @@ class ScimDAL(DAL):
             attr = scim_filter.attribute.lower()
             if attr == "displayname":
                 # assignment: union return type widens but query is still Select[tuple[UserGroup]]
-                query = _apply_scim_string_op(query, UserGroup.name, scim_filter)  # type: ignore[assignment]
+                query = _apply_scim_string_op(query, UserGroup.name, scim_filter)
             elif attr == "externalid":
                 mapping = self.get_group_mapping_by_external_id(scim_filter.value)
                 if not mapping:
@@ -615,7 +628,9 @@ class ScimDAL(DAL):
 
         users = (
             self._session.scalars(
-                select(User).where(User.id.in_(user_ids))  # type: ignore[attr-defined]
+                select(User).where(
+                    User.id.in_(user_ids)  # ty: ignore[unresolved-attribute]
+                )
             )
             .unique()
             .all()
@@ -640,7 +655,9 @@ class ScimDAL(DAL):
             return []
         existing_users = (
             self._session.scalars(
-                select(User).where(User.id.in_(uuids))  # type: ignore[attr-defined]
+                select(User).where(
+                    User.id.in_(uuids)  # ty: ignore[unresolved-attribute]
+                )
             )
             .unique()
             .all()

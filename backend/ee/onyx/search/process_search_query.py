@@ -4,22 +4,23 @@ from sqlalchemy.orm import Session
 
 from ee.onyx.db.search import create_search_query
 from ee.onyx.secondary_llm_flows.query_expansion import expand_keywords
-from ee.onyx.server.query_and_chat.models import SearchDocWithContent
-from ee.onyx.server.query_and_chat.models import SearchFullResponse
-from ee.onyx.server.query_and_chat.models import SendSearchQueryRequest
-from ee.onyx.server.query_and_chat.streaming_models import LLMSelectedDocsPacket
-from ee.onyx.server.query_and_chat.streaming_models import SearchDocsPacket
-from ee.onyx.server.query_and_chat.streaming_models import SearchErrorPacket
-from ee.onyx.server.query_and_chat.streaming_models import SearchQueriesPacket
-from onyx.context.search.models import BaseFilters
-from onyx.context.search.models import ChunkSearchRequest
-from onyx.context.search.models import InferenceChunk
-from onyx.context.search.pipeline import merge_individual_chunks
-from onyx.context.search.pipeline import search_pipeline
+from ee.onyx.server.query_and_chat.models import (
+    SearchDocWithContent,
+    SearchFullResponse,
+    SendSearchQueryRequest,
+)
+from ee.onyx.server.query_and_chat.streaming_models import (
+    LLMSelectedDocsPacket,
+    SearchDocsPacket,
+    SearchErrorPacket,
+    SearchQueriesPacket,
+)
+from onyx.context.search.models import BaseFilters, ChunkSearchRequest, InferenceChunk
+from onyx.context.search.pipeline import merge_individual_chunks, search_pipeline
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.document_index.factory import get_default_document_index
-from onyx.document_index.interfaces import DocumentIndex
+from onyx.document_index.interfaces_new import DocumentIndex
 from onyx.llm.factory import get_default_llm
 from onyx.secondary_llm_flows.document_filter import select_sections_for_expansion
 from onyx.tools.tool_implementations.search.search_utils import (
@@ -94,10 +95,11 @@ def stream_search_query(
             )
             if keyword_expansions:
                 logger.debug(
-                    f"Query expansion generated {len(keyword_expansions)} keyword queries"
+                    "Query expansion generated %s keyword queries",
+                    len(keyword_expansions),
                 )
         except Exception as e:
-            logger.warning(f"Query expansion failed: {e}; using original query only.")
+            logger.warning("Query expansion failed: %s; using original query only.", e)
             keyword_expansions = []
 
     # Build list of all executed queries for tracking
@@ -218,12 +220,14 @@ def stream_search_query(
                 )
             )
             logger.debug(
-                f"LLM document selection evaluated {len(sections_to_evaluate)} sections, "
-                f"selected {len(selected_sections)} sections with doc IDs: {llm_selected_doc_ids}"
+                "LLM document selection evaluated %s sections, selected %s sections with doc IDs: %s",
+                len(sections_to_evaluate),
+                len(selected_sections),
+                llm_selected_doc_ids,
             )
         except Exception as e:
             # Allowing a blanket exception here as this step is not critical and the rest of the results are still valid
-            logger.warning(f"LLM document selection failed: {e}")
+            logger.warning("LLM document selection failed: %s", e)
             llm_selection_failed = True
     elif run_llm_selection and not sections:
         # LLM selection requested but no sections to evaluate

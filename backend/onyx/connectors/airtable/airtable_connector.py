@@ -1,30 +1,23 @@
 import contextvars
 import re
-from concurrent.futures import as_completed
-from concurrent.futures import Future
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import requests
 from pyairtable import Api as AirtableApi
 from pyairtable.api.types import RecordDict
 from pyairtable.models.schema import TableSchema
-from retry import retry
 
-from onyx.configs.app_configs import INDEX_BATCH_SIZE
+from onyx.configs.app_configs import INDEX_BATCH_SIZE, REQUEST_TIMEOUT_SECONDS
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
 from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
-from onyx.file_processing.extract_file_text import extract_file_text
-from onyx.file_processing.extract_file_text import get_file_ext
+from onyx.connectors.interfaces import GenerateDocumentsOutput, LoadConnector
+from onyx.connectors.models import Document, HierarchyNode, ImageSection, TextSection
+from onyx.file_processing.extract_file_text import extract_file_text, get_file_ext
 from onyx.utils.logger import setup_logger
+from onyx.utils.retry_wrapper import retry_builder
 
 logger = setup_logger()
 
@@ -250,7 +243,7 @@ class AirtableConnector(LoadConnector):
                 if not url:
                     continue
 
-                @retry(
+                @retry_builder(
                     tries=5,
                     delay=1,
                     backoff=2,
@@ -258,12 +251,14 @@ class AirtableConnector(LoadConnector):
                 )
                 def get_attachment_with_retry(url: str, record_id: str) -> bytes | None:
                     try:
-                        attachment_response = requests.get(url)
+                        attachment_response = requests.get(
+                            url, timeout=REQUEST_TIMEOUT_SECONDS
+                        )
                         attachment_response.raise_for_status()
                         return attachment_response.content
                     except requests.exceptions.HTTPError as e:
                         if e.response.status_code == 410:
-                            logger.info(f"Refreshing attachment for {filename}")
+                            logger.info("Refreshing attachment for %s", filename)
                             # Re-fetch the record to get a fresh URL
                             refreshed_record = self.airtable_client.table(
                                 base_id, table_id
@@ -274,11 +269,15 @@ class AirtableConnector(LoadConnector):
                                 if refreshed_attachment.get("filename") == filename:
                                     new_url = refreshed_attachment.get("url")
                                     if new_url:
-                                        attachment_response = requests.get(new_url)
+                                        attachment_response = requests.get(
+                                            new_url, timeout=REQUEST_TIMEOUT_SECONDS
+                                        )
                                         attachment_response.raise_for_status()
                                         return attachment_response.content
 
-                            logger.error(f"Failed to refresh attachment for {filename}")
+                            logger.error(
+                                "Failed to refresh attachment for %s", filename
+                            )
                         raise
 
                 attachment_content = get_attachment_with_retry(url, record_id)
@@ -308,7 +307,7 @@ class AirtableConnector(LoadConnector):
                             )
                     except Exception as e:
                         logger.warning(
-                            f"Failed to process attachment {filename}: {str(e)}"
+                            "Failed to process attachment %s: %s", filename, str(e)
                         )
             return attachment_texts
 
@@ -421,6 +420,7 @@ class AirtableConnector(LoadConnector):
         fields = record["fields"]
         sections: list[TextSection] = []
         metadata: dict[str, str | list[str]] = {}
+        created_time = record["createdTime"]
 
         # Get primary field value if it exists
         primary_field_value = (
@@ -434,7 +434,10 @@ class AirtableConnector(LoadConnector):
             field_type = field_schema.type
 
             logger.debug(
-                f"Processing field '{field_name}' of type '{field_type}' for record '{record_id}'."
+                "Processing field '%s' of type '%s' for record '%s'.",
+                field_name,
+                field_type,
+                record_id,
             )
 
             field_sections, field_metadata = self._process_field(
@@ -452,7 +455,7 @@ class AirtableConnector(LoadConnector):
             metadata.update(field_metadata)
 
         if not sections:
-            logger.warning(f"No sections found for record {record_id}")
+            logger.warning("No sections found for record %s", record_id)
             return None
 
         # Include base name in semantic ID only in index_all mode
@@ -481,6 +484,7 @@ class AirtableConnector(LoadConnector):
             sections=(cast(list[TextSection | ImageSection], sections)),
             source=DocumentSource.AIRTABLE,
             semantic_identifier=semantic_id,
+            doc_created_at=time_str_to_utc(created_time),
             metadata=metadata,
             doc_metadata={
                 "hierarchy": {
@@ -500,7 +504,7 @@ class AirtableConnector(LoadConnector):
                 if base_info.id == base_id:
                     return base_info.name
         except Exception:
-            logger.debug(f"Could not resolve base name for {base_id}")
+            logger.debug("Could not resolve base name for %s", base_id)
         return None
 
     def _index_table(
@@ -527,7 +531,10 @@ class AirtableConnector(LoadConnector):
                 break
 
         logger.info(
-            f"Processing {len(records)} records from table '{table_schema.name}' in base '{base_name or base_id}'."
+            "Processing %s records from table '%s' in base '%s'.",
+            len(records),
+            table_schema.name,
+            base_name or base_id,
         )
 
         if not records:
@@ -547,7 +554,7 @@ class AirtableConnector(LoadConnector):
                 for record in batch_records:
                     # Capture the current context so that the thread gets the current tenant ID
                     current_context = contextvars.copy_context()
-                    future_to_record[
+                    future_to_record[  # ty: ignore[invalid-assignment]
                         executor.submit(
                             current_context.run,
                             self._process_record,
@@ -567,7 +574,7 @@ class AirtableConnector(LoadConnector):
                         if document:
                             record_documents.append(document)
                     except Exception as e:
-                        logger.exception(f"Failed to process record {record['id']}")
+                        logger.exception("Failed to process record %s", record["id"])
                         raise e
 
             if record_documents:
@@ -594,23 +601,25 @@ class AirtableConnector(LoadConnector):
     def _load_all(self) -> GenerateDocumentsOutput:
         """Discover all bases and tables, then index everything."""
         bases = self.airtable_client.bases()
-        logger.info(f"Discovered {len(bases)} Airtable base(s).")
+        logger.info("Discovered %s Airtable base(s).", len(bases))
 
         for base_info in bases:
             base_id = base_info.id
             base_name = base_info.name
-            logger.info(f"Listing tables for base '{base_name}' ({base_id}).")
+            logger.info("Listing tables for base '%s' (%s).", base_name, base_id)
 
             try:
                 base = self.airtable_client.base(base_id)
                 tables = base.tables()
             except Exception:
                 logger.exception(
-                    f"Failed to list tables for base '{base_name}' ({base_id}), skipping."
+                    "Failed to list tables for base '%s' (%s), skipping.",
+                    base_name,
+                    base_id,
                 )
                 continue
 
-            logger.info(f"Found {len(tables)} table(s) in base '{base_name}'.")
+            logger.info("Found %s table(s) in base '%s'.", len(tables), base_name)
 
             for table in tables:
                 try:
@@ -621,6 +630,10 @@ class AirtableConnector(LoadConnector):
                     )
                 except Exception:
                     logger.exception(
-                        f"Failed to index table '{table.name}' ({table.id}) in base '{base_name}' ({base_id}), skipping."
+                        "Failed to index table '%s' (%s) in base '%s' (%s), skipping.",
+                        table.name,
+                        table.id,
+                        base_name,
+                        base_id,
                     )
                     continue

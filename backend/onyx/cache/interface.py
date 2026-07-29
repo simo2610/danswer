@@ -8,17 +8,30 @@ TTL_KEY_NOT_FOUND = -2
 TTL_NO_EXPIRY = -1
 
 CACHE_TRANSIENT_ERRORS: tuple[type[Exception], ...] = (RedisError, SQLAlchemyError)
-"""Exception types that represent transient cache connectivity / operational
-failures.  Callers that want to fail-open (or fail-closed) on cache errors
-should catch this tuple instead of bare ``Exception``.
+"""
+Exception types that represent transient cache connectivity / operational
+failures. Callers that want to fail-open (or fail-closed) on cache errors should
+catch this tuple instead of bare ``Exception``.
 
-When adding a new ``CacheBackend`` implementation, add its transient error
-base class(es) here so all call-sites pick it up automatically."""
+When adding a new ``CacheBackend`` implementation, add its transient error base
+class(es) here so all call-sites pick it up automatically.
+"""
 
 
 class CacheBackendType(str, Enum):
     REDIS = "redis"
     POSTGRES = "postgres"
+
+
+class CacheLockLostError(Exception):
+    """The lock's lease expired (or was taken over) while we thought we held
+    it — mutual exclusion is already gone, unlike CACHE_TRANSIENT_ERRORS."""
+
+
+class CacheLockAcquisitionError(Exception):
+    """A shared cache lock could not be acquired within the allotted wait — a
+    concurrent holder still owns it. Distinct from CacheLockLostError, which is
+    about losing a lock already held."""
 
 
 class CacheLock(abc.ABC):
@@ -34,6 +47,11 @@ class CacheLock(abc.ABC):
 
     @abc.abstractmethod
     def release(self) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def extend(self, ttl_seconds: float) -> None:
+        """Reset the lock's expiry to *ttl_seconds* from now. Only valid while owned."""
         raise NotImplementedError
 
     @abc.abstractmethod

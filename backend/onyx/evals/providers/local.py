@@ -6,11 +6,13 @@ No external dependencies like Braintrust required.
 from collections.abc import Callable
 from typing import Any
 
-from onyx.evals.models import EvalationAck
-from onyx.evals.models import EvalConfigurationOptions
-from onyx.evals.models import EvalProvider
-from onyx.evals.models import EvalToolResult
-from onyx.evals.models import MultiTurnEvalResult
+from onyx.evals.models import (
+    EvalationAck,
+    EvalConfigurationOptions,
+    EvalProvider,
+    EvalToolResult,
+    MultiTurnEvalResult,
+)
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -153,7 +155,11 @@ class LocalEvalProvider(EvalProvider):
         }
 
         message = eval_input.get("message", "(no message)")
-        truncated_message = message[:50] + "..." if len(message) > 50 else message
+        truncated_message = (
+            message[:50] + "..."  # ty: ignore[not-subscriptable]
+            if len(message) > 50  # ty: ignore[invalid-argument-type]
+            else message
+        )
 
         # Show model if specified
         model_info = ""
@@ -168,7 +174,7 @@ class LocalEvalProvider(EvalProvider):
         except Exception as e:
             print(f"  {RED}ERROR:{RESET} {e}")
             failed[0] += 1
-            logger.exception(f"Error running eval for input: {message}")
+            logger.exception("Error running eval for input: %s", message)
 
     def _run_multi_turn_eval(
         self,
@@ -228,4 +234,4 @@ class LocalEvalProvider(EvalProvider):
         except Exception as e:
             print(f"  {RED}ERROR:{RESET} {e}")
             failed[0] += 1
-            logger.exception(f"Error running multi-turn eval: {first_msg}")
+            logger.exception("Error running multi-turn eval: %s", first_msg)

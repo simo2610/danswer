@@ -2,8 +2,10 @@ from typing import TypedDict
 
 from fastapi.datastructures import Headers
 
-from onyx.configs.model_configs import LITELLM_EXTRA_HEADERS
-from onyx.configs.model_configs import LITELLM_PASS_THROUGH_HEADERS
+from onyx.configs.model_configs import (
+    LITELLM_EXTRA_HEADERS,
+    LITELLM_PASS_THROUGH_HEADERS,
+)
 from onyx.configs.tool_configs import CUSTOM_TOOL_PASS_THROUGH_HEADERS
 from onyx.utils.logger import setup_logger
 
@@ -22,7 +24,7 @@ def clean_header_list(headers_to_clean: list[HeaderItemDict]) -> dict[str, str]:
         value = item["value"]
         if key in cleaned_headers:
             logger.warning(
-                f"Duplicate header {key} found in custom headers, ignoring..."
+                "Duplicate header %s found in custom headers, ignoring...", key
             )
             continue
         cleaned_headers[key] = value

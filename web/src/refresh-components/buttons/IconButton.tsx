@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react";
 import type { IconProps } from "@opal/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@opal/utils";
 import { Tooltip } from "@opal/components";
 
 const buttonClasses = (transient: boolean | undefined) =>
@@ -57,12 +57,12 @@ const buttonClasses = (transient: boolean | undefined) =>
     action: {
       primary: {
         enabled: [
-          "bg-action-link-05",
-          "hover:bg-action-link-04",
-          transient && "bg-action-link-04",
-          "active:bg-action-link-06",
+          "bg-action-selection-05",
+          "hover:bg-action-selection-04",
+          transient && "bg-action-selection-04",
+          "active:bg-action-selection-06",
         ],
-        disabled: ["bg-action-link-02"],
+        disabled: ["bg-action-selection-02"],
       },
       secondary: {
         enabled: [
@@ -201,39 +201,39 @@ const iconClasses = (transient: boolean | undefined) =>
       },
       secondary: {
         enabled: [
-          "stroke-action-link-05",
-          "group-hover/IconButton:stroke-action-link-05",
-          transient && "stroke-action-link-05",
-          "group-active/IconButton:stroke-action-link-06",
+          "stroke-action-selection-05",
+          "group-hover/IconButton:stroke-action-selection-05",
+          transient && "stroke-action-selection-05",
+          "group-active/IconButton:stroke-action-selection-06",
         ],
-        disabled: ["stroke-action-link-02"],
+        disabled: ["stroke-action-selection-02"],
       },
       tertiary: {
         enabled: [
-          "stroke-action-link-05",
-          "group-hover/IconButton:stroke-action-link-05",
-          transient && "stroke-action-link-05",
-          "group-active/IconButton:stroke-action-link-06",
+          "stroke-action-selection-05",
+          "group-hover/IconButton:stroke-action-selection-05",
+          transient && "stroke-action-selection-05",
+          "group-active/IconButton:stroke-action-selection-06",
         ],
-        disabled: ["stroke-action-link-02"],
+        disabled: ["stroke-action-selection-02"],
       },
       internal: {
         enabled: [
-          "stroke-action-link-05",
-          "group-hover/IconButton:stroke-action-link-05",
-          transient && "stroke-action-link-05",
-          "group-active/IconButton:stroke-action-link-06",
+          "stroke-action-selection-05",
+          "group-hover/IconButton:stroke-action-selection-05",
+          transient && "stroke-action-selection-05",
+          "group-active/IconButton:stroke-action-selection-06",
         ],
-        disabled: ["stroke-action-link-02"],
+        disabled: ["stroke-action-selection-02"],
       },
       small: {
         enabled: [
-          "stroke-action-link-05",
-          "group-hover/IconButton:stroke-action-link-05",
-          transient && "stroke-action-link-05",
-          "group-active/IconButton:stroke-action-link-06",
+          "stroke-action-selection-05",
+          "group-hover/IconButton:stroke-action-selection-05",
+          transient && "stroke-action-selection-05",
+          "group-active/IconButton:stroke-action-selection-06",
         ],
-        disabled: ["stroke-action-link-02"],
+        disabled: ["stroke-action-selection-02"],
       },
     },
     danger: {
@@ -280,8 +280,7 @@ const iconClasses = (transient: boolean | undefined) =>
     },
   }) as const;
 
-export interface IconButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   // Top level button variants
   main?: boolean;
   action?: boolean;
@@ -386,11 +385,7 @@ export default function IconButton({
       {...props}
     >
       <Icon
-        className={cn(
-          small ? "h-[0.75rem] w-[0.75rem]" : "h-[1rem] w-[1rem]",
-          iconClass,
-          iconClassName
-        )}
+        className={cn(small ? "h-3 w-3" : "h-4 w-4", iconClass, iconClassName)}
       />
     </button>
   );

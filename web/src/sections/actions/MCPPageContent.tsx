@@ -12,8 +12,8 @@ import {
   MCPServer,
   ToolSnapshot,
 } from "@/lib/tools/interfaces";
-import { toast } from "@/hooks/useToast";
-import { useCreateModal } from "@/refresh-components/contexts/ModalContext";
+import { toast } from "@opal/layouts";
+import { useCreateModal } from "@opal/components";
 import MCPAuthenticationModal from "@/sections/actions/modals/MCPAuthenticationModal";
 import AddMCPServerModal from "@/sections/actions/modals/AddMCPServerModal";
 import DisconnectEntityModal from "./modals/DisconnectEntityModal";
@@ -486,7 +486,7 @@ export default function MCPPageContent() {
         />
       )}
 
-      <div className="flex-shrink-0 mb-4">
+      <div className="shrink-0 mb-4">
         <AdminListHeader
           hasItems={isLoading || mcpServers.length > 0}
           searchQuery={searchQuery}

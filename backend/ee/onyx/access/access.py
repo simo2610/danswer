@@ -1,9 +1,13 @@
 from sqlalchemy.orm import Session
 
-from ee.onyx.db.external_perm import fetch_external_groups_for_user
-from ee.onyx.db.external_perm import fetch_public_external_group_ids
-from ee.onyx.db.user_group import fetch_user_groups_for_documents
-from ee.onyx.db.user_group import fetch_user_groups_for_user
+from ee.onyx.db.external_perm import (
+    fetch_external_groups_for_user,
+    fetch_public_external_group_ids,
+)
+from ee.onyx.db.user_group import (
+    fetch_user_groups_for_documents,
+    fetch_user_groups_for_user,
+)
 from ee.onyx.external_permissions.sync_params import get_source_perm_sync_config
 from onyx.access.access import (
     _get_access_for_documents as get_access_for_documents_without_groups,
@@ -11,15 +15,11 @@ from onyx.access.access import (
 from onyx.access.access import _get_acl_for_user as get_acl_for_user_without_groups
 from onyx.access.access import collect_user_file_access
 from onyx.access.models import DocumentAccess
-from onyx.access.utils import prefix_external_group
-from onyx.access.utils import prefix_user_group
-from onyx.db.document import get_document_sources
-from onyx.db.document import get_documents_by_ids
-from onyx.db.models import User
-from onyx.db.models import UserFile
+from onyx.access.utils import prefix_external_group, prefix_user_group
+from onyx.db.document import get_document_sources, get_documents_by_ids
+from onyx.db.models import User, UserFile
 from onyx.db.user_file import fetch_user_files_with_access_relationships
 from onyx.utils.logger import setup_logger
-
 
 logger = setup_logger()
 
@@ -75,7 +75,7 @@ def _get_access_for_documents(
         document = doc_id_map[document_id]
         source = doc_id_to_source_map.get(document_id)
         if source is None:
-            logger.error(f"Document {document_id} has no source")
+            logger.error("Document %s has no source", document_id)
             continue
 
         perm_sync_config = get_source_perm_sync_config(source)
@@ -112,7 +112,7 @@ def _get_access_for_documents(
         access_map[document_id] = DocumentAccess.build(
             user_emails=list(non_ee_access.user_emails),
             user_groups=user_group_info.get(document_id, []),
-            is_public=is_public_anywhere,
+            is_public=is_public_anywhere,  # ty: ignore[invalid-argument-type]
             external_user_emails=list(ext_u_emails),
             external_user_group_ids=list(ext_u_groups),
         )

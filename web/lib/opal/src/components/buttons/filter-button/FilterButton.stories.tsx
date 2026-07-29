@@ -1,20 +1,12 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { FilterButton } from "@opal/components";
 import { Disabled as DisabledProvider } from "@opal/core";
 import { SvgUser, SvgActions, SvgTag } from "@opal/icons";
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 
 const meta: Meta<typeof FilterButton> = {
   title: "opal/components/FilterButton",
   component: FilterButton,
   tags: ["autodocs"],
-  decorators: [
-    (Story) => (
-      <TooltipPrimitive.Provider>
-        <Story />
-      </TooltipPrimitive.Provider>
-    ),
-  ],
 };
 
 export default meta;

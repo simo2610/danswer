@@ -1,27 +1,26 @@
 import uuid
 
 from fastapi_users.password import PasswordHelper
-from sqlalchemy import delete
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from onyx.auth.api_key import ApiKeyDescriptor
-from onyx.auth.api_key import build_displayable_api_key
-from onyx.auth.api_key import generate_api_key
-from onyx.auth.api_key import hash_api_key
+from onyx.auth.api_key import (
+    ApiKeyDescriptor,
+    build_displayable_api_key,
+    generate_api_key,
+    hash_api_key,
+)
 from onyx.auth.schemas import UserRole
-from onyx.configs.constants import DANSWER_API_KEY_DUMMY_EMAIL_DOMAIN
-from onyx.configs.constants import DANSWER_API_KEY_PREFIX
-from onyx.configs.constants import UNNAMED_KEY_PLACEHOLDER
+from onyx.configs.constants import (
+    DANSWER_API_KEY_DUMMY_EMAIL_DOMAIN,
+    DANSWER_API_KEY_PREFIX,
+    UNNAMED_KEY_PLACEHOLDER,
+)
 from onyx.db.enums import AccountType
-from onyx.db.models import ApiKey
-from onyx.db.models import User
-from onyx.db.models import User__UserGroup
-from onyx.db.models import UserGroup
+from onyx.db.models import ApiKey, User, User__UserGroup, UserGroup
 from onyx.db.permissions import recompute_user_permissions__no_commit
-from onyx.db.users import assign_user_to_default_groups__no_commit
+from onyx.db.users import assign_user_to_default_groups__no_commit, delete_user_from_db
 from onyx.server.api_key.models import APIKeyArgs
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
@@ -117,6 +116,8 @@ def insert_api_key(
             api_key_user_row,
             is_admin=(api_key_args.role == UserRole.ADMIN),
         )
+    else:
+        recompute_user_permissions__no_commit(api_key_user_id, db_session)
 
     db_session.commit()
 
@@ -139,7 +140,9 @@ def update_api_key(
 
     existing_api_key.name = api_key_args.name
     api_key_user = db_session.scalar(
-        select(User).where(User.id == existing_api_key.user_id)  # type: ignore
+        select(User).where(
+            User.id == existing_api_key.user_id  # ty: ignore[invalid-argument-type]
+        )
     )
     if api_key_user is None:
         raise RuntimeError("API Key does not have associated user.")
@@ -168,10 +171,10 @@ def update_api_key(
                 api_key_user,
                 is_admin=(api_key_args.role == UserRole.ADMIN),
             )
-        else:
-            # No group assigned for LIMITED, but we still need to recompute
-            # since we just removed the old default-group membership above.
-            recompute_user_permissions__no_commit(api_key_user.id, db_session)
+
+    # Converge on every update, not just role changes, so edits repair
+    # keys with stale permissions.
+    recompute_user_permissions__no_commit(api_key_user.id, db_session)
 
     db_session.commit()
 
@@ -191,7 +194,9 @@ def regenerate_api_key(db_session: Session, api_key_id: int) -> ApiKeyDescriptor
         raise ValueError(f"API key with id {api_key_id} does not exist")
 
     api_key_user = db_session.scalar(
-        select(User).where(User.id == existing_api_key.user_id)  # type: ignore
+        select(User).where(
+            User.id == existing_api_key.user_id  # ty: ignore[invalid-argument-type]
+        )
     )
     if api_key_user is None:
         raise RuntimeError("API Key does not have associated user.")
@@ -202,6 +207,10 @@ def regenerate_api_key(db_session: Session, api_key_id: int) -> ApiKeyDescriptor
     new_api_key = generate_api_key(tenant_id)
     existing_api_key.hashed_api_key = hash_api_key(new_api_key)
     existing_api_key.api_key_display = build_displayable_api_key(new_api_key)
+
+    # Converge so rotation repairs keys with stale permissions.
+    recompute_user_permissions__no_commit(api_key_user.id, db_session)
+
     db_session.commit()
 
     return ApiKeyDescriptor(
@@ -220,7 +229,9 @@ def remove_api_key(db_session: Session, api_key_id: int) -> None:
         raise ValueError(f"API key with id {api_key_id} does not exist")
 
     user_associated_with_key = db_session.scalar(
-        select(User).where(User.id == existing_api_key.user_id)  # type: ignore
+        select(User).where(
+            User.id == existing_api_key.user_id  # ty: ignore[invalid-argument-type]
+        )
     )
     if user_associated_with_key is None:
         raise ValueError(
@@ -228,5 +239,7 @@ def remove_api_key(db_session: Session, api_key_id: int) -> None:
         )
 
     db_session.delete(existing_api_key)
-    db_session.delete(user_associated_with_key)
-    db_session.commit()
+    # The synthetic API-key user has rows in user__user_group (and may have
+    # other FK-bearing associations); route through the canonical user-delete
+    # helper so all of them are cleaned up before the user row is removed.
+    delete_user_from_db(user_associated_with_key, db_session)

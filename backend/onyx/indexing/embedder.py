@@ -1,31 +1,30 @@
 import time
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections import defaultdict
 
 import sentry_sdk
 
-from onyx.connectors.models import ConnectorFailure
-from onyx.connectors.models import ConnectorStopSignal
-from onyx.connectors.models import DocumentFailure
+from onyx.connectors.models import (
+    ConnectorFailure,
+    ConnectorStopSignal,
+    DocumentFailure,
+)
 from onyx.db.models import SearchSettings
 from onyx.document_index.chunk_content_enrichment import (
     generate_enriched_content_for_chunk_embedding,
 )
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
-from onyx.indexing.models import ChunkEmbedding
-from onyx.indexing.models import DocAwareChunk
-from onyx.indexing.models import IndexChunk
+from onyx.indexing.models import ChunkEmbedding, DocAwareChunk, IndexChunk
 from onyx.natural_language_processing.search_nlp_models import EmbeddingModel
 from onyx.utils.logger import setup_logger
 from onyx.utils.pydantic_util import shallow_model_dump
 from onyx.utils.timing import log_function_time
-from shared_configs.configs import INDEXING_MODEL_SERVER_HOST
-from shared_configs.configs import INDEXING_MODEL_SERVER_PORT
-from shared_configs.enums import EmbeddingProvider
-from shared_configs.enums import EmbedTextType
+from shared_configs.configs import (
+    INDEXING_MODEL_SERVER_HOST,
+    INDEXING_MODEL_SERVER_PORT,
+)
+from shared_configs.enums import EmbeddingProvider, EmbedTextType
 from shared_configs.model_server_models import Embedding
-
 
 logger = setup_logger()
 
@@ -300,7 +299,7 @@ def embed_chunks_with_failure_handling(
                     scope.set_tag("tenant_id", tenant_id)
                 scope.fingerprint = ["embedding-failure", type(e).__name__]
                 sentry_sdk.capture_exception(e)
-            logger.exception(f"Failed to embed chunks for document '{doc_id}'")
+            logger.exception("Failed to embed chunks for document '%s'", doc_id)
             failures.append(
                 ConnectorFailure(
                     failed_document=DocumentFailure(

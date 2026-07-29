@@ -3,23 +3,25 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Formik, Form, FormikHelpers } from "formik";
 import * as Yup from "yup";
-import Modal from "@/refresh-components/Modal";
-import { Button, Divider } from "@opal/components";
+import { Modal } from "@opal/components";
+import {
+  Button,
+  Divider,
+  MessageCard,
+  PasswordInputTypeIn,
+} from "@opal/components";
 import InputSelect from "@/refresh-components/inputs/InputSelect";
-import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
-import PasswordInputTypeIn from "@/refresh-components/inputs/PasswordInputTypeIn";
+import { InputTypeIn } from "@opal/components";
 import { FormField } from "@/refresh-components/form/FormField";
 import Text from "@/refresh-components/texts/Text";
-import CopyIconButton from "@/refresh-components/buttons/CopyIconButton";
+import { CopyButton } from "@opal/components";
 import KeyValueInput, {
   KeyValue,
 } from "@/refresh-components/inputs/InputKeyValue";
 import { OAuthConfig } from "@/lib/tools/interfaces";
 import { getOAuthConfig } from "@/lib/oauth/api";
 import { SvgArrowExchange } from "@opal/icons";
-import { useAuthType } from "@/lib/hooks";
-import { AuthType } from "@/lib/constants";
-import Message from "@/refresh-components/messages/Message";
+import { useOAuthPassThroughEnabled } from "@/lib/auth/hooks";
 
 export type AuthMethod = "oauth" | "custom-header" | "pt-oauth";
 
@@ -79,9 +81,7 @@ export default function OpenAPIAuthenticationModal({
   onSkip,
   entityName = null,
 }: OpenAPIAuthenticationModalProps) {
-  const authType = useAuthType();
-  const isOAuthEnabled =
-    authType === AuthType.OIDC || authType === AuthType.GOOGLE_OAUTH;
+  const isOAuthEnabled = useOAuthPassThroughEnabled();
   const [existingOAuthConfig, setExistingOAuthConfig] =
     useState<OAuthConfig | null>(null);
   const [isLoadingOAuthConfig, setIsLoadingOAuthConfig] = useState(false);
@@ -434,7 +434,6 @@ export default function OpenAPIAuthenticationModal({
                               value={values.authorizationUrl}
                               onChange={handleChange}
                               placeholder="https://example.com/oauth/authorize"
-                              showClearButton={false}
                             />
                           </FormField.Control>
                           <FormField.Message
@@ -461,7 +460,6 @@ export default function OpenAPIAuthenticationModal({
                               value={values.tokenUrl}
                               onChange={handleChange}
                               placeholder="https://example.com/oauth/access_token"
-                              showClearButton={false}
                             />
                           </FormField.Control>
                           <FormField.Message
@@ -488,7 +486,6 @@ export default function OpenAPIAuthenticationModal({
                               value={values.clientId}
                               onChange={handleChange}
                               placeholder=" "
-                              showClearButton={false}
                             />
                           </FormField.Control>
                           {isEditingOAuthConfig && (
@@ -520,7 +517,6 @@ export default function OpenAPIAuthenticationModal({
                               value={values.clientSecret}
                               onChange={handleChange}
                               placeholder=" "
-                              showClearButton={false}
                             />
                           </FormField.Control>
                           {isEditingOAuthConfig && (
@@ -555,7 +551,6 @@ export default function OpenAPIAuthenticationModal({
                               value={values.scopes}
                               onChange={handleChange}
                               placeholder="e.g. repo, user"
-                              showClearButton={false}
                             />
                           </FormField.Control>
                           <FormField.Description>
@@ -570,8 +565,8 @@ export default function OpenAPIAuthenticationModal({
 
                         <div className="flex flex-col gap-3 rounded-12 bg-background-tint-01 p-3">
                           <Text as="p" text03 secondaryBody>
-                            OAuth passthrough is only available if you enable
-                            OIDC or OAuth authentication.
+                            OAuth pass-through requires an OAuth-capable login
+                            method (Google or OIDC).
                           </Text>
                           <div className="flex flex-col gap-2 w-full">
                             <Text
@@ -594,7 +589,7 @@ export default function OpenAPIAuthenticationModal({
                               >
                                 {redirectUri}
                               </Text>
-                              <CopyIconButton
+                              <CopyButton
                                 getCopyText={() => redirectUri}
                                 tooltip="Copy redirect URI"
                                 prominence="tertiary"
@@ -647,14 +642,9 @@ export default function OpenAPIAuthenticationModal({
                       </section>
                     )}
                     {values.authMethod === "pt-oauth" && (
-                      <Message
-                        text="Use pass-through for services with shared identity provider."
+                      <MessageCard
+                        title="Use pass-through for services with shared identity provider."
                         description="Onyx will forward the user's OAuth access token directly to the server as an Authorization header. Make sure the server supports authentication with the same provider."
-                        default
-                        medium
-                        static
-                        className="w-full"
-                        close={false}
                       />
                     )}
                   </>

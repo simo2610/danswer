@@ -1,3 +1,5 @@
+from collections import Counter
+from collections.abc import Sequence
 from typing import cast
 from uuid import UUID
 
@@ -8,28 +10,29 @@ from onyx.auth.oauth_token_manager import OAuthTokenManager
 from onyx.chat.emitter import Emitter
 from onyx.configs.app_configs import DISABLE_VECTOR_DB
 from onyx.configs.model_configs import GEN_AI_TEMPERATURE
-from onyx.context.search.models import BaseFilters
-from onyx.context.search.models import PersonaSearchInfo
+from onyx.context.search.models import BaseFilters, PersonaSearchInfo
 from onyx.db.engine.sql_engine import get_session_with_current_tenant_if_none
-from onyx.db.enums import MCPAuthenticationPerformer
-from onyx.db.enums import MCPAuthenticationType
-from onyx.db.mcp import get_all_mcp_tools_for_server
-from onyx.db.mcp import get_mcp_server_by_id
-from onyx.db.mcp import get_user_connection_config
-from onyx.db.models import Persona
-from onyx.db.models import User
+from onyx.db.mcp import (
+    MCPCredentialsError,
+    get_all_mcp_tools_for_server,
+    get_mcp_server_by_id,
+    resolve_mcp_credentials,
+)
+from onyx.db.models import Persona, User
+from onyx.db.models import Tool as ToolDBModel
 from onyx.db.oauth_config import get_oauth_config
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.tools import get_builtin_tool
 from onyx.document_index.factory import get_default_document_index
 from onyx.image_gen.interfaces import ImageGenerationProviderCredentials
-from onyx.llm.interfaces import LLM
-from onyx.llm.interfaces import LLMConfig
+from onyx.llm.interfaces import LLM, LLMConfig
 from onyx.onyxbot.slack.models import SlackContext
 from onyx.tools.built_in_tools import get_built_in_tool_by_id
 from onyx.tools.interface import Tool
-from onyx.tools.models import DynamicSchemaInfo
-from onyx.tools.models import SearchToolUsage
+from onyx.tools.models import DynamicSchemaInfo, SearchToolUsage
+from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
+    CodingAgentTool,
+)
 from onyx.tools.tool_implementations.custom.custom_tool import (
     build_custom_tools_from_openapi_schema_and_headers,
 )
@@ -39,18 +42,21 @@ from onyx.tools.tool_implementations.images.image_generation_tool import (
 )
 from onyx.tools.tool_implementations.mcp.mcp_tool import MCPTool
 from onyx.tools.tool_implementations.memory.memory_tool import MemoryTool
-from onyx.tools.tool_implementations.open_url.open_url_tool import (
-    OpenURLTool,
-)
+from onyx.tools.tool_implementations.open_url.open_url_tool import OpenURLTool
 from onyx.tools.tool_implementations.python.python_tool import PythonTool
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
-from onyx.tools.tool_implementations.web_search.web_search_tool import (
-    WebSearchTool,
-)
+from onyx.tools.tool_implementations.web_search.web_search_tool import WebSearchTool
 from onyx.utils.headers import header_dict_to_header_list
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+
+def _disambiguate_mcp_tool_names(tools: list[Tool]) -> None:
+    tool_name_counts = Counter(tool.name for tool in tools)
+    for tool in tools:
+        if isinstance(tool, MCPTool) and tool_name_counts[tool.name] > 1:
+            tool.use_disambiguated_name()
 
 
 class SearchToolConfig(BaseModel):
@@ -65,6 +71,7 @@ class SearchToolConfig(BaseModel):
     additional_context: str | None = None
     slack_context: SlackContext | None = None
     enable_slack_search: bool = True
+    auto_detect_filters: bool = True
 
 
 class FileReaderToolConfig(BaseModel):
@@ -109,6 +116,25 @@ def _get_image_generation_config(llm: LLM, db_session: Session) -> LLMConfig:
         deployment_name=llm_provider.deployment_name,
         max_input_tokens=llm.config.max_input_tokens,
         custom_config=llm_provider.custom_config,
+    )
+
+
+def should_disable_open_url_web_fetch(
+    persona_tools: Sequence[ToolDBModel],
+    allowed_tool_ids: list[int] | None,
+) -> bool:
+    """OpenURLTool is hidden from the chat tool toggles (chat_selectable=False)
+    but reaches the live internet on its own via the crawler fallback. Treat an
+    explicit exclusion of WebSearchTool as disabling OpenURLTool's web
+    fetching, so that turning off web search for a message actually cuts off
+    web access — while pasted links can still be served from indexed
+    documents."""
+    if allowed_tool_ids is None:
+        return False
+    return any(
+        tool.in_code_tool_id == WebSearchTool.__name__
+        and tool.id not in allowed_tool_ids
+        for tool in persona_tools
     )
 
 
@@ -164,7 +190,10 @@ def _construct_tools_impl(
     # Log which tools are attached to the persona for debugging
     persona_tool_names = [t.name for t in persona.tools]
     logger.debug(
-        f"Constructing tools for persona '{persona.name}' (id={persona.id}): {persona_tool_names}"
+        "Constructing tools for persona '%s' (id=%s): %s",
+        persona.name,
+        persona.id,
+        persona_tool_names,
     )
 
     mcp_tool_cache: dict[int, dict[int, MCPTool]] = {}
@@ -197,7 +226,12 @@ def _construct_tools_impl(
             bypass_acl=config.bypass_acl,
             slack_context=config.slack_context,
             enable_slack_search=config.enable_slack_search,
+            auto_detect_filters=config.auto_detect_filters,
         )
+
+    open_url_web_fetch_disabled = should_disable_open_url_web_fetch(
+        persona.tools, allowed_tool_ids
+    )
 
     added_search_tool = False
     for db_tool_model in persona.tools:
@@ -268,13 +302,21 @@ def _construct_tools_impl(
                         WebSearchTool(tool_id=db_tool_model.id, emitter=emitter)
                     ]
                 except ValueError as e:
-                    logger.error(f"Failed to initialize Internet Search Tool: {e}")
+                    logger.error("Failed to initialize Internet Search Tool: %s", e)
                     raise ValueError(
                         "Internet search tool requires a search provider API key, please contact your Onyx admin to get it added!"
                     )
 
             # Handle Open URL Tool
             elif tool_cls.__name__ == OpenURLTool.__name__:
+                if open_url_web_fetch_disabled and DISABLE_VECTOR_DB:
+                    # Without an index, open_url can serve nothing once web
+                    # fetching is off (crawl-only deployments).
+                    logger.debug(
+                        "Skipping OpenURLTool: WebSearchTool is excluded for "
+                        "this message and no document index is available"
+                    )
+                    continue
                 try:
                     tool_dict[db_tool_model.id] = [
                         OpenURLTool(
@@ -282,10 +324,11 @@ def _construct_tools_impl(
                             emitter=emitter,
                             document_index=document_index,
                             user=user,
+                            web_fetch_disabled=open_url_web_fetch_disabled,
                         )
                     ]
                 except RuntimeError as e:
-                    logger.error(f"Failed to initialize Open URL Tool: {e}")
+                    logger.error("Failed to initialize Open URL Tool: %s", e)
                     raise ValueError(
                         "Open URL tool requires a web content provider, please contact your Onyx admin to get it configured!"
                     )
@@ -294,6 +337,16 @@ def _construct_tools_impl(
             elif tool_cls.__name__ == PythonTool.__name__:
                 tool_dict[db_tool_model.id] = [
                     PythonTool(tool_id=db_tool_model.id, emitter=emitter)
+                ]
+
+            # Handle Coding Agent Tool
+            elif tool_cls.__name__ == CodingAgentTool.__name__:
+                tool_dict[db_tool_model.id] = [
+                    CodingAgentTool(
+                        tool_id=db_tool_model.id,
+                        emitter=emitter,
+                        llm=llm,
+                    )
                 ]
 
             # Handle File Reader Tool
@@ -339,7 +392,7 @@ def _construct_tools_impl(
             if db_tool_model.oauth_config_id:
                 if user.is_anonymous:
                     logger.warning(
-                        f"Anonymous user cannot use OAuth tool {db_tool_model.id}"
+                        "Anonymous user cannot use OAuth tool %s", db_tool_model.id
                     )
                     continue
                 oauth_config = get_oauth_config(
@@ -350,15 +403,17 @@ def _construct_tools_impl(
                     oauth_token_for_tool = token_manager.get_valid_access_token()
                     if not oauth_token_for_tool:
                         logger.warning(
-                            f"No valid OAuth token found for tool {db_tool_model.id} "
-                            f"with OAuth config {db_tool_model.oauth_config_id}"
+                            "No valid OAuth token found for tool %s with OAuth config %s",
+                            db_tool_model.id,
+                            db_tool_model.oauth_config_id,
                         )
 
             # Priority 2: Passthrough auth (user's login OAuth token)
             elif db_tool_model.passthrough_auth:
                 if user.is_anonymous:
                     logger.warning(
-                        f"Anonymous user cannot use passthrough auth tool {db_tool_model.id}"
+                        "Anonymous user cannot use passthrough auth tool %s",
+                        db_tool_model.id,
                     )
                     continue
                 oauth_token_for_tool = user_oauth_token
@@ -372,6 +427,8 @@ def _construct_tools_impl(
                     dynamic_schema_info=DynamicSchemaInfo(
                         chat_session_id=custom_tool_config.chat_session_id,
                         message_id=custom_tool_config.message_id,
+                        user_id=user.id,
+                        user_email="anonymous" if user.is_anonymous else user.email,
                     ),
                     custom_headers=(db_tool_model.custom_headers or [])
                     + (
@@ -393,31 +450,11 @@ def _construct_tools_impl(
 
             mcp_server = get_mcp_server_by_id(db_tool_model.mcp_server_id, db_session)
 
-            # Get user-specific connection config if needed
-            connection_config = None
-            user_email = user.email
-            mcp_user_oauth_token = None
-
-            if mcp_server.auth_type == MCPAuthenticationType.PT_OAUTH:
-                # Pass-through OAuth: use the user's login OAuth token
-                if user.is_anonymous:
-                    logger.warning(
-                        f"Anonymous user cannot use PT_OAUTH MCP server {mcp_server.id}"
-                    )
-                    continue
-                mcp_user_oauth_token = user_oauth_token
-            elif (
-                mcp_server.auth_type == MCPAuthenticationType.API_TOKEN
-                or mcp_server.auth_type == MCPAuthenticationType.OAUTH
-            ):
-                # If server has a per-user template, only use that user's config
-                if mcp_server.auth_performer == MCPAuthenticationPerformer.PER_USER:
-                    connection_config = get_user_connection_config(
-                        mcp_server.id, user_email, db_session
-                    )
-                else:
-                    # No per-user template: use admin config
-                    connection_config = mcp_server.admin_connection_config
+            try:
+                mcp_credentials = resolve_mcp_credentials(mcp_server, user, db_session)
+            except MCPCredentialsError as e:
+                logger.warning(str(e))
+                continue
 
             # Get all saved tools for this MCP server
             saved_tools = get_all_mcp_tools_for_server(mcp_server.id, db_session)
@@ -441,10 +478,10 @@ def _construct_tools_impl(
                     tool_name=saved_tool.name,
                     tool_description=saved_tool.description,
                     tool_definition=saved_tool.mcp_input_schema or {},
-                    connection_config=connection_config,
-                    user_email=user_email,
+                    connection_config=mcp_credentials.connection_config,
+                    user_email=user.email,
                     user_id=str(user.id),
-                    user_oauth_token=mcp_user_oauth_token,
+                    user_oauth_token=mcp_credentials.user_oauth_token,
                     additional_headers=additional_mcp_headers,
                 )
                 mcp_tool_cache[db_tool_model.mcp_server_id][saved_tool.id] = mcp_tool
@@ -453,7 +490,9 @@ def _construct_tools_impl(
                     tool_dict[saved_tool.id] = [cast(Tool, mcp_tool)]
             if db_tool_model.id not in tool_dict:
                 logger.warning(
-                    f"Tool '{expected_tool_name}' not found in MCP server '{mcp_server.name}'"
+                    "Tool '%s' not found in MCP server '%s'",
+                    expected_tool_name,
+                    mcp_server.name,
                 )
 
     if (
@@ -490,5 +529,6 @@ def _construct_tools_impl(
     tools: list[Tool] = []
     for tool_list in tool_dict.values():
         tools.extend(tool_list)
+    _disambiguate_mcp_tool_names(tools)
 
     return tool_dict

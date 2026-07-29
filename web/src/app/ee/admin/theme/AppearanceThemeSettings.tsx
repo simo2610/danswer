@@ -1,14 +1,19 @@
 "use client";
 
 import { FormField } from "@/refresh-components/form/FormField";
-import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
-import Tabs from "@/refresh-components/Tabs";
-import { Preview } from "./Preview";
-import InputTextArea from "@/refresh-components/inputs/InputTextArea";
-import Switch from "@/refresh-components/inputs/Switch";
+import {
+  Button,
+  Divider,
+  InputTextArea,
+  InputTypeIn,
+  Switch,
+  Tabs,
+  Tag,
+} from "@opal/components";
+import Preview from "@/app/ee/admin/theme/Preview";
 import CharacterCount from "@/refresh-components/CharacterCount";
 import InputImage from "@/refresh-components/inputs/InputImage";
-import { Button, Divider } from "@opal/components";
+import { Disabled } from "@opal/core";
 import { useFormikContext } from "formik";
 import {
   forwardRef,
@@ -20,6 +25,9 @@ import {
 } from "react";
 import type { PreviewHighlightTarget } from "./Preview";
 import { SvgEdit } from "@opal/icons";
+import { useTierAtLeast } from "@/hooks/useTierAtLeast";
+import { Tier } from "@/lib/settings/types";
+import { planTagProps } from "@/lib/tier-badge";
 
 interface AppearanceThemeSettingsProps {
   selectedLogo: File | null;
@@ -33,6 +41,8 @@ interface AppearanceThemeSettingsProps {
     custom_popup_header: number;
     custom_popup_content: number;
     consent_screen_prompt: number;
+    system_announcement_header: number;
+    system_announcement_content: number;
   };
 }
 
@@ -48,6 +58,7 @@ export const AppearanceThemeSettings = forwardRef<
   ref
 ) {
   const { values, errors, setFieldValue } = useFormikContext<any>();
+  const enterpriseTier = useTierAtLeast(Tier.ENTERPRISE);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const applicationNameInputRef = useRef<HTMLInputElement>(null);
   const greetingMessageInputRef = useRef<HTMLInputElement>(null);
@@ -56,11 +67,17 @@ export const AppearanceThemeSettings = forwardRef<
   const noticeHeaderInputRef = useRef<HTMLInputElement>(null);
   const noticeContentInputRef = useRef<HTMLTextAreaElement>(null);
   const consentPromptTextAreaRef = useRef<HTMLTextAreaElement>(null);
+  const customHelpLinkUrlInputRef = useRef<HTMLInputElement>(null);
+  const systemAnnouncementHeaderInputRef = useRef<HTMLInputElement>(null);
+  const systemAnnouncementContentInputRef = useRef<HTMLTextAreaElement>(null);
   const prevShowFirstVisitNoticeRef = useRef<boolean>(
     Boolean(values.show_first_visit_notice)
   );
   const prevEnableConsentScreenRef = useRef<boolean>(
     Boolean(values.enable_consent_screen)
+  );
+  const prevSystemAnnouncementEnabledRef = useRef<boolean>(
+    Boolean(values.system_announcement_enabled)
   );
   const [focusedPreviewTarget, setFocusedPreviewTarget] =
     useState<PreviewHighlightTarget | null>(null);
@@ -96,6 +113,15 @@ export const AppearanceThemeSettings = forwardRef<
         { name: "custom_popup_header", ref: noticeHeaderInputRef },
         { name: "custom_popup_content", ref: noticeContentInputRef },
         { name: "consent_screen_prompt", ref: consentPromptTextAreaRef },
+        { name: "custom_help_link_url", ref: customHelpLinkUrlInputRef },
+        {
+          name: "system_announcement_header",
+          ref: systemAnnouncementHeaderInputRef,
+        },
+        {
+          name: "system_announcement_content",
+          ref: systemAnnouncementContentInputRef,
+        },
       ];
       for (const field of fieldRefs) {
         if (errors[field.name] && field.ref.current) {
@@ -138,6 +164,20 @@ export const AppearanceThemeSettings = forwardRef<
 
     prevEnableConsentScreenRef.current = next;
   }, [values.enable_consent_screen]);
+
+  useEffect(() => {
+    const prev = prevSystemAnnouncementEnabledRef.current;
+    const next = Boolean(values.system_announcement_enabled);
+
+    // When enabling the toggle, autofocus the "Notice Header" input.
+    if (!prev && next) {
+      requestAnimationFrame(() => {
+        systemAnnouncementHeaderInputRef.current?.focus();
+      });
+    }
+
+    prevSystemAnnouncementEnabledRef.current = next;
+  }, [values.system_announcement_enabled]);
 
   const handleLogoEdit = () => {
     fileInputRef.current?.click();
@@ -226,7 +266,7 @@ export const AppearanceThemeSettings = forwardRef<
               <InputTypeIn
                 ref={applicationNameInputRef}
                 data-label="application-name-input"
-                showClearButton
+                clearButton
                 variant={errors.application_name ? "error" : undefined}
                 value={values.application_name}
                 {...getPreviewHandlers("sidebar")}
@@ -358,7 +398,7 @@ export const AppearanceThemeSettings = forwardRef<
           <InputTypeIn
             ref={greetingMessageInputRef}
             data-label="greeting-message-input"
-            showClearButton
+            clearButton
             variant={errors.custom_greeting_message ? "error" : undefined}
             value={values.custom_greeting_message}
             {...getPreviewHandlers("greeting")}
@@ -390,7 +430,7 @@ export const AppearanceThemeSettings = forwardRef<
           <InputTypeIn
             ref={headerContentInputRef}
             data-label="chat-header-input"
-            showClearButton
+            clearButton
             variant={errors.custom_header_content ? "error" : undefined}
             value={values.custom_header_content}
             {...getPreviewHandlers("chat_header")}
@@ -441,6 +481,100 @@ export const AppearanceThemeSettings = forwardRef<
         />
       </FormField>
 
+      <Disabled
+        disabled={!enterpriseTier}
+        tooltip="Custom help link is an Enterprise Plan feature."
+      >
+        <div className="flex gap-2 items-start">
+          <FormField
+            state={errors.custom_help_link_url ? "error" : "idle"}
+            className="flex-1"
+          >
+            <FormField.Label>
+              Custom Help Link
+              {!enterpriseTier && (
+                <Tag {...planTagProps("enterprise")} size="sm" />
+              )}
+            </FormField.Label>
+            <FormField.Control asChild>
+              <InputTypeIn
+                ref={customHelpLinkUrlInputRef}
+                data-label="custom-help-link-url-input"
+                clearButton
+                placeholder="https://docs.onyx.app"
+                variant={
+                  !enterpriseTier
+                    ? "disabled"
+                    : errors.custom_help_link_url
+                      ? "error"
+                      : undefined
+                }
+                value={values.custom_help_link_url}
+                onChange={(e) =>
+                  setFieldValue("custom_help_link_url", e.target.value)
+                }
+              />
+            </FormField.Control>
+            <FormField.Description>
+              Add a custom help link in the user menu in addition to the Onyx
+              documentation.
+            </FormField.Description>
+            <FormField.Message
+              messages={{ error: errors.custom_help_link_url as string }}
+            />
+          </FormField>
+          <FormField state="idle" className="flex-1">
+            <FormField.Label className="invisible" aria-hidden="true">
+              Custom Help Link Label
+            </FormField.Label>
+            <FormField.Control asChild>
+              <InputTypeIn
+                aria-label="Custom Help Link Label"
+                data-label="custom-help-link-label-input"
+                clearButton
+                placeholder="Link label"
+                variant={!enterpriseTier ? "disabled" : undefined}
+                value={values.custom_help_link_label}
+                onChange={(e) =>
+                  setFieldValue("custom_help_link_label", e.target.value)
+                }
+              />
+            </FormField.Control>
+          </FormField>
+        </div>
+      </Disabled>
+
+      <Disabled
+        disabled={!enterpriseTier}
+        tooltip="Hiding Onyx branding is an Enterprise Plan feature."
+      >
+        <FormField state="idle" className="gap-0">
+          <div className="flex justify-between items-center">
+            <FormField.Label>
+              Hide Onyx Branding
+              {!enterpriseTier && (
+                <Tag {...planTagProps("enterprise")} size="sm" />
+              )}
+            </FormField.Label>
+            <FormField.Control>
+              <Switch
+                aria-label="Hide Onyx Branding"
+                data-label="hide-onyx-branding-toggle"
+                checked={values.hide_onyx_branding}
+                onCheckedChange={(checked) =>
+                  setFieldValue("hide_onyx_branding", checked)
+                }
+                disabled={!enterpriseTier}
+              />
+            </FormField.Control>
+          </div>
+          <FormField.Description>
+            Remove &ldquo;powered by Onyx&rdquo; and other Onyx branding
+            presence in the app.
+          </FormField.Description>
+        </FormField>
+      </Disabled>
+
       <Divider />
 
       <div className="flex flex-col gap-4 p-4 bg-background-tint-00 rounded-16">
@@ -481,7 +615,7 @@ export const AppearanceThemeSettings = forwardRef<
                 <InputTypeIn
                   ref={noticeHeaderInputRef}
                   data-label="notice-header-input"
-                  showClearButton
+                  clearButton
                   variant={errors.custom_popup_header ? "error" : undefined}
                   value={values.custom_popup_header}
                   onChange={(e) =>
@@ -577,6 +711,126 @@ export const AppearanceThemeSettings = forwardRef<
                 />
               </FormField>
             )}
+          </>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-4 p-4 bg-background-tint-00 rounded-16">
+        <FormField state="idle" className="gap-0">
+          <div className="flex justify-between items-center">
+            <FormField.Label>System Announcement</FormField.Label>
+            <FormField.Control>
+              <Switch
+                aria-label="System Announcement"
+                data-label="system-announcement-toggle"
+                checked={values.system_announcement_enabled}
+                onCheckedChange={(checked) =>
+                  setFieldValue("system_announcement_enabled", checked)
+                }
+              />
+            </FormField.Control>
+          </div>
+          <FormField.Description>
+            Show a persistent system announcement that users can dismiss.
+          </FormField.Description>
+        </FormField>
+
+        {values.system_announcement_enabled && (
+          <>
+            <FormField
+              state={errors.system_announcement_header ? "error" : "idle"}
+            >
+              <FormField.Label
+                required
+                rightAction={
+                  <CharacterCount
+                    value={values.system_announcement_header}
+                    limit={charLimits.system_announcement_header}
+                  />
+                }
+              >
+                Notice Header
+              </FormField.Label>
+              <FormField.Control asChild>
+                <InputTypeIn
+                  ref={systemAnnouncementHeaderInputRef}
+                  data-label="system-announcement-header-input"
+                  clearButton
+                  placeholder="Add an announcement"
+                  variant={
+                    errors.system_announcement_header ? "error" : undefined
+                  }
+                  value={values.system_announcement_header}
+                  onChange={(e) =>
+                    setFieldValue("system_announcement_header", e.target.value)
+                  }
+                />
+              </FormField.Control>
+              <FormField.Message
+                messages={{
+                  error: errors.system_announcement_header as string,
+                }}
+              />
+            </FormField>
+
+            <FormField
+              state={errors.system_announcement_content ? "error" : "idle"}
+            >
+              <FormField.Label
+                required
+                rightAction={
+                  <CharacterCount
+                    value={values.system_announcement_content}
+                    limit={charLimits.system_announcement_content}
+                  />
+                }
+              >
+                Notice Content
+              </FormField.Label>
+              <FormField.Control asChild>
+                <InputTextArea
+                  ref={systemAnnouncementContentInputRef}
+                  data-label="system-announcement-content-textarea"
+                  rows={3}
+                  placeholder="Add markdown content"
+                  variant={
+                    errors.system_announcement_content ? "error" : undefined
+                  }
+                  value={values.system_announcement_content}
+                  onChange={(e) =>
+                    setFieldValue("system_announcement_content", e.target.value)
+                  }
+                />
+              </FormField.Control>
+              <FormField.Message
+                messages={{
+                  error: errors.system_announcement_content as string,
+                }}
+              />
+            </FormField>
+
+            <FormField state="idle" className="gap-0">
+              <div className="flex justify-between items-center">
+                <FormField.Label>Pop-up Notice at First Visit</FormField.Label>
+                <FormField.Control>
+                  <Switch
+                    aria-label="Pop-up Notice at First Visit"
+                    data-label="system-announcement-popup-toggle"
+                    checked={values.system_announcement_show_as_popup}
+                    onCheckedChange={(checked) =>
+                      setFieldValue(
+                        "system_announcement_show_as_popup",
+                        checked
+                      )
+                    }
+                  />
+                </FormField.Control>
+              </div>
+              <FormField.Description>
+                Also show this notice as a full-screen pop-up at first visit for
+                all users. Use with caution.
+              </FormField.Description>
+            </FormField>
           </>
         )}
       </div>

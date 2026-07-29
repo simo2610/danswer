@@ -5,16 +5,15 @@ the permissions of the curator manipulating connector-credential pairs.
 
 import os
 
+import httpx
 import pytest
-from onyx_openapi_client.exceptions import ApiException  # type: ignore[import-untyped,unused-ignore,import-not-found]
 
 from onyx.db.enums import AccessType
 from onyx.server.documents.models import DocumentSource
 from tests.integration.common_utils.managers.cc_pair import CCPairManager
 from tests.integration.common_utils.managers.connector import ConnectorManager
 from tests.integration.common_utils.managers.credential import CredentialManager
-from tests.integration.common_utils.managers.user import DATestUser
-from tests.integration.common_utils.managers.user import UserManager
+from tests.integration.common_utils.managers.user import DATestUser, UserManager
 from tests.integration.common_utils.managers.user_group import UserGroupManager
 
 
@@ -95,7 +94,7 @@ def test_cc_pair_permissions(reset: None) -> None:  # noqa: ARG001
 
     # Curators should not be able to create a cc
     # pair for a user group they are not a curator of
-    with pytest.raises(ApiException):
+    with pytest.raises(httpx.HTTPStatusError):
         CCPairManager.create(
             connector_id=connector_1.id,
             credential_id=credential_1.id,
@@ -107,7 +106,7 @@ def test_cc_pair_permissions(reset: None) -> None:  # noqa: ARG001
 
     # Curators should not be able to create a cc
     # pair without an attached user group
-    with pytest.raises(ApiException):
+    with pytest.raises(httpx.HTTPStatusError):
         CCPairManager.create(
             connector_id=connector_1.id,
             credential_id=credential_1.id,
@@ -133,7 +132,7 @@ def test_cc_pair_permissions(reset: None) -> None:  # noqa: ARG001
 
     # Curators should not be able to create a cc
     # pair for a user group that the credential does not belong to
-    with pytest.raises(ApiException):
+    with pytest.raises(httpx.HTTPStatusError):
         CCPairManager.create(
             connector_id=connector_1.id,
             credential_id=credential_2.id,

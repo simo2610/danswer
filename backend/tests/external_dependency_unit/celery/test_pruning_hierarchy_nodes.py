@@ -22,31 +22,34 @@ from sqlalchemy.orm import Session
 from onyx.access.models import ExternalAccess
 from onyx.background.celery.celery_utils import extract_ids_from_runnable_connector
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.interfaces import GenerateSlimDocumentOutput
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.interfaces import SlimConnectorWithPermSync
+from onyx.connectors.interfaces import (
+    GenerateSlimDocumentOutput,
+    SecondsSinceUnixEpoch,
+    SlimConnectorWithPermSync,
+)
 from onyx.connectors.models import HierarchyNode as PydanticHierarchyNode
-from onyx.connectors.models import InputType
-from onyx.connectors.models import SlimDocument
-from onyx.db.enums import AccessType
-from onyx.db.enums import ConnectorCredentialPairStatus
-from onyx.db.enums import HierarchyNodeType
-from onyx.db.hierarchy import delete_orphaned_hierarchy_nodes
-from onyx.db.hierarchy import ensure_source_node_exists
-from onyx.db.hierarchy import get_all_hierarchy_nodes_for_source
-from onyx.db.hierarchy import get_hierarchy_node_by_raw_id
-from onyx.db.hierarchy import link_hierarchy_nodes_to_documents
-from onyx.db.hierarchy import remove_stale_hierarchy_node_cc_pair_entries
-from onyx.db.hierarchy import reparent_orphaned_hierarchy_nodes
-from onyx.db.hierarchy import update_document_parent_hierarchy_nodes
-from onyx.db.hierarchy import upsert_hierarchy_node_cc_pair_entries
-from onyx.db.hierarchy import upsert_hierarchy_nodes_batch
-from onyx.db.models import Connector
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import Credential
+from onyx.connectors.models import InputType, SlimDocument
+from onyx.db.enums import AccessType, ConnectorCredentialPairStatus, HierarchyNodeType
+from onyx.db.hierarchy import (
+    delete_orphaned_hierarchy_nodes,
+    ensure_source_node_exists,
+    get_all_hierarchy_nodes_for_source,
+    get_hierarchy_node_by_raw_id,
+    link_hierarchy_nodes_to_documents,
+    remove_stale_hierarchy_node_cc_pair_entries,
+    reparent_orphaned_hierarchy_nodes,
+    update_document_parent_hierarchy_nodes,
+    upsert_hierarchy_node_cc_pair_entries,
+    upsert_hierarchy_nodes_batch,
+)
+from onyx.db.models import (
+    Connector,
+    ConnectorCredentialPair,
+    Credential,
+    HierarchyNodeByConnectorCredentialPair,
+)
 from onyx.db.models import Document as DbDocument
 from onyx.db.models import HierarchyNode as DBHierarchyNode
-from onyx.db.models import HierarchyNodeByConnectorCredentialPair
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.kg.models import KGStage
 
@@ -467,9 +470,9 @@ def test_extraction_preserves_parent_hierarchy_raw_node_id(
     result = extract_ids_from_runnable_connector(connector, callback=None)
 
     for doc_id, expected_parent in DOC_PARENT_MAP.items():
-        assert (
-            result.raw_id_to_parent[doc_id] == expected_parent
-        ), f"raw_id_to_parent[{doc_id}] should be {expected_parent}"
+        assert result.raw_id_to_parent[doc_id] == expected_parent, (
+            f"raw_id_to_parent[{doc_id}] should be {expected_parent}"
+        )
 
     # Hierarchy node IDs should NOT be in raw_id_to_parent
     for channel_id in [CHANNEL_A_ID, CHANNEL_B_ID, CHANNEL_C_ID]:
@@ -515,9 +518,9 @@ def test_update_document_parent_hierarchy_nodes(db_session: Session) -> None:
         assert tmp_doc is not None
         doc = tmp_doc
         expected_node_id = node_id_by_raw[raw_parent]
-        assert (
-            doc.parent_hierarchy_node_id == expected_node_id
-        ), f"Document {doc_id} should point to node for {raw_parent}"
+        assert doc.parent_hierarchy_node_id == expected_node_id, (
+            f"Document {doc_id} should point to node for {raw_parent}"
+        )
 
 
 def test_update_document_parent_is_idempotent(db_session: Session) -> None:

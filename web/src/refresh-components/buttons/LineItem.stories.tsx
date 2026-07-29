@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import LineItem from "./LineItem";
 import {
   SvgUser,
@@ -102,6 +102,16 @@ export const WithRightChildren: Story = {
         Cmd+K
       </Text>
     ),
+  },
+};
+
+export const WithWrappedDescription: Story = {
+  args: {
+    icon: SvgSettings,
+    children: "Re-index All Connectors",
+    description:
+      "Safest option. Continue using the current document index with existing settings until all connectors have completed a successful index attempt.",
+    wrapDescription: true,
   },
 };
 

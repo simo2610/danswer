@@ -1,17 +1,11 @@
 import os
-from collections.abc import Awaitable
-from collections.abc import Callable
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
-from urllib.parse import urlsplit
-from urllib.parse import urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import uvicorn
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi.responses import JSONResponse
-from fastapi.responses import PlainTextResponse
-from fastapi.responses import Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_access_token
@@ -199,7 +193,10 @@ if __name__ == "__main__":
     print(f"Scopes Supported: {scopes_supported}")
 
     # Apply middleware at the parent app so it wraps mounted sub-apps too
-    app.add_middleware(WWWAuthenticateMiddleware, protected_prefixes=["/mcp", "/sse"])
+    app.add_middleware(
+        WWWAuthenticateMiddleware,  # ty: ignore[invalid-argument-type]
+        protected_prefixes=["/mcp", "/sse"],
+    )
 
     # 3) Mount MCP apps
     # Streamable HTTP transport (recommended for modern MCP clients)

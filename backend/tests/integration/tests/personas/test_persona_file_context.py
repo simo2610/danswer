@@ -15,18 +15,15 @@ until files reach COMPLETED before chatting.
 
 import time
 
-import requests
-
 from onyx.db.enums import UserFileStatus
-from tests.integration.common_utils.constants import API_SERVER_URL
-from tests.integration.common_utils.constants import MAX_DELAY
+from tests.integration.common_utils.constants import API_SERVER_URL, MAX_DELAY
+from tests.integration.common_utils.http_client import client
 from tests.integration.common_utils.managers.chat import ChatSessionManager
 from tests.integration.common_utils.managers.file import FileManager
 from tests.integration.common_utils.managers.persona import PersonaManager
 from tests.integration.common_utils.managers.project import ProjectManager
 from tests.integration.common_utils.test_file_utils import create_test_text_file
-from tests.integration.common_utils.test_models import DATestLLMProvider
-from tests.integration.common_utils.test_models import DATestUser
+from tests.integration.common_utils.test_models import DATestLLMProvider, DATestUser
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,7 +41,7 @@ def _poll_file_statuses(
     """Block until all files reach the target status or timeout expires."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        response = requests.post(
+        response = client.post(
             f"{API_SERVER_URL}/user/projects/file/statuses",
             json={"file_ids": user_file_ids},
             headers=user.headers,
@@ -209,9 +206,9 @@ def test_persona_files_override_project_files(
     assert response.error is None, f"Chat should succeed, got error: {response.error}"
     # The persona's file should be what the model sees, not the project's
     message_lower = response.full_message.lower()
-    assert (
-        "albatross" in message_lower
-    ), f"Response should reference the persona file's secret word (ALBATROSS), but got: {response.full_message}"
+    assert "albatross" in message_lower, (
+        f"Response should reference the persona file's secret word (ALBATROSS), but got: {response.full_message}"
+    )
 
 
 def test_default_persona_in_project_uses_project_files(
@@ -252,9 +249,9 @@ def test_default_persona_in_project_uses_project_files(
     )
 
     assert response.error is None
-    assert (
-        "pangolin" in response.full_message.lower()
-    ), f"Response should reference the project file content (PANGOLIN), but got: {response.full_message}"
+    assert "pangolin" in response.full_message.lower(), (
+        f"Response should reference the project file content (PANGOLIN), but got: {response.full_message}"
+    )
 
 
 def test_custom_persona_no_files_in_project_ignores_project(

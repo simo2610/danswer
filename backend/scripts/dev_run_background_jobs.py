@@ -1,5 +1,8 @@
+import os
 import subprocess
 import threading
+
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def monitor_process(process_name: str, process: subprocess.Popen) -> None:
@@ -54,7 +57,7 @@ def run_jobs() -> None:
         "--prefetch-multiplier=1",
         "--loglevel=INFO",
         "--hostname=docprocessing@%n",
-        "--queues=docprocessing",
+        "--queues=docprocessing,port",
     ]
 
     cmd_worker_docfetching = [
@@ -109,7 +112,21 @@ def run_jobs() -> None:
         "--loglevel=INFO",
         "--hostname=user_file_processing@%n",
         "-Q",
-        "user_file_processing,user_file_project_sync,user_file_delete",
+        "user_file_processing,user_file_project_sync,user_file_delete,user_file_port",
+    ]
+
+    cmd_worker_scheduled_tasks = [
+        "celery",
+        "-A",
+        "onyx.background.celery.versioned_apps.scheduled_tasks",
+        "worker",
+        "--pool=threads",
+        "--concurrency=4",
+        "--prefetch-multiplier=1",
+        "--loglevel=INFO",
+        "--hostname=scheduled_tasks@%n",
+        "-Q",
+        "scheduled_tasks",
     ]
 
     cmd_beat = [
@@ -128,13 +145,32 @@ def run_jobs() -> None:
         ("HEAVY", cmd_worker_heavy),
         ("MONITORING", cmd_worker_monitoring),
         ("USER_FILE_PROCESSING", cmd_worker_user_file_processing),
+        ("SCHEDULED_TASKS", cmd_worker_scheduled_tasks),
         ("BEAT", cmd_beat),
     ]
+
+    # onyx isn't installed into the venv, and celery keeps the cwd on
+    # sys.path only transiently while importing the app. Spawn-context
+    # children (SimpleJobClient) inherit the worker's sys.path, so pin the
+    # backend dir via PYTHONPATH, mirroring the Dockerfile's PYTHONPATH=/app.
+    _inherited_pythonpath = os.environ.get("PYTHONPATH")
+    worker_env = {
+        **os.environ,
+        "PYTHONPATH": (
+            f"{BACKEND_DIR}{os.pathsep}{_inherited_pythonpath}"
+            if _inherited_pythonpath
+            else BACKEND_DIR
+        ),
+    }
 
     processes = []
     for name, cmd in all_workers:
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            cmd,
+            env=worker_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
         processes.append((name, process))
 

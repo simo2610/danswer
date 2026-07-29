@@ -3,35 +3,32 @@ from enum import Enum
 from typing import TypeVarTuple
 
 from fastapi import HTTPException
-from sqlalchemy import delete
-from sqlalchemy import desc
-from sqlalchemy import exists
-from sqlalchemy import Select
-from sqlalchemy import select
-from sqlalchemy import update
-from sqlalchemy.orm import aliased
-from sqlalchemy.orm import joinedload
-from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from sqlalchemy import Select, delete, desc, exists, func, select, update
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
-from onyx.configs.constants import DocumentSource
+from onyx.configs.constants import DEFAULT_CC_PAIR_ID, DocumentSource
 from onyx.db.connector import fetch_connector_by_id
-from onyx.db.credentials import fetch_credential_by_id
-from onyx.db.credentials import fetch_credential_by_id_for_user
+from onyx.db.credentials import fetch_credential_by_id, fetch_credential_by_id_for_user
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.enums import AccessType
-from onyx.db.enums import ConnectorCredentialPairStatus
-from onyx.db.enums import ProcessingMode
-from onyx.db.models import Connector
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import Credential
-from onyx.db.models import IndexAttempt
-from onyx.db.models import IndexingStatus
-from onyx.db.models import SearchSettings
-from onyx.db.models import User
-from onyx.db.models import User__UserGroup
-from onyx.db.models import UserGroup__ConnectorCredentialPair
-from onyx.db.models import UserRole
+from onyx.db.enums import (
+    AccessType,
+    ConnectorCredentialPairStatus,
+    IndexingMode,
+    ProcessingMode,
+)
+from onyx.db.models import (
+    Connector,
+    ConnectorCredentialPair,
+    Credential,
+    IndexAttempt,
+    IndexingStatus,
+    SearchSettings,
+    User,
+    User__UserGroup,
+    UserGroup__ConnectorCredentialPair,
+    UserRole,
+)
 from onyx.server.models import StatusResponse
 from onyx.utils.logger import setup_logger
 from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
@@ -39,11 +36,95 @@ from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
 logger = setup_logger()
 
 R = TypeVarTuple("R")
+_CONNECTOR_STATE_QUERY_TIMEOUT = "7s"
 
 
 class ConnectorType(str, Enum):
     STANDARD = "standard"
     USER_FILE = "user_file"
+
+
+class ConnectorStateSnapshot(BaseModel):
+    cc_pair_id: int
+    cc_pair_name: str
+    status: ConnectorCredentialPairStatus
+    last_successful_index_time: datetime | None
+    last_pruned: datetime | None
+    last_time_perm_sync: datetime | None
+    last_time_external_group_sync: datetime | None
+    total_docs_indexed: int
+    access_type: AccessType
+    indexing_trigger: IndexingMode | None
+    auto_sync_enabled: bool
+    in_repeated_error_state: bool
+    source: DocumentSource
+    credential_id: int
+
+
+def get_connector_state_snapshots(
+    db_session: Session,
+) -> list[ConnectorStateSnapshot]:
+    db_session.execute(
+        select(
+            func.set_config("statement_timeout", _CONNECTOR_STATE_QUERY_TIMEOUT, True)
+        )
+    )
+    rows = db_session.execute(
+        select(
+            ConnectorCredentialPair.id,
+            ConnectorCredentialPair.name,
+            ConnectorCredentialPair.status,
+            ConnectorCredentialPair.last_successful_index_time,
+            ConnectorCredentialPair.last_pruned,
+            ConnectorCredentialPair.last_time_perm_sync,
+            ConnectorCredentialPair.last_time_external_group_sync,
+            ConnectorCredentialPair.total_docs_indexed,
+            ConnectorCredentialPair.access_type,
+            ConnectorCredentialPair.indexing_trigger,
+            ConnectorCredentialPair.auto_sync_options,
+            ConnectorCredentialPair.in_repeated_error_state,
+            Connector.source,
+            Credential.id,
+        )
+        .join(ConnectorCredentialPair.connector)
+        .join(ConnectorCredentialPair.credential)
+        .where(ConnectorCredentialPair.id != DEFAULT_CC_PAIR_ID)
+    ).all()
+
+    return [
+        ConnectorStateSnapshot(
+            cc_pair_id=cc_pair_id,
+            cc_pair_name=cc_pair_name,
+            status=status,
+            last_successful_index_time=last_successful_index_time,
+            last_pruned=last_pruned,
+            last_time_perm_sync=last_time_perm_sync,
+            last_time_external_group_sync=last_time_external_group_sync,
+            total_docs_indexed=total_docs_indexed or 0,
+            access_type=access_type,
+            indexing_trigger=indexing_trigger,
+            auto_sync_enabled=bool(auto_sync_options),
+            in_repeated_error_state=in_repeated_error_state,
+            source=source,
+            credential_id=credential_id,
+        )
+        for (
+            cc_pair_id,
+            cc_pair_name,
+            status,
+            last_successful_index_time,
+            last_pruned,
+            last_time_perm_sync,
+            last_time_external_group_sync,
+            total_docs_indexed,
+            access_type,
+            indexing_trigger,
+            auto_sync_options,
+            in_repeated_error_state,
+            source,
+            credential_id,
+        ) in rows
+    ]
 
 
 def _add_user_filters(
@@ -91,11 +172,10 @@ def _add_user_filters(
             user_groups = user_groups.where(
                 User__UserGroup.is_curator == True  # noqa: E712
             )
-        where_clause &= (
-            ~exists()
-            .where(UG__CCpair.cc_pair_id == ConnectorCredentialPair.id)
-            .where(~UG__CCpair.user_group_id.in_(user_groups))
-            .correlate(ConnectorCredentialPair)
+        where_clause &= ~exists().where(
+            UG__CCpair.cc_pair_id == ConnectorCredentialPair.id
+        ).where(~UG__CCpair.user_group_id.in_(user_groups)).correlate(
+            ConnectorCredentialPair
         )
         where_clause |= ConnectorCredentialPair.creator_id == user.id
     else:
@@ -127,9 +207,9 @@ def get_connector_credential_pairs_for_user(
             to avoid fetching large JSONB blobs when they aren't needed.
     """
     if eager_load_user:
-        assert (
-            eager_load_credential
-        ), "eager_load_credential must be True if eager_load_user is True"
+        assert eager_load_credential, (
+            "eager_load_credential must be True if eager_load_user is True"
+        )
     stmt = select(ConnectorCredentialPair).distinct()
 
     if eager_load_connector:
@@ -331,15 +411,22 @@ def get_last_successful_attempt_poll_range_end(
     earliest_index: float,
     search_settings: SearchSettings,
     db_session: Session,
+    ignore_targeted_reindex: bool = True,
+    ignore_synthetic_seed: bool = False,
 ) -> float:
     """Used to get the latest `poll_range_end` for a given connector and credential.
 
     This can be used to determine the next "start" time for a new index attempt.
 
+    A reindex-port synthetic seed carries PRESENT's poll cursor and IS a valid resume
+    point, so it is considered by default - the FUTURE's first connector attempt resumes
+    from it instead of refetching full history. This differs from the count/latest helpers,
+    which keep `ignore_synthetic_seed=True` because a seed is not a real indexing run.
+
     Note that the attempts time_started is not necessarily correct - that gets set
     separately and is similar but not exactly the same as the `poll_range_end`.
     """
-    latest_successful_index_attempt = (
+    query = (
         db_session.query(IndexAttempt)
         .join(
             ConnectorCredentialPair,
@@ -350,9 +437,14 @@ def get_last_successful_attempt_poll_range_end(
             IndexAttempt.search_settings_id == search_settings.id,
             IndexAttempt.status == IndexingStatus.SUCCESS,
         )
-        .order_by(IndexAttempt.poll_range_end.desc())
-        .first()
     )
+    if ignore_targeted_reindex:
+        query = query.filter(IndexAttempt.targeted_reindex_job_id.is_(None))
+    if ignore_synthetic_seed:
+        query = query.filter(IndexAttempt.is_synthetic_seed.is_(False))
+    latest_successful_index_attempt = query.order_by(
+        IndexAttempt.poll_range_end.desc()
+    ).first()
     if (
         not latest_successful_index_attempt
         or not latest_successful_index_attempt.poll_range_end
@@ -397,7 +489,8 @@ def update_connector_credential_pair_from_id(
     )
     if not cc_pair:
         logger.warning(
-            f"Attempted to update pair for Connector Credential Pair '{cc_pair_id}' but it does not exist"
+            "Attempted to update pair for Connector Credential Pair '%s' but it does not exist",
+            cc_pair_id,
         )
         return
 
@@ -425,7 +518,9 @@ def update_connector_credential_pair(
     )
     if not cc_pair:
         logger.warning(
-            f"Attempted to update pair for connector id {connector_id} and credential id {credential_id}"
+            "Attempted to update pair for connector id %s and credential id %s",
+            connector_id,
+            credential_id,
         )
         return
 
@@ -540,6 +635,11 @@ def add_credential_to_connector(
         raise HTTPException(status_code=404, detail="Connector does not exist")
 
     if access_type == AccessType.SYNC:
+        fetch_ee_implementation_or_noop(
+            "onyx.utils.tier",
+            "require_business_tier_for_sync_access",
+            noop_return_value=None,
+        )(access_type)
         if not fetch_ee_implementation_or_noop(
             "onyx.external_permissions.sync_params",
             "check_if_valid_sync_source",
@@ -701,6 +801,7 @@ def resync_cc_pair(
     cc_pair: ConnectorCredentialPair,
     search_settings_id: int,
     db_session: Session,
+    commit: bool = True,
 ) -> None:
     """
     Updates state stored in the connector_credential_pair table based on the
@@ -728,6 +829,7 @@ def resync_cc_pair(
                 ConnectorCredentialPair.connector_id == connector_id,
                 ConnectorCredentialPair.credential_id == credential_id,
                 IndexAttempt.search_settings_id == search_settings_id,
+                IndexAttempt.targeted_reindex_job_id.is_(None),
             )
         )
 
@@ -749,32 +851,5 @@ def resync_cc_pair(
         last_success.time_started if last_success else None
     )
 
-    db_session.commit()
-
-
-# ── Metrics query helpers ──────────────────────────────────────────────
-
-
-def get_connector_health_for_metrics(
-    db_session: Session,
-) -> list:  # Returns list of Row tuples
-    """Return connector health data for Prometheus metrics.
-
-    Each row is (cc_pair_id, status, in_repeated_error_state,
-    last_successful_index_time, name, source).
-    """
-    return (
-        db_session.query(
-            ConnectorCredentialPair.id,
-            ConnectorCredentialPair.status,
-            ConnectorCredentialPair.in_repeated_error_state,
-            ConnectorCredentialPair.last_successful_index_time,
-            ConnectorCredentialPair.name,
-            Connector.source,
-        )
-        .join(
-            Connector,
-            ConnectorCredentialPair.connector_id == Connector.id,
-        )
-        .all()
-    )
+    if commit:
+        db_session.commit()

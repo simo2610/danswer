@@ -1,41 +1,47 @@
 import logging
 import multiprocessing
 import os
+import sys
 import time
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
-import sentry_sdk
-from celery import bootsteps  # type: ignore
-from celery import Task
+from celery import (
+    Task,
+    bootsteps,
+)
 from celery.app import trace
 from celery.exceptions import WorkerShutdown
-from celery.signals import before_task_publish
-from celery.signals import task_postrun
-from celery.signals import task_prerun
+from celery.signals import before_task_publish, task_postrun, task_prerun
 from celery.states import READY_STATES
 from celery.utils.log import get_task_logger
-from celery.worker import strategy  # type: ignore
+from celery.worker import strategy
+from celery.worker.control import control_command
 from redis.lock import Lock as RedisLock
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from onyx import __version__
-from onyx.background.celery.apps.task_formatters import CeleryTaskColoredFormatter
-from onyx.background.celery.apps.task_formatters import CeleryTaskPlainFormatter
-from onyx.background.celery.celery_utils import celery_is_worker_primary
-from onyx.background.celery.celery_utils import make_probe_path
-from onyx.background.celery.tasks.vespa.document_sync import DOCUMENT_SYNC_PREFIX
-from onyx.background.celery.tasks.vespa.document_sync import DOCUMENT_SYNC_TASKSET_KEY
-from onyx.configs.app_configs import DISABLE_VECTOR_DB
-from onyx.configs.app_configs import ENABLE_OPENSEARCH_INDEXING_FOR_ONYX
-from onyx.configs.constants import ONYX_CLOUD_CELERY_TASK_PREFIX
-from onyx.configs.constants import OnyxRedisLocks
-from onyx.db.engine.sql_engine import get_sqlalchemy_engine
-from onyx.document_index.opensearch.client import (
-    wait_for_opensearch_with_timeout,
+from onyx.background.celery.apps.task_formatters import (
+    CeleryTaskColoredFormatter,
+    CeleryTaskJsonFormatter,
+    CeleryTaskPlainFormatter,
 )
+from onyx.background.celery.celery_utils import (
+    celery_is_worker_primary,
+    make_probe_path,
+)
+from onyx.background.celery.tasks.vespa.document_sync import (
+    DOCUMENT_SYNC_PREFIX,
+    DOCUMENT_SYNC_TASKSET_KEY,
+)
+from onyx.configs.app_configs import (
+    DISABLE_VECTOR_DB,
+    ENABLE_OPENSEARCH_INDEXING_FOR_ONYX,
+    ONYX_DISABLE_VESPA,
+)
+from onyx.configs.constants import ONYX_CLOUD_CELERY_TASK_PREFIX, OnyxRedisLocks
+from onyx.db.engine.sql_engine import get_sqlalchemy_engine
+from onyx.document_index.opensearch.client import wait_for_opensearch_with_timeout
 from onyx.document_index.vespa.shared_utils.utils import wait_for_vespa_with_timeout
 from onyx.httpx.httpx_pool import HttpxPool
 from onyx.redis.redis_connector import RedisConnector
@@ -47,15 +53,23 @@ from onyx.redis.redis_document_set import RedisDocumentSet
 from onyx.redis.redis_pool import get_redis_client
 from onyx.redis.redis_usergroup import RedisUserGroup
 from onyx.tracing.setup import setup_tracing
-from onyx.utils.logger import ColoredFormatter
-from onyx.utils.logger import LoggerContextVars
-from onyx.utils.logger import PlainFormatter
-from onyx.utils.logger import setup_logger
-from shared_configs.configs import DEV_LOGGING_ENABLED
-from shared_configs.configs import MULTI_TENANT
-from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
-from shared_configs.configs import SENTRY_DSN
-from shared_configs.configs import TENANT_ID_PREFIX
+from onyx.utils.logger import (
+    ColoredFormatter,
+    LoggerContextVars,
+    PlainFormatter,
+    get_json_formatter,
+    get_log_level_from_str,
+    setup_logger,
+)
+from shared_configs.configs import (
+    DEV_LOGGING_ENABLED,
+    JSON_LOGGING,
+    MULTI_TENANT,
+    POSTGRES_DEFAULT_SCHEMA,
+    SENTRY_CELERY_TRACES_SAMPLE_RATE,
+    SENTRY_DSN,
+    TENANT_ID_PREFIX,
+)
 from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
 logger = setup_logger()
@@ -63,18 +77,34 @@ logger = setup_logger()
 task_logger = get_task_logger(__name__)
 
 if SENTRY_DSN:
-    from onyx.configs.sentry import _add_instance_tags
+    from onyx.configs.sentry import init_sentry
 
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
+    init_sentry(
+        traces_sample_rate=SENTRY_CELERY_TRACES_SAMPLE_RATE,
         integrations=[CeleryIntegration()],
-        traces_sample_rate=0.1,
-        release=__version__,
-        before_send=_add_instance_tags,
     )
-    logger.info("Sentry initialized")
 else:
     logger.debug("Sentry DSN not provided, skipping Sentry initialization")
+
+
+@control_command()
+def clear_revoked(state: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG001
+    """Remote command to wipe this worker's in-memory revoked-task set.
+
+    The set lives only in memory, propagates between workers via mingle, and its
+    cross-node entries don't expire — so after a mass-revoke it can pin at its 50k
+    cap and won't self-heal or clear on a rolling restart. Broadcast this to clear
+    the fleet without restarting. Deliberate use only: revoked state is dropped.
+
+    Intentionally ungated, like Celery's built-in shutdown/terminate/revoke control
+    commands: the trust boundary is broker access, not a per-command check.
+    """
+    from celery.worker import state as worker_state
+
+    count = len(worker_state.revoked)
+    worker_state.revoked.clear()
+    task_logger.warning("clear_revoked: cleared %d revoked task ids", count)
+    return {"ok": f"cleared {count} revoked task ids"}
 
 
 class TenantAwareTask(Task):
@@ -151,7 +181,9 @@ def on_task_postrun(
     if not task:
         return
 
-    task_logger.debug(f"Task {task.name} (ID: {task_id}) completed with state: {state}")
+    task_logger.debug(
+        "Task %s (ID: %s) completed with state: %s", task.name, task_id, state
+    )
 
     if state not in READY_STATES:
         return
@@ -165,13 +197,17 @@ def on_task_postrun(
 
     # Get tenant_id directly from kwargs- each celery task has a tenant_id kwarg
     if not kwargs:
-        logger.error(f"Task {task.name} (ID: {task_id}) is missing kwargs")
+        logger.error("Task %s (ID: %s) is missing kwargs", task.name, task_id)
         tenant_id = POSTGRES_DEFAULT_SCHEMA
     else:
         tenant_id = cast(str, kwargs.get("tenant_id", POSTGRES_DEFAULT_SCHEMA))
 
     task_logger.debug(
-        f"Task {task.name} (ID: {task_id}) completed with state: {state} {f'for tenant_id={tenant_id}' if tenant_id else ''}"
+        "Task %s (ID: %s) completed with state: %s %s",
+        task.name,
+        task_id,
+        state,
+        f"for tenant_id={tenant_id}" if tenant_id else "",
     )
 
     r = get_redis_client(tenant_id=tenant_id)
@@ -226,6 +262,30 @@ def on_task_postrun(
         return
 
 
+def on_task_revoked(
+    request: Any | None = None,
+    **kwds: Any,  # noqa: ARG001
+) -> None:
+    """Drain the doc-sync taskset when a task is revoked/expired.
+
+    Expired tasks are discarded before running, so task_postrun (which normally
+    srem's the taskset) never fires. Without this, the stranded id keeps the
+    taskset non-empty and wedges the sync fence until its 7-day TTL.
+    """
+    task_id = getattr(request, "id", None)
+    if not task_id:
+        return
+
+    if not task_id.startswith(DOCUMENT_SYNC_PREFIX):
+        return
+
+    request_kwargs = getattr(request, "kwargs", None) or {}
+    tenant_id = cast(str, request_kwargs.get("tenant_id", POSTGRES_DEFAULT_SCHEMA))
+
+    r = get_redis_client(tenant_id=tenant_id)
+    r.srem(DOCUMENT_SYNC_TASKSET_KEY, task_id)
+
+
 def on_celeryd_init(
     sender: str,  # noqa: ARG001
     conf: Any = None,  # noqa: ARG001
@@ -238,7 +298,7 @@ def on_celeryd_init(
     # force=True. so we use force=True as a fallback.
 
     all_start_methods: list[str] = multiprocessing.get_all_start_methods()
-    logger.info(f"Multiprocessing all start methods: {all_start_methods}")
+    logger.info("Multiprocessing all start methods: %s", all_start_methods)
 
     try:
         multiprocessing.set_start_method("spawn")  # fork is unsafe, set to spawn
@@ -256,7 +316,7 @@ def on_celeryd_init(
             )
 
     logger.info(
-        f"Multiprocessing selected start method: {multiprocessing.get_start_method()}"
+        "Multiprocessing selected start method: %s", multiprocessing.get_start_method()
     )
 
     # Initialize tracing in workers if credentials are available.
@@ -289,7 +349,9 @@ def wait_for_redis(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
             break
 
         logger.info(
-            f"Redis: Readiness probe ongoing. elapsed={time_elapsed:.1f} timeout={WAIT_LIMIT:.1f}"
+            "Redis: Readiness probe ongoing. elapsed=%s timeout=%s",
+            format(time_elapsed, ".1f"),
+            format(WAIT_LIMIT, ".1f"),
         )
 
         time.sleep(WAIT_INTERVAL)
@@ -328,7 +390,9 @@ def wait_for_db(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
             break
 
         logger.info(
-            f"Database: Readiness probe ongoing. elapsed={time_elapsed:.1f} timeout={WAIT_LIMIT:.1f}"
+            "Database: Readiness probe ongoing. elapsed=%s timeout=%s",
+            format(time_elapsed, ".1f"),
+            format(WAIT_LIMIT, ".1f"),
         )
 
         time.sleep(WAIT_INTERVAL)
@@ -343,7 +407,7 @@ def wait_for_db(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
 
 
 def on_secondary_worker_init(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
-    logger.info(f"Running as a secondary celery worker: pid={os.getpid()}")
+    logger.info("Running as a secondary celery worker: pid=%s", os.getpid())
 
     # Set up variables for waiting on primary worker
     WAIT_INTERVAL = 5
@@ -358,7 +422,9 @@ def on_secondary_worker_init(sender: Any, **kwargs: Any) -> None:  # noqa: ARG00
 
         time_elapsed = time.monotonic() - time_start
         logger.info(
-            f"Primary worker is not ready yet. elapsed={time_elapsed:.1f} timeout={WAIT_LIMIT:.1f}"
+            "Primary worker is not ready yet. elapsed=%s timeout=%s",
+            format(time_elapsed, ".1f"),
+            format(WAIT_LIMIT, ".1f"),
         )
         if time_elapsed > WAIT_LIMIT:
             msg = f"Primary worker was not ready within the timeout. ({WAIT_LIMIT} seconds). Exiting..."
@@ -381,7 +447,7 @@ def on_worker_ready(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
     hostname: str = cast(str, sender.hostname)
     path = make_probe_path("readiness", hostname)
     path.touch()
-    logger.info(f"Readiness signal touched at {path}.")
+    logger.info("Readiness signal touched at %s.", path)
 
 
 def on_worker_shutdown(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
@@ -414,6 +480,54 @@ def on_worker_shutdown(sender: Any, **kwargs: Any) -> None:  # noqa: ARG001
         logger.exception("Failed to check if primary worker lock is owned")
 
 
+def _cli_loglevel_explicitly_set() -> bool:
+    """
+    Returns True iff --loglevel or -l was explicitly passed on the celery CLI.
+
+    The setup_logging signal handler receives a ``loglevel`` int regardless of
+    whether the operator actually passed --loglevel — when the flag is absent,
+    Celery substitutes its own default. To distinguish "operator passed it" (CLI
+    should win) from "Celery defaulted it" (LOG_LEVEL env should win) we have to
+    inspect sys.argv ourselves.
+    """
+    for arg in sys.argv:
+        if arg == "--loglevel" or arg.startswith("--loglevel="):
+            return True
+        # short form: ``-l VALUE``, ``-l=VALUE``, ``-lVALUE`` (the ``arg ==
+        # "-l"`` case is subsumed by the startswith branch since "-l" starts
+        # with "-l" and doesn't start with "--")
+        if arg.startswith("-l") and not arg.startswith("--"):
+            return True
+    return False
+
+
+def _resolve_effective_loglevel(cli_loglevel: int) -> tuple[int, str]:
+    """
+    Returns the (level, human-readable explanation) for celery worker logging.
+
+    Precedence: explicit --loglevel CLI flag > LOG_LEVEL env var > Celery
+    default. An operator-supplied CLI flag is treated as a per-worker
+    override; otherwise LOG_LEVEL is the single global knob across the API
+    server, model servers, and all Celery workers.
+
+    Surfaces unrecognized LOG_LEVEL strings (e.g. "WARN" instead of
+    "WARNING") in the source string so the operator can see in the boot
+    log that their value silently fell back to INFO.
+    """
+    env_log_level = os.environ.get("LOG_LEVEL")
+    if _cli_loglevel_explicitly_set():
+        return cli_loglevel, "celery --loglevel CLI arg"
+    if env_log_level is not None:
+        effective = get_log_level_from_str(env_log_level)
+        parsed_name = logging.getLevelName(effective)
+        if parsed_name.upper() != env_log_level.upper():
+            return effective, (
+                f"LOG_LEVEL env var ({env_log_level!r} -> unrecognized, defaulted to {parsed_name})"
+            )
+        return effective, f"LOG_LEVEL env var ({env_log_level!r})"
+    return cli_loglevel, "celery default (no --loglevel, no LOG_LEVEL)"
+
+
 def on_setup_logging(
     loglevel: int,
     logfile: str | None,
@@ -423,6 +537,8 @@ def on_setup_logging(
 ) -> None:
     # TODO: could unhardcode format and colorize and accept these as options from
     # celery's config
+
+    effective_loglevel, loglevel_source = _resolve_effective_loglevel(loglevel)
 
     root_logger = logging.getLogger()
     root_logger.handlers = []
@@ -434,9 +550,10 @@ def on_setup_logging(
 
     # Set up the root handler
     root_handler = logging.StreamHandler()
-    root_formatter = ColoredFormatter(
-        log_format,
-        datefmt="%m/%d/%Y %I:%M:%S %p",
+    root_formatter: logging.Formatter = (
+        get_json_formatter()
+        if JSON_LOGGING
+        else ColoredFormatter(log_format, datefmt="%m/%d/%Y %I:%M:%S %p")
     )
     root_handler.setFormatter(root_formatter)
     root_logger.addHandler(root_handler)
@@ -450,23 +567,35 @@ def on_setup_logging(
                 pass  # Ignore errors, just proceed with normal logging
 
         root_file_handler = logging.FileHandler(logfile)
-        root_file_formatter = PlainFormatter(
-            log_format,
-            datefmt="%m/%d/%Y %I:%M:%S %p",
+        root_file_formatter: logging.Formatter = (
+            get_json_formatter()
+            if JSON_LOGGING
+            else PlainFormatter(log_format, datefmt="%m/%d/%Y %I:%M:%S %p")
         )
         root_file_handler.setFormatter(root_file_formatter)
         root_logger.addHandler(root_file_handler)
 
-    root_logger.setLevel(loglevel)
+    root_logger.setLevel(effective_loglevel)
+
+    # Emit the diagnostic after the root logger is configured so it goes through
+    # the fresh handler at the level we just chose. (Before this point Python's
+    # root logger defaults to WARNING, which would silently drop an INFO message
+    # in the no-LOG_LEVEL/no-CLI default case.)
+    logger.info(
+        "Celery effective log level: %s (source: %s)",
+        logging.getLevelName(effective_loglevel),
+        loglevel_source,
+    )
 
     # Configure the task logger
     task_logger.handlers = []
 
     task_handler = logging.StreamHandler()
     task_handler.addFilter(TenantContextFilter())
-    task_formatter = CeleryTaskColoredFormatter(
-        log_format,
-        datefmt="%m/%d/%Y %I:%M:%S %p",
+    task_formatter: logging.Formatter = (
+        CeleryTaskJsonFormatter()
+        if JSON_LOGGING
+        else CeleryTaskColoredFormatter(log_format, datefmt="%m/%d/%Y %I:%M:%S %p")
     )
     task_handler.setFormatter(task_formatter)
     task_logger.addHandler(task_handler)
@@ -475,14 +604,15 @@ def on_setup_logging(
         # No need to truncate again, already done above for root logger
         task_file_handler = logging.FileHandler(logfile)
         task_file_handler.addFilter(TenantContextFilter())
-        task_file_formatter = CeleryTaskPlainFormatter(
-            log_format,
-            datefmt="%m/%d/%Y %I:%M:%S %p",
+        task_file_formatter: logging.Formatter = (
+            CeleryTaskJsonFormatter()
+            if JSON_LOGGING
+            else CeleryTaskPlainFormatter(log_format, datefmt="%m/%d/%Y %I:%M:%S %p")
         )
         task_file_handler.setFormatter(task_file_formatter)
         task_logger.addHandler(task_file_handler)
 
-    task_logger.setLevel(loglevel)
+    task_logger.setLevel(effective_loglevel)
     task_logger.propagate = False
 
     # hide celery task received spam
@@ -531,23 +661,26 @@ def reset_tenant_id(
     CURRENT_TENANT_ID_CONTEXTVAR.set(POSTGRES_DEFAULT_SCHEMA)
 
 
-def wait_for_vespa_or_shutdown(
-    sender: Any,  # noqa: ARG001
-    **kwargs: Any,  # noqa: ARG001
-) -> None:  # noqa: ARG001
-    """Waits for Vespa to become ready subject to a timeout.
-    Raises WorkerShutdown if the timeout is reached."""
+def wait_for_document_index_or_shutdown() -> None:
+    """
+    Waits for all configured document indices to become ready subject to a
+    timeout.
 
+    Raises WorkerShutdown if the timeout is reached.
+    """
     if DISABLE_VECTOR_DB:
         logger.info(
             "DISABLE_VECTOR_DB is set — skipping Vespa/OpenSearch readiness check."
         )
         return
 
-    if not wait_for_vespa_with_timeout():
-        msg = "[Vespa] Readiness probe did not succeed within the timeout. Exiting..."
-        logger.error(msg)
-        raise WorkerShutdown(msg)
+    if not ONYX_DISABLE_VESPA:
+        if not wait_for_vespa_with_timeout():
+            msg = (
+                "[Vespa] Readiness probe did not succeed within the timeout. Exiting..."
+            )
+            logger.error(msg)
+            raise WorkerShutdown(msg)
 
     if ENABLE_OPENSEARCH_INDEXING_FOR_ONYX:
         if not wait_for_opensearch_with_timeout():
@@ -566,7 +699,7 @@ class LivenessProbe(bootsteps.StartStopStep):
         self.task_tref = None
         self.path = make_probe_path("liveness", worker.hostname)
 
-    def start(self, worker: Any) -> None:
+    def start(self, worker: Any) -> None:  # ty: ignore[invalid-method-override]
         self.task_tref = worker.timer.call_repeatedly(
             15.0,
             self.update_liveness_file,
@@ -574,7 +707,7 @@ class LivenessProbe(bootsteps.StartStopStep):
             priority=10,
         )
 
-    def stop(self, worker: Any) -> None:  # noqa: ARG002
+    def stop(self, worker: Any) -> None:  # noqa: ARG002  # ty: ignore[invalid-method-override]
         self.path.unlink(missing_ok=True)
         if self.task_tref:
             self.task_tref.cancel()

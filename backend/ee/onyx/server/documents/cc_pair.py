@@ -1,9 +1,7 @@
 from datetime import datetime
 from http import HTTPStatus
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ee.onyx.background.celery.tasks.doc_permission_syncing.tasks import (
@@ -81,10 +79,11 @@ def sync_cc_pair(
         )
 
     logger.info(
-        f"Permissions sync cc_pair={cc_pair_id} "
-        f"connector_id={cc_pair.connector_id} "
-        f"credential_id={cc_pair.credential_id} "
-        f"{cc_pair.connector.name} connector."
+        "Permissions sync cc_pair=%s connector_id=%s credential_id=%s %s connector.",
+        cc_pair_id,
+        cc_pair.connector_id,
+        cc_pair.credential_id,
+        cc_pair.connector.name,
     )
     payload_id = try_creating_permissions_sync_task(
         client_app, cc_pair_id, r, tenant_id
@@ -95,7 +94,7 @@ def sync_cc_pair(
             detail="Permissions sync task creation failed.",
         )
 
-    logger.info(f"Permissions sync queued: cc_pair={cc_pair_id} id={payload_id}")
+    logger.info("Permissions sync queued: cc_pair=%s id=%s", cc_pair_id, payload_id)
 
     return StatusResponse(
         success=True,
@@ -155,10 +154,11 @@ def sync_cc_pair_groups(
         )
 
     logger.info(
-        f"External group sync cc_pair={cc_pair_id} "
-        f"connector_id={cc_pair.connector_id} "
-        f"credential_id={cc_pair.credential_id} "
-        f"{cc_pair.connector.name} connector."
+        "External group sync cc_pair=%s connector_id=%s credential_id=%s %s connector.",
+        cc_pair_id,
+        cc_pair.connector_id,
+        cc_pair.credential_id,
+        cc_pair.connector.name,
     )
     payload_id = try_creating_external_group_sync_task(
         client_app, cc_pair_id, r, tenant_id
@@ -169,7 +169,7 @@ def sync_cc_pair_groups(
             detail="External group sync task creation failed.",
         )
 
-    logger.info(f"External group sync queued: cc_pair={cc_pair_id} id={payload_id}")
+    logger.info("External group sync queued: cc_pair=%s id=%s", cc_pair_id, payload_id)
 
     return StatusResponse(
         success=True,

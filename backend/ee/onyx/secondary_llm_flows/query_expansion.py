@@ -2,9 +2,7 @@ import re
 
 from ee.onyx.prompts.query_expansion import KEYWORD_EXPANSION_PROMPT
 from onyx.llm.interfaces import LLM
-from onyx.llm.models import LanguageModelInput
-from onyx.llm.models import ReasoningEffort
-from onyx.llm.models import UserMessage
+from onyx.llm.models import LanguageModelInput, ReasoningEffort, UserMessage
 from onyx.llm.utils import llm_response_to_string
 from onyx.utils.logger import setup_logger
 
@@ -84,9 +82,9 @@ def expand_keywords(
                 seen_lower.add(query_lower)
                 expanded_queries.append(query)
 
-        logger.debug(f"Keyword expansion generated {len(expanded_queries)} queries")
+        logger.debug("Keyword expansion generated %s queries", len(expanded_queries))
         return expanded_queries
 
     except Exception as e:
-        logger.warning(f"Keyword expansion failed: {e}")
+        logger.warning("Keyword expansion failed: %s", e)
         return []

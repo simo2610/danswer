@@ -7,20 +7,22 @@ Unit tests for federated connector lazy loading factory to validate:
 """
 
 import importlib
-from unittest.mock import MagicMock
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from onyx.configs.constants import FederatedConnectorSource
-from onyx.federated_connectors.factory import _federated_connector_cache
-from onyx.federated_connectors.factory import _load_federated_connector_class
-from onyx.federated_connectors.factory import FederatedConnectorMissingException
-from onyx.federated_connectors.factory import get_federated_connector_cls
+from onyx.federated_connectors.factory import (
+    FederatedConnectorMissingException,
+    _federated_connector_cache,
+    _load_federated_connector_class,
+    get_federated_connector_cls,
+)
 from onyx.federated_connectors.interfaces import FederatedConnector
-from onyx.federated_connectors.registry import FEDERATED_CONNECTOR_CLASS_MAP
-from onyx.federated_connectors.registry import FederatedConnectorMapping
+from onyx.federated_connectors.registry import (
+    FEDERATED_CONNECTOR_CLASS_MAP,
+    FederatedConnectorMapping,
+)
 
 
 class TestFederatedConnectorMappingValidation:
@@ -63,29 +65,29 @@ class TestFederatedConnectorMappingValidation:
         sources = list(FEDERATED_CONNECTOR_CLASS_MAP.keys())
         unique_sources = set(sources)
 
-        assert len(sources) == len(
-            unique_sources
-        ), "Duplicate FederatedConnectorSource entries found"
+        assert len(sources) == len(unique_sources), (
+            "Duplicate FederatedConnectorSource entries found"
+        )
 
     def test_mapping_format_consistency(self) -> None:
         """Test that all mappings follow the expected format."""
         for source, mapping in FEDERATED_CONNECTOR_CLASS_MAP.items():
-            assert isinstance(
-                mapping, FederatedConnectorMapping
-            ), f"{source.value} mapping is not a FederatedConnectorMapping"
+            assert isinstance(mapping, FederatedConnectorMapping), (
+                f"{source.value} mapping is not a FederatedConnectorMapping"
+            )
 
-            assert isinstance(
-                mapping.module_path, str
-            ), f"{source.value} module_path is not a string"
-            assert isinstance(
-                mapping.class_name, str
-            ), f"{source.value} class_name is not a string"
-            assert mapping.module_path.startswith(
-                "onyx.federated_connectors."
-            ), f"{source.value} module_path doesn't start with onyx.federated_connectors."
-            assert mapping.class_name.endswith(
-                "FederatedConnector"
-            ), f"{source.value} class_name doesn't end with FederatedConnector"
+            assert isinstance(mapping.module_path, str), (
+                f"{source.value} module_path is not a string"
+            )
+            assert isinstance(mapping.class_name, str), (
+                f"{source.value} class_name is not a string"
+            )
+            assert mapping.module_path.startswith("onyx.federated_connectors."), (
+                f"{source.value} module_path doesn't start with onyx.federated_connectors."
+            )
+            assert mapping.class_name.endswith("FederatedConnector"), (
+                f"{source.value} class_name doesn't end with FederatedConnector"
+            )
 
 
 class TestFederatedConnectorClassLoading:

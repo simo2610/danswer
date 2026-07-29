@@ -1,3 +1,4 @@
+import "@opal/layouts/content-action/styles.css";
 import { Content, type ContentProps } from "@opal/layouts/content/components";
 import {
   containerSizeVariants,
@@ -20,18 +21,61 @@ type ContentActionProps = ContentProps & {
    * @default "lg"
    * @see {@link ContainerSizeVariants} for the full list of presets.
    */
-  paddingVariant?: ContainerSizeVariants;
+  padding?: ContainerSizeVariants;
+
+  /**
+   * When true, vertically centers the Content and rightChildren.
+   * When false (default), Content is top-aligned and rightChildren
+   * stretches to full height.
+   *
+   * @default false
+   */
+  center?: boolean;
+
+  /**
+   * When true, `rightChildren` reflows responsively — forwarded into the
+   * `ContentMd` slot so it sits to the right of the title/description on desktop
+   * and stacks between them on narrow viewports. Requires a `main-*` size
+   * preset (the only ones with the slot); other presets fall back to the
+   * standard right-hand column. `center` is ignored in this mode.
+   *
+   * @default false
+   */
+  responsive?: boolean;
+
+  /**
+   * When true, the `rightChildren` column grows to fill the row (capped at
+   * `--block-width-form-input-column-max`) instead of hugging its content.
+   * Intended for full-width form inputs; leave off for compact controls like
+   * toggles/buttons. Ignored in the `responsive` branch.
+   *
+   * @default false
+   */
+  fillRight?: boolean;
 };
 
 // ---------------------------------------------------------------------------
 // ContentAction
 // ---------------------------------------------------------------------------
 
+// Only the `main-*` presets route to ContentMd — the one layout with a
+// `rightChildren` slot — so `responsive` can only reflow for those.
+function routesToContentMd(props: {
+  sizePreset?: string;
+  variant?: string;
+}): boolean {
+  const isMdPreset =
+    props.sizePreset === "main-content" ||
+    props.sizePreset === "main-ui" ||
+    props.sizePreset === "secondary";
+  return isMdPreset && props.variant !== "body";
+}
+
 /**
  * A row layout that pairs a {@link Content} block with optional right-side
  * action children (e.g. buttons, badges).
  *
- * The `Content` area receives padding controlled by `paddingVariant`, using
+ * The `Content` area receives padding controlled by `padding`, using
  * the same size scale as `Interactive.Container` and `Button`. The
  * `rightChildren` wrapper stretches to the full height of the row.
  *
@@ -47,25 +91,46 @@ type ContentActionProps = ContentProps & {
  *   description="GPT"
  *   sizePreset="main-content"
  *   variant="section"
- *   paddingVariant="lg"
+ *   padding="lg"
  *   rightChildren={<Button icon={SvgSettings} prominence="tertiary" />}
  * />
  * ```
  */
 function ContentAction({
   rightChildren,
-  paddingVariant = "lg",
+  padding = "lg",
+  center = false,
+  responsive = false,
+  fillRight = false,
   ...contentProps
 }: ContentActionProps) {
-  const { padding } = containerSizeVariants[paddingVariant];
+  const { padding: paddingClass } = containerSizeVariants[padding];
+
+  // Responsive: forward rightChildren into the ContentMd slot, which reflows it
+  // to the right on desktop and between the title/description on narrow widths.
+  if (responsive && rightChildren && routesToContentMd(contentProps)) {
+    // Full width: in a flex-col `align-items: start` parent (e.g. InputHorizontal's
+    // Section) a wrapper without w-full shrinks to content width, so the input
+    // wouldn't fill the row.
+    return (
+      <div className={cn("w-full min-w-0", paddingClass)}>
+        <Content {...({ ...contentProps, rightChildren } as ContentProps)} />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-row items-stretch w-full">
-      <div className={cn("flex-1 min-w-0 self-center", padding)}>
+    <div className="opal-content-action" data-centered={center || undefined}>
+      <div className={cn("opal-content-action-content", paddingClass)}>
         <Content {...contentProps} />
       </div>
       {rightChildren && (
-        <div className="flex items-stretch shrink-0">{rightChildren}</div>
+        <div
+          className="opal-content-action-right"
+          data-fill={fillRight || undefined}
+        >
+          {rightChildren}
+        </div>
       )}
     </div>
   );

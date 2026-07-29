@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@opal/utils";
 import type { IconProps } from "@opal/types";
 import Text from "@/refresh-components/texts/Text";
 import { SvgChevronDownSmall } from "@opal/icons";
@@ -22,8 +22,10 @@ const baseClassNames = (engaged?: boolean, transient?: boolean) =>
     },
     action: {
       enabled: [
-        engaged ? "bg-action-link-01" : "bg-transparent",
-        engaged ? "hover:bg-action-link-01" : "hover:bg-background-tint-02",
+        engaged ? "bg-action-selection-01" : "bg-transparent",
+        engaged
+          ? "hover:bg-action-selection-01"
+          : "hover:bg-background-tint-02",
         "active:bg-background-tint-00",
       ],
       disabled: ["bg-background-neutral-02"],
@@ -43,15 +45,15 @@ const iconClassNames = (engaged?: boolean, transient?: boolean) =>
     },
     action: {
       enabled: [
-        engaged ? "stroke-action-link-05" : "stroke-text-03",
+        engaged ? "stroke-action-selection-05" : "stroke-text-03",
         engaged
-          ? "group-hover/SelectButton:stroke-action-link-05"
+          ? "group-hover/SelectButton:stroke-action-selection-05"
           : "group-hover/SelectButton:stroke-text-04",
         engaged
-          ? "group-active/SelectButton:stroke-action-link-06"
+          ? "group-active/SelectButton:stroke-action-selection-06"
           : "group-active/SelectButton:stroke-text-05",
       ],
-      disabled: ["stroke-action-link-03"],
+      disabled: ["stroke-action-selection-03"],
     },
   }) as const;
 
@@ -68,15 +70,15 @@ const textClassNames = (engaged?: boolean, transient?: boolean) =>
     },
     action: {
       enabled: [
-        engaged ? "text-action-link-05" : "text-text-03",
+        engaged ? "text-action-selection-05" : "text-text-03",
         engaged
-          ? "group-hover/SelectButton:text-action-link-05"
+          ? "group-hover/SelectButton:text-action-selection-05"
           : "group-hover/SelectButton:text-text-04",
         engaged
-          ? "group-active/SelectButton:text-action-link-06"
+          ? "group-active/SelectButton:text-action-selection-06"
           : "group-active/SelectButton:text-text-05",
       ],
-      disabled: ["stroke-action-link-03"],
+      disabled: ["stroke-action-selection-03"],
     },
   }) as const;
 
@@ -148,7 +150,7 @@ export default function SelectButton({
         {rightChevronIcon && (
           <SvgChevronDownSmall
             className={cn(
-              "w-[1rem] h-[1rem] transition-all duration-300 ease-in-out",
+              "w-4 h-4 transition-all duration-300 ease-in-out",
               iconClasses,
               transient && "-rotate-180"
             )}
@@ -165,7 +167,7 @@ export default function SelectButton({
       {/* Hidden element for measuring the natural width of the content */}
       <div
         ref={measureRef}
-        className="flex items-center w-auto h-fit absolute -left-[9999rem] opacity-0 pointer-events-none"
+        className="flex items-center w-auto h-fit absolute -left-39996 opacity-0 pointer-events-none"
       >
         {content}
       </div>
@@ -184,7 +186,7 @@ export default function SelectButton({
       >
         {/* Left icon */}
         {hasLeftIcon && LeftIcon && (
-          <LeftIcon className={cn("w-[1rem] h-[1rem]", iconClasses)} />
+          <LeftIcon className={cn("w-4 h-4", iconClasses)} />
         )}
 
         {/* Animation component */}
@@ -219,7 +221,7 @@ export default function SelectButton({
 
         {/* Right icon */}
         {hasRightIcon && RightIcon && (
-          <RightIcon className={cn("w-[1rem] h-[1rem]", iconClasses)} />
+          <RightIcon className={cn("w-4 h-4", iconClasses)} />
         )}
       </button>
     </>

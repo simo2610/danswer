@@ -1,14 +1,11 @@
 """Module with custom fields processing functions"""
 
 import os
-from typing import Any
-from typing import List
+from typing import Any, List
 from urllib.parse import urlparse
 
 from jira import JIRA
-from jira.resources import CustomFieldOption
-from jira.resources import Issue
-from jira.resources import User
+from jira.resources import CustomFieldOption, Issue, User
 
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import scoped_url
 from onyx.connectors.models import BasicExpertInfo
@@ -62,17 +59,19 @@ def best_effort_get_field_from_issue(jira_issue: Issue, field: str) -> Any:
 def extract_text_from_adf(adf: dict | None) -> str:
     """Extracts plain text from Atlassian Document Format:
     https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/
-
-    WARNING: This function is incomplete and will e.g. skip lists!
     """
-    # TODO: complete this function
-    texts = []
-    if adf is not None and "content" in adf:
-        for block in adf["content"]:
-            if "content" in block:
-                for item in block["content"]:
-                    if item["type"] == "text":
-                        texts.append(item["text"])
+    texts: list[str] = []
+
+    def _extract(node: dict) -> None:
+        if node.get("type") == "text":
+            text = node.get("text", "")
+            if text:
+                texts.append(text)
+        for child in node.get("content", []):
+            _extract(child)
+
+    if adf is not None:
+        _extract(adf)
     return " ".join(texts)
 
 
@@ -86,7 +85,6 @@ def build_jira_url(jira_base_url: str, issue_key: str) -> str:
 def build_jira_client(
     credentials: dict[str, Any], jira_base: str, scoped_token: bool = False
 ) -> JIRA:
-
     jira_base = scoped_url(jira_base, "jira") if scoped_token else jira_base
     api_token = credentials["jira_api_token"]
     # if user provide an email we assume it's cloud
@@ -143,7 +141,7 @@ def get_comment_strs(
 
             comment_strs.append(body_text)
         except Exception as e:
-            logger.error(f"Failed to process comment due to an error: {e}")
+            logger.error("Failed to process comment due to an error: %s", e)
             continue
 
     return comment_strs
@@ -180,7 +178,7 @@ class CustomFieldExtractor:
             else:
                 return str(value)
         except Exception as e:
-            logger.error(f"Error processing custom field value {value}: {e}")
+            logger.error("Error processing custom field value %s: %s", value, e)
             return ""
 
     @staticmethod

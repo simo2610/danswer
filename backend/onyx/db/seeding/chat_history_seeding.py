@@ -1,13 +1,14 @@
 import random
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from uuid import UUID
 
 from onyx.configs.constants import MessageType
-from onyx.db.chat import create_chat_session
-from onyx.db.chat import create_new_chat_message
-from onyx.db.chat import get_or_create_root_message
+from onyx.db.chat import (
+    create_chat_session,
+    create_new_chat_message,
+    get_or_create_root_message,
+)
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.models import ChatSession
 
@@ -31,19 +32,19 @@ def seed_chat_history(
     persona_id: optional persona/assistant to associate with sessions
     """
     with get_session_with_current_tenant() as db_session:
-        logger.info(f"Seeding {num_sessions} sessions.")
+        logger.info("Seeding %s sessions.", num_sessions)
         for y in range(0, num_sessions):
             create_chat_session(db_session, f"pytest_session_{y}", user_id, persona_id)
 
         # randomize all session times
-        logger.info(f"Seeding {num_messages} messages per session.")
+        logger.info("Seeding %s messages per session.", num_messages)
         rows = db_session.query(ChatSession).all()
         for x in range(0, len(rows)):
             if x % 1024 == 0:
-                logger.info(f"Seeded messages for {x} sessions so far.")
+                logger.info("Seeded messages for %s sessions so far.", x)
 
             row = rows[x]
-            row.time_created = datetime.utcnow() - timedelta(
+            row.time_created = datetime.now(tz=timezone.utc) - timedelta(
                 days=random.randint(0, days)
             )
             row.time_updated = row.time_created + timedelta(
@@ -74,6 +75,9 @@ def seed_chat_history(
                     minutes=random.randint(0, 10)
                 )
 
+                if current_message_type == MessageType.ASSISTANT:
+                    chat_message.model_display_name = "pytest-model"
+
                 db_session.commit()
 
                 current_message_type = (
@@ -85,4 +89,4 @@ def seed_chat_history(
 
         db_session.commit()
 
-        logger.info(f"Seeded messages for {len(rows)} sessions. Finished.")
+        logger.info("Seeded messages for %s sessions. Finished.", len(rows))

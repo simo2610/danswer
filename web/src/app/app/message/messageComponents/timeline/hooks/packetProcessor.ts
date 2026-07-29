@@ -11,7 +11,7 @@ import {
   ImageGenerationToolDelta,
   MessageStart,
   ToolCallArgumentDelta,
-  CODE_INTERPRETER_TOOL_TYPES,
+  isCodeInterpreterToolType,
 } from "@/app/app/services/streamingModels";
 import { CitationMap } from "@/app/app/interfaces";
 import { OnyxDocument } from "@/lib/search/interfaces";
@@ -149,15 +149,15 @@ const CONTENT_PACKET_TYPES_SET = new Set<PacketType>([
   PacketType.REASONING_START,
   PacketType.DEEP_RESEARCH_PLAN_START,
   PacketType.RESEARCH_AGENT_START,
+  PacketType.CODING_AGENT_START,
 ]);
 
 function hasContentPackets(packets: Packet[]): boolean {
   return packets.some((packet) => {
     const type = packet.obj.type as PacketType;
     if (type === PacketType.TOOL_CALL_ARGUMENT_DELTA) {
-      return (
-        (packet.obj as ToolCallArgumentDelta).tool_type ===
-        CODE_INTERPRETER_TOOL_TYPES.PYTHON
+      return isCodeInterpreterToolType(
+        (packet.obj as ToolCallArgumentDelta).tool_type
       );
     }
     return CONTENT_PACKET_TYPES_SET.has(type);

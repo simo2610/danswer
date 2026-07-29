@@ -2,18 +2,20 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from onyx.db.constants import DEFAULT_PERSONA_SLACK_CHANNEL_NAME
-from onyx.db.constants import SLACK_BOT_PERSONA_PREFIX
-from onyx.db.models import ChannelConfig
-from onyx.db.models import Persona
-from onyx.db.models import Persona__DocumentSet
-from onyx.db.models import SlackChannelConfig
-from onyx.db.models import User
-from onyx.db.persona import mark_persona_as_deleted
-from onyx.db.persona import upsert_persona
+from onyx.db.constants import (
+    DEFAULT_PERSONA_SLACK_CHANNEL_NAME,
+    SLACK_BOT_PERSONA_PREFIX,
+)
+from onyx.db.models import (
+    ChannelConfig,
+    Persona,
+    Persona__DocumentSet,
+    SlackChannelConfig,
+    User,
+)
+from onyx.db.persona import mark_persona_as_deleted, upsert_persona
 from onyx.db.tools import get_builtin_tool
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
 from onyx.utils.errors import EERequiredError
@@ -71,8 +73,6 @@ def create_slack_channel_persona(
         datetime_aware=True,
         tool_ids=[search_tool.id],
         document_set_ids=document_set_ids,
-        llm_model_provider_override=None,
-        llm_model_version_override=None,
         starter_messages=None,
         is_public=True,
         is_featured=False,
@@ -127,7 +127,8 @@ def insert_slack_channel_config(
         existing_default = db_session.scalar(
             select(SlackChannelConfig).where(
                 SlackChannelConfig.slack_bot_id == slack_bot_id,
-                SlackChannelConfig.is_default is True,  # type: ignore
+                SlackChannelConfig.is_default  # ty: ignore[invalid-argument-type]
+                is True,
             )
         )
         if existing_default:

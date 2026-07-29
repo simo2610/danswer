@@ -1,20 +1,18 @@
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
-from onyx.configs.constants import FileOrigin
-from onyx.configs.constants import NUM_DAYS_TO_KEEP_CHECKPOINTS
-from onyx.connectors.interfaces import BaseConnector
-from onyx.connectors.interfaces import CheckpointedConnector
+from onyx.configs.constants import NUM_DAYS_TO_KEEP_CHECKPOINTS, FileOrigin
+from onyx.connectors.interfaces import BaseConnector, CheckpointedConnector
 from onyx.connectors.models import ConnectorCheckpoint
 from onyx.db.engine.time_utils import get_db_current_time
-from onyx.db.index_attempt import get_index_attempt
-from onyx.db.index_attempt import get_recent_completed_attempts_for_cc_pair
+from onyx.db.index_attempt import (
+    get_index_attempt,
+    get_recent_completed_attempts_for_cc_pair,
+)
 from onyx.db.models import IndexAttempt
-from onyx.db.models import IndexingStatus
 from onyx.file_store.file_store import get_default_file_store
 from onyx.utils.logger import setup_logger
 from onyx.utils.object_size_check import deep_getsizeof
@@ -61,7 +59,9 @@ def load_checkpoint(
     checkpoint_io = file_store.read_file(checkpoint_pointer, mode="rb")
     checkpoint_data = checkpoint_io.read().decode("utf-8")
     if isinstance(connector, CheckpointedConnector):
-        return connector.validate_checkpoint_json(checkpoint_data)
+        return connector.validate_checkpoint_json(  # ty: ignore[invalid-return-type]
+            checkpoint_data
+        )
     return ConnectorCheckpoint.model_validate_json(checkpoint_data)
 
 
@@ -96,9 +96,9 @@ def get_latest_valid_checkpoint(
 
         if not had_any_progress:
             logger.warning(
-                f"{_NUM_RECENT_ATTEMPTS_TO_CONSIDER} consecutive failed attempts without progress "
-                f"found for cc_pair={cc_pair_id}. Ignoring checkpoint to let the run start "
-                "from scratch."
+                "%s consecutive failed attempts without progress found for cc_pair=%s. Ignoring checkpoint to let the run start from scratch.",
+                _NUM_RECENT_ATTEMPTS_TO_CONSIDER,
+                cc_pair_id,
             )
             return connector.build_dummy_checkpoint(), False
 
@@ -109,12 +109,7 @@ def get_latest_valid_checkpoint(
         if (
             candidate.poll_range_start == window_start
             and candidate.poll_range_end == window_end
-            and (
-                candidate.status == IndexingStatus.FAILED
-                # if the background job was killed (and thus the attempt was canceled)
-                # we still want to use the checkpoint so that we can pick up where we left off
-                or candidate.status == IndexingStatus.CANCELED
-            )
+            and candidate.status.should_reuse_checkpoint()
             and candidate.checkpoint_pointer is not None
             # NOTE: There are a couple connectors that may make progress but not have
             # any "total_docs_indexed". E.g. they are going through
@@ -139,7 +134,8 @@ def get_latest_valid_checkpoint(
     checkpoint = connector.build_dummy_checkpoint()
     if latest_valid_checkpoint_candidate is None:
         logger.info(
-            f"No valid checkpoint found for cc_pair={cc_pair_id}. Starting from scratch."
+            "No valid checkpoint found for cc_pair=%s. Starting from scratch.",
+            cc_pair_id,
         )
         return checkpoint, False
 
@@ -150,15 +146,15 @@ def get_latest_valid_checkpoint(
         )
     except Exception:
         logger.exception(
-            f"Failed to load checkpoint from previous failed attempt with ID "
-            f"{latest_valid_checkpoint_candidate.id}. Falling back to default checkpoint."
+            "Failed to load checkpoint from previous failed attempt with ID %s. Falling back to default checkpoint.",
+            latest_valid_checkpoint_candidate.id,
         )
         return checkpoint, False
 
     logger.info(
-        f"Using checkpoint from previous failed attempt with ID "
-        f"{latest_valid_checkpoint_candidate.id}. Previous checkpoint: "
-        f"{previous_checkpoint}"
+        "Using checkpoint from previous failed attempt with ID %s. Previous checkpoint: %s",
+        latest_valid_checkpoint_candidate.id,
+        previous_checkpoint,
     )
     return previous_checkpoint, True
 

@@ -1,55 +1,54 @@
 import uuid
 from collections.abc import Generator
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from http import HTTPStatus
 from uuid import UUID
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import HTTPException
-from fastapi import Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ee.onyx.background.task_name_builders import query_history_task_name
-from ee.onyx.db.query_history import get_all_query_history_export_tasks
-from ee.onyx.db.query_history import get_page_of_chat_sessions
-from ee.onyx.db.query_history import get_total_filtered_chat_sessions_count
-from ee.onyx.server.query_history.models import ChatSessionMinimal
-from ee.onyx.server.query_history.models import ChatSessionSnapshot
-from ee.onyx.server.query_history.models import MessageSnapshot
-from ee.onyx.server.query_history.models import QueryHistoryExport
+from ee.onyx.db.query_history import (
+    get_all_query_history_export_tasks,
+    get_page_of_chat_sessions,
+    get_total_filtered_chat_sessions_count,
+)
+from ee.onyx.server.query_history.models import (
+    ChatSessionMinimal,
+    ChatSessionSnapshot,
+    MessageSnapshot,
+    QueryHistoryExport,
+)
 from onyx.auth.permissions import require_permission
 from onyx.auth.users import get_display_email
 from onyx.background.celery.versioned_apps.client import app as client_app
 from onyx.background.task_utils import construct_query_history_report_name
 from onyx.chat.chat_utils import create_chat_history_chain
-from onyx.configs.app_configs import ONYX_QUERY_HISTORY_TYPE
-from onyx.configs.constants import FileOrigin
-from onyx.configs.constants import FileType
-from onyx.configs.constants import MessageType
-from onyx.configs.constants import OnyxCeleryPriority
-from onyx.configs.constants import OnyxCeleryQueues
-from onyx.configs.constants import OnyxCeleryTask
-from onyx.configs.constants import PUBLIC_API_TAGS
-from onyx.configs.constants import QAFeedbackType
-from onyx.configs.constants import QueryHistoryType
-from onyx.configs.constants import SessionType
-from onyx.db.chat import get_chat_session_by_id
-from onyx.db.chat import get_chat_sessions_by_user
+from onyx.configs.constants import (
+    PUBLIC_API_TAGS,
+    FileOrigin,
+    FileType,
+    MessageType,
+    OnyxCeleryPriority,
+    OnyxCeleryQueues,
+    OnyxCeleryTask,
+    QAFeedbackType,
+    QueryHistoryType,
+    SessionType,
+)
+from onyx.db.chat import get_chat_session_by_id, get_chat_sessions_by_user
 from onyx.db.engine.sql_engine import get_session
-from onyx.db.enums import Permission
-from onyx.db.enums import TaskStatus
+from onyx.db.enums import Permission, TaskStatus
 from onyx.db.file_record import get_query_history_export_files
-from onyx.db.models import ChatSession
-from onyx.db.models import User
-from onyx.db.tasks import get_task_with_id
-from onyx.db.tasks import register_task
+from onyx.db.models import ChatSession, User
+from onyx.db.tasks import get_task_with_id, register_task
+from onyx.error_handling.error_codes import OnyxErrorCode
+from onyx.error_handling.exceptions import OnyxError
 from onyx.file_store.file_store import get_default_file_store
 from onyx.server.documents.models import PaginatedReturn
-from onyx.server.query_and_chat.models import ChatSessionDetails
-from onyx.server.query_and_chat.models import ChatSessionsResponse
+from onyx.server.query_and_chat.models import ChatSessionDetails, ChatSessionsResponse
+from onyx.server.settings.store import load_settings
 from onyx.utils.threadpool_concurrency import parallel_yield
 from shared_configs.contextvars import get_current_tenant_id
 
@@ -60,12 +59,14 @@ ONYX_ANONYMIZED_EMAIL = "anonymous@anonymous.invalid"
 
 def ensure_query_history_is_enabled(
     disallowed: list[QueryHistoryType],
-) -> None:
-    if ONYX_QUERY_HISTORY_TYPE in disallowed:
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail="Query history has been disabled by the administrator.",
+) -> QueryHistoryType:
+    query_history_type = load_settings().query_history_type or QueryHistoryType.NORMAL
+    if query_history_type in disallowed:
+        raise OnyxError(
+            OnyxErrorCode.INSUFFICIENT_PERMISSIONS,
+            "Query history has been disabled by the administrator.",
         )
+    return query_history_type
 
 
 def yield_snapshot_from_chat_session(
@@ -97,7 +98,7 @@ def fetch_and_process_chat_session_history(
             break
 
         paged_snapshots = parallel_yield(
-            [
+            [  # ty: ignore[invalid-argument-type]
                 yield_snapshot_from_chat_session(
                     db_session=db_session,
                     chat_session=chat_session,
@@ -126,7 +127,9 @@ def snapshot_from_chat_session(
     try:
         # Older chats may not have the right structure
         messages = create_chat_history_chain(
-            chat_session_id=chat_session.id, db_session=db_session
+            chat_session_id=chat_session.id,
+            db_session=db_session,
+            prefetch_message_details=True,
         )
     except RuntimeError:
         return None
@@ -200,7 +203,9 @@ def get_chat_session_history(
     _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> PaginatedReturn[ChatSessionMinimal]:
-    ensure_query_history_is_enabled(disallowed=[QueryHistoryType.DISABLED])
+    query_history_type = ensure_query_history_is_enabled(
+        disallowed=[QueryHistoryType.DISABLED]
+    )
 
     page_of_chat_sessions = get_page_of_chat_sessions(
         page_num=page_num,
@@ -222,7 +227,7 @@ def get_chat_session_history(
 
     for chat_session in page_of_chat_sessions:
         minimal_chat_session = ChatSessionMinimal.from_chat_session(chat_session)
-        if ONYX_QUERY_HISTORY_TYPE == QueryHistoryType.ANONYMIZED:
+        if query_history_type == QueryHistoryType.ANONYMIZED:
             minimal_chat_session.user_email = ONYX_ANONYMIZED_EMAIL
         minimal_chat_sessions.append(minimal_chat_session)
 
@@ -238,7 +243,9 @@ def get_chat_session_admin(
     _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
     db_session: Session = Depends(get_session),
 ) -> ChatSessionSnapshot:
-    ensure_query_history_is_enabled(disallowed=[QueryHistoryType.DISABLED])
+    query_history_type = ensure_query_history_is_enabled(
+        disallowed=[QueryHistoryType.DISABLED]
+    )
 
     try:
         chat_session = get_chat_session_by_id(
@@ -262,7 +269,7 @@ def get_chat_session_admin(
             f"Could not create snapshot for chat session with id '{chat_session_id}'",
         )
 
-    if ONYX_QUERY_HISTORY_TYPE == QueryHistoryType.ANONYMIZED:
+    if query_history_type == QueryHistoryType.ANONYMIZED:
         snapshot.user_email = ONYX_ANONYMIZED_EMAIL
 
     return snapshot

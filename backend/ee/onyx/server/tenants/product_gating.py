@@ -1,12 +1,8 @@
-from typing import cast
-
 from ee.onyx.configs.app_configs import GATED_TENANTS_KEY
 from onyx.configs.constants import ONYX_CLOUD_TENANT_ID
-from onyx.redis.redis_pool import get_redis_client
-from onyx.redis.redis_pool import get_redis_replica_client
+from onyx.redis.redis_pool import get_redis_client, get_redis_replica_client
 from onyx.server.settings.models import ApplicationStatus
-from onyx.server.settings.store import load_settings
-from onyx.server.settings.store import store_settings
+from onyx.server.settings.store import load_settings, store_settings
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
@@ -47,15 +43,12 @@ def overwrite_full_gated_set(tenant_ids: list[str]) -> None:
 
     pipeline = redis_client.pipeline()
 
-    # using pipeline doesn't automatically add the tenant_id prefix
-    full_gated_set_key = f"{ONYX_CLOUD_TENANT_ID}:{GATED_TENANTS_KEY}"
-
     # Clear the existing set
-    pipeline.delete(full_gated_set_key)
+    pipeline.delete(GATED_TENANTS_KEY)
 
     # Add all tenant IDs to the set and set their status
     for tenant_id in tenant_ids:
-        pipeline.sadd(full_gated_set_key, tenant_id)
+        pipeline.sadd(GATED_TENANTS_KEY, tenant_id)
 
     # Execute all commands at once
     pipeline.execute()
@@ -63,7 +56,7 @@ def overwrite_full_gated_set(tenant_ids: list[str]) -> None:
 
 def get_gated_tenants() -> set[str]:
     redis_client = get_redis_replica_client(tenant_id=ONYX_CLOUD_TENANT_ID)
-    gated_tenants_bytes = cast(set[bytes], redis_client.smembers(GATED_TENANTS_KEY))
+    gated_tenants_bytes = redis_client.smembers(GATED_TENANTS_KEY)
     return {tenant_id.decode("utf-8") for tenant_id in gated_tenants_bytes}
 
 

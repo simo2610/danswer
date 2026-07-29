@@ -1,8 +1,10 @@
-from onyx.configs.app_configs import VESPA_CLOUD_URL
-from onyx.configs.app_configs import VESPA_CONFIG_SERVER_HOST
-from onyx.configs.app_configs import VESPA_HOST
-from onyx.configs.app_configs import VESPA_PORT
-from onyx.configs.app_configs import VESPA_TENANT_PORT
+from onyx.configs.app_configs import (
+    VESPA_CLOUD_URL,
+    VESPA_CONFIG_SERVER_HOST,
+    VESPA_HOST,
+    VESPA_PORT,
+    VESPA_TENANT_PORT,
+)
 from onyx.configs.constants import SOURCE_TYPE
 
 # config server
@@ -82,7 +84,7 @@ FULL_CHUNK_EMBEDDING_KEY = "full_chunk"
 
 
 YQL_BASE = (
-    f"select "
+    f"select "  # noqa: S608 - Vespa YQL with static column-name constants, not SQL
     f"documentid, "
     f"{DOCUMENT_ID}, "
     f"{CHUNK_ID}, "

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
 
 from onyx.mcp_server.api import mcp_server
-from onyx.mcp_server.utils import get_indexed_sources
-from onyx.mcp_server.utils import require_access_token
+from onyx.mcp_server.utils import get_indexed_sources, require_access_token
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -21,7 +20,7 @@ logger = setup_logger()
     ),
     mime_type="application/json",
 )
-async def indexed_sources_resource() -> dict[str, Any]:
+async def indexed_sources_resource() -> str:
     """Return the list of indexed source types for search filtering."""
 
     access_token = require_access_token()
@@ -33,6 +32,6 @@ async def indexed_sources_resource() -> dict[str, Any]:
         len(sources),
     )
 
-    return {
-        "indexed_sources": sorted(sources),
-    }
+    # FastMCP 3.2+ requires str/bytes/list[ResourceContent] — it no longer
+    # auto-serializes; serialize to JSON ourselves.
+    return json.dumps(sorted(sources))

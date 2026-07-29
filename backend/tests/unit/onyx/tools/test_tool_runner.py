@@ -1,10 +1,5 @@
-from onyx.chat.models import ChatMessageSimple
-from onyx.chat.models import ToolCallSimple
-from onyx.configs.constants import MessageType
 from onyx.server.query_and_chat.placement import Placement
 from onyx.tools.models import ToolCallKickoff
-from onyx.tools.tool_runner import _extract_image_file_ids_from_tool_response_message
-from onyx.tools.tool_runner import _extract_recent_generated_image_file_ids
 from onyx.tools.tool_runner import _merge_tool_calls
 
 
@@ -140,12 +135,12 @@ class TestMergeToolCalls:
         """Non-mergeable tools (e.g., python) are returned as separate calls."""
         calls = [
             _make_tool_call(
-                tool_name="python",
+                tool_name="run_python",
                 tool_args={"code": "print(1)"},
                 tool_call_id="call_1",
             ),
             _make_tool_call(
-                tool_name="python",
+                tool_name="run_python",
                 tool_args={"code": "print(2)"},
                 tool_call_id="call_2",
             ),
@@ -165,7 +160,7 @@ class TestMergeToolCalls:
                 tool_call_id="search_1",
             ),
             _make_tool_call(
-                tool_name="python",
+                tool_name="run_python",
                 tool_args={"code": "x = 1"},
                 tool_call_id="python_1",
             ),
@@ -181,12 +176,12 @@ class TestMergeToolCalls:
         assert len(result) == 2
 
         tool_names = {r.tool_name for r in result}
-        assert tool_names == {"internal_search", "python"}
+        assert tool_names == {"internal_search", "run_python"}
 
         search_result = next(r for r in result if r.tool_name == "internal_search")
         assert search_result.tool_args["queries"] == ["q1", "q2"]
 
-        python_result = next(r for r in result if r.tool_name == "python")
+        python_result = next(r for r in result if r.tool_name == "run_python")
         assert python_result.tool_args["code"] == "x = 1"
 
     def test_multiple_different_mergeable_tools(self) -> None:
@@ -312,62 +307,3 @@ class TestMergeToolCalls:
         assert len(result) == 1
         # String should be converted to list item
         assert result[0].tool_args["queries"] == ["single_query", "q2"]
-
-
-class TestImageHistoryExtraction:
-    def test_extracts_image_file_ids_from_json_response(self) -> None:
-        msg = '[{"file_id":"img-1","revised_prompt":"v1"},{"file_id":"img-2","revised_prompt":"v2"}]'
-        assert _extract_image_file_ids_from_tool_response_message(msg) == [
-            "img-1",
-            "img-2",
-        ]
-
-    def test_extracts_recent_generated_image_ids_from_history(self) -> None:
-        history = [
-            ChatMessageSimple(
-                message="",
-                token_count=1,
-                message_type=MessageType.ASSISTANT,
-                tool_calls=[
-                    ToolCallSimple(
-                        tool_call_id="call_1",
-                        tool_name="generate_image",
-                        tool_arguments={"prompt": "test"},
-                        token_count=1,
-                    )
-                ],
-            ),
-            ChatMessageSimple(
-                message='[{"file_id":"img-1","revised_prompt":"r1"}]',
-                token_count=1,
-                message_type=MessageType.TOOL_CALL_RESPONSE,
-                tool_call_id="call_1",
-            ),
-        ]
-
-        assert _extract_recent_generated_image_file_ids(history) == ["img-1"]
-
-    def test_ignores_non_image_tool_responses(self) -> None:
-        history = [
-            ChatMessageSimple(
-                message="",
-                token_count=1,
-                message_type=MessageType.ASSISTANT,
-                tool_calls=[
-                    ToolCallSimple(
-                        tool_call_id="call_1",
-                        tool_name="web_search",
-                        tool_arguments={"queries": ["q"]},
-                        token_count=1,
-                    )
-                ],
-            ),
-            ChatMessageSimple(
-                message='[{"file_id":"img-1","revised_prompt":"r1"}]',
-                token_count=1,
-                message_type=MessageType.TOOL_CALL_RESPONSE,
-                tool_call_id="call_1",
-            ),
-        ]
-
-        assert _extract_recent_generated_image_file_ids(history) == []

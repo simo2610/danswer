@@ -4,12 +4,11 @@ This file tests the ability of different user types to set the role of other use
 
 import os
 
+import httpx
 import pytest
-from requests.exceptions import HTTPError
 
 from onyx.db.models import UserRole
-from tests.integration.common_utils.managers.user import DATestUser
-from tests.integration.common_utils.managers.user import UserManager
+from tests.integration.common_utils.managers.user import DATestUser, UserManager
 from tests.integration.common_utils.managers.user_group import UserGroupManager
 
 
@@ -31,7 +30,7 @@ def test_user_role_setting_permissions(reset: None) -> None:  # noqa: ARG001
     assert UserManager.is_role(curator, UserRole.BASIC)
 
     # Creating a curator without adding to a group should not work
-    with pytest.raises(HTTPError):
+    with pytest.raises(httpx.HTTPStatusError):
         UserManager.set_role(
             user_to_set=curator,
             target_role=UserRole.CURATOR,
@@ -42,7 +41,7 @@ def test_user_role_setting_permissions(reset: None) -> None:  # noqa: ARG001
     assert UserManager.is_role(global_curator, UserRole.BASIC)
 
     # Setting the role of a global curator should not work for a basic user
-    with pytest.raises(HTTPError):
+    with pytest.raises(httpx.HTTPStatusError):
         UserManager.set_role(
             user_to_set=global_curator,
             target_role=UserRole.GLOBAL_CURATOR,
@@ -58,7 +57,7 @@ def test_user_role_setting_permissions(reset: None) -> None:  # noqa: ARG001
     assert UserManager.is_role(global_curator, UserRole.GLOBAL_CURATOR)
 
     # Setting the role of a global curator should not work for an invalid curator
-    with pytest.raises(HTTPError):
+    with pytest.raises(httpx.HTTPStatusError):
         UserManager.set_role(
             user_to_set=global_curator,
             target_role=UserRole.BASIC,
@@ -78,7 +77,7 @@ def test_user_role_setting_permissions(reset: None) -> None:  # noqa: ARG001
     )
 
     # This should fail because the curator is not in the user group
-    with pytest.raises(HTTPError):
+    with pytest.raises(httpx.HTTPStatusError):
         UserGroupManager.set_curator_status(
             test_user_group=user_group_1,
             user_to_set_as_curator=curator,

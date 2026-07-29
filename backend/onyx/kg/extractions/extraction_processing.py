@@ -5,40 +5,43 @@ from redis.lock import Lock as RedisLock
 
 from onyx.configs.constants import CELERY_GENERIC_BEAT_LOCK_TIMEOUT
 from onyx.db.connector import get_kg_enabled_connectors
-from onyx.db.document import get_document_updated_at
-from onyx.db.document import get_skipped_kg_documents
-from onyx.db.document import get_unprocessed_kg_document_batch_for_connector
-from onyx.db.document import update_document_kg_info
-from onyx.db.document import update_document_kg_stage
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.entities import delete_from_kg_entities__no_commit
-from onyx.db.entities import upsert_staging_entity
-from onyx.db.entity_type import get_entity_types
-from onyx.db.kg_config import get_kg_config_settings
-from onyx.db.kg_config import validate_kg_settings
-from onyx.db.models import Document
-from onyx.db.models import KGStage
-from onyx.db.relationships import delete_from_kg_relationships__no_commit
-from onyx.db.relationships import upsert_staging_relationship
-from onyx.db.relationships import upsert_staging_relationship_type
-from onyx.kg.models import KGClassificationInstructions
-from onyx.kg.models import KGDocumentDeepExtractionResults
-from onyx.kg.models import KGEnhancedDocumentMetadata
-from onyx.kg.models import KGEntityTypeInstructions
-from onyx.kg.models import KGExtractionInstructions
-from onyx.kg.models import KGImpliedExtractionResults
-from onyx.kg.utils.extraction_utils import EntityTypeMetadataTracker
-from onyx.kg.utils.extraction_utils import (
-    get_batch_documents_metadata,
+from onyx.db.document import (
+    get_document_updated_at,
+    get_skipped_kg_documents,
+    get_unprocessed_kg_document_batch_for_connector,
+    update_document_kg_info,
+    update_document_kg_stage,
 )
-from onyx.kg.utils.extraction_utils import kg_deep_extraction
+from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.entities import delete_from_kg_entities__no_commit, upsert_staging_entity
+from onyx.db.entity_type import get_entity_types
+from onyx.db.kg_config import get_kg_config_settings, validate_kg_settings
+from onyx.db.models import Document, KGStage
+from onyx.db.relationships import (
+    delete_from_kg_relationships__no_commit,
+    upsert_staging_relationship,
+    upsert_staging_relationship_type,
+)
+from onyx.kg.models import (
+    KGClassificationInstructions,
+    KGDocumentDeepExtractionResults,
+    KGEnhancedDocumentMetadata,
+    KGEntityTypeInstructions,
+    KGExtractionInstructions,
+    KGImpliedExtractionResults,
+)
 from onyx.kg.utils.extraction_utils import (
+    EntityTypeMetadataTracker,
+    get_batch_documents_metadata,
+    kg_deep_extraction,
     kg_implied_extraction,
 )
-from onyx.kg.utils.formatting_utils import extract_relationship_type_id
-from onyx.kg.utils.formatting_utils import get_entity_type
-from onyx.kg.utils.formatting_utils import split_entity_id
-from onyx.kg.utils.formatting_utils import split_relationship_id
+from onyx.kg.utils.formatting_utils import (
+    extract_relationship_type_id,
+    get_entity_type,
+    split_entity_id,
+    split_relationship_id,
+)
 from onyx.kg.utils.lock_utils import extend_lock
 from onyx.utils.logger import setup_logger
 from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
@@ -46,9 +49,9 @@ from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
 logger = setup_logger()
 
 
-def _get_classification_extraction_instructions() -> (
-    dict[str | None, dict[str, KGEntityTypeInstructions]]
-):
+def _get_classification_extraction_instructions() -> dict[
+    str | None, dict[str, KGEntityTypeInstructions]
+]:
     """
     Prepare the classification instructions for the given source.
     """
@@ -221,7 +224,7 @@ def kg_extraction(
             - Update document table to set kg_extracted = True
     """
 
-    logger.info(f"Starting kg extraction for tenant {tenant_id}")
+    logger.info("Starting kg extraction for tenant %s", tenant_id)
 
     kg_config_settings = get_kg_config_settings()
     validate_kg_settings(kg_config_settings)
@@ -279,7 +282,9 @@ def kg_extraction(
 
             if len(unprocessed_document_batch) == 0:
                 logger.info(
-                    f"No unprocessed documents found for connector {connector_id}. Processed {document_batch_counter} batches."
+                    "No unprocessed documents found for connector %s. Processed %s batches.",
+                    connector_id,
+                    document_batch_counter,
                 )
                 break
 
@@ -287,7 +292,7 @@ def kg_extraction(
             last_lock_time = extend_lock(
                 lock, CELERY_GENERIC_BEAT_LOCK_TIMEOUT, last_lock_time
             )
-            logger.info(f"Processing document batch {document_batch_counter}")
+            logger.info("Processing document batch %s", document_batch_counter)
 
             # Get the document attributes and entity types
             batch_metadata = _get_batch_documents_enhanced_metadata(
@@ -304,7 +309,7 @@ def kg_extraction(
                     # info for after the connector has been processed
                     kg_stage = KGStage.SKIPPED
                     logger.debug(
-                        f"Document {unprocessed_document.id} is not of any entity type"
+                        "Document %s is not of any entity type", unprocessed_document.id
                     )
                 elif batch_metadata[unprocessed_document.id].skip:
                     # info for after the connector has been processed. But no message as there may be many
@@ -449,7 +454,8 @@ def kg_extraction(
                 parts = split_entity_id(entity)
                 if len(parts) != 2:
                     logger.error(
-                        f"Invalid entity {entity} in aggregated_kg_extractions.entities"
+                        "Invalid entity %s in aggregated_kg_extractions.entities",
+                        entity,
                     )
                     continue
 
@@ -510,14 +516,15 @@ def kg_extraction(
 
                         db_session.commit()
                 except Exception as e:
-                    logger.error(f"Error adding entity {entity}. Error message: {e}")
+                    logger.error("Error adding entity %s. Error message: %s", entity, e)
 
             for document_id, relationship in batch_relationships:
                 relationship_split = split_relationship_id(relationship)
 
                 if len(relationship_split) != 3:
                     logger.error(
-                        f"Invalid relationship {relationship} in aggregated_kg_extractions.relationships"
+                        "Invalid relationship %s in aggregated_kg_extractions.relationships",
+                        relationship,
                     )
                     continue
 
@@ -547,7 +554,9 @@ def kg_extraction(
                         db_session.commit()
                     except Exception as e:
                         logger.error(
-                            f"Error adding relationship type {relationship_type_id_name} to the database: {e}"
+                            "Error adding relationship type %s to the database: %s",
+                            relationship_type_id_name,
+                            e,
                         )
 
                     with get_session_with_current_tenant() as db_session:
@@ -561,7 +570,9 @@ def kg_extraction(
                             db_session.commit()
                         except Exception as e:
                             logger.error(
-                                f"Error adding relationship {relationship} to the database: {e}"
+                                "Error adding relationship %s to the database: %s",
+                                relationship,
+                                e,
                             )
 
             # Populate the Documents table with the kg information for the documents

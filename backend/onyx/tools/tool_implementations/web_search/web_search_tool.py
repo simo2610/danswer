@@ -10,29 +10,31 @@ from onyx.context.search.utils import convert_inference_sections_to_search_docs
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.web_search import fetch_active_web_search_provider
 from onyx.server.query_and_chat.placement import Placement
-from onyx.server.query_and_chat.streaming_models import Packet
-from onyx.server.query_and_chat.streaming_models import SearchToolDocumentsDelta
-from onyx.server.query_and_chat.streaming_models import SearchToolQueriesDelta
-from onyx.server.query_and_chat.streaming_models import SearchToolStart
+from onyx.server.query_and_chat.streaming_models import (
+    Packet,
+    SearchToolDocumentsDelta,
+    SearchToolQueriesDelta,
+    SearchToolStart,
+)
 from onyx.tools.interface import Tool
-from onyx.tools.models import ToolCallException
-from onyx.tools.models import ToolResponse
-from onyx.tools.models import WebSearchToolOverrideKwargs
+from onyx.tools.models import (
+    ToolCallException,
+    ToolResponse,
+    WebSearchToolOverrideKwargs,
+)
 from onyx.tools.tool_implementations.utils import (
     convert_inference_sections_to_llm_string,
 )
-from onyx.tools.tool_implementations.web_search.models import DEFAULT_MAX_RESULTS
-from onyx.tools.tool_implementations.web_search.models import WebSearchResult
-from onyx.tools.tool_implementations.web_search.providers import (
-    build_search_provider_from_config,
+from onyx.tools.tool_implementations.web_search.models import (
+    DEFAULT_MAX_RESULTS,
+    WebSearchResult,
 )
 from onyx.tools.tool_implementations.web_search.providers import (
+    build_search_provider_from_config,
     provider_requires_api_key,
 )
 from onyx.tools.tool_implementations.web_search.utils import (
     filter_web_search_results_with_no_title_or_snippet,
-)
-from onyx.tools.tool_implementations.web_search.utils import (
     inference_section_from_internet_search_result,
 )
 from onyx.utils.logger import setup_logger
@@ -192,7 +194,7 @@ class WebSearchTool(Tool[WebSearchToolOverrideKwargs]):
             return (results, None)
         except Exception as e:
             error_msg = str(e)
-            logger.warning(f"Web search query '{query}' failed: {error_msg}")
+            logger.warning("Web search query '%s' failed: %s", query, error_msg)
             return (None, error_msg)
 
     def run(
@@ -256,8 +258,10 @@ class WebSearchTool(Tool[WebSearchToolOverrideKwargs]):
         # Log partial failures but continue if we have at least one success
         if failed_queries and valid_results:
             logger.warning(
-                f"Web search partial failure: {len(failed_queries)}/{len(queries)} "
-                f"queries failed. Failed queries: {json.dumps(failed_queries)}"
+                "Web search partial failure: %s/%s queries failed. Failed queries: %s",
+                len(failed_queries),
+                len(queries),
+                json.dumps(failed_queries),
             )
 
         # If all queries failed, raise ToolCallException with details

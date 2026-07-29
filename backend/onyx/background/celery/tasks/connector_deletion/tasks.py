@@ -1,12 +1,8 @@
 import traceback
-from datetime import datetime
-from datetime import timezone
-from typing import Any
-from typing import cast
+from datetime import datetime, timezone
+from typing import Any, cast
 
-from celery import Celery
-from celery import shared_task
-from celery import Task
+from celery import Celery, Task, shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from pydantic import ValidationError
 from redis import Redis
@@ -14,60 +10,71 @@ from redis.lock import Lock as RedisLock
 from sqlalchemy.orm import Session
 
 from onyx.background.celery.apps.app_base import task_logger
-from onyx.background.celery.celery_redis import celery_get_broker_client
-from onyx.background.celery.celery_redis import celery_get_queue_length
-from onyx.background.celery.celery_redis import celery_get_queued_task_ids
-from onyx.configs.app_configs import JOB_TIMEOUT
-from onyx.configs.constants import CELERY_GENERIC_BEAT_LOCK_TIMEOUT
-from onyx.configs.constants import OnyxCeleryQueues
-from onyx.configs.constants import OnyxCeleryTask
-from onyx.configs.constants import OnyxRedisConstants
-from onyx.configs.constants import OnyxRedisLocks
-from onyx.configs.constants import OnyxRedisSignals
-from onyx.db.connector import fetch_connector_by_id
-from onyx.db.connector_credential_pair import add_deletion_failure_message
-from onyx.db.connector_credential_pair import (
-    delete_connector_credential_pair__no_commit,
+from onyx.background.celery.celery_redis import (
+    celery_get_broker_client,
+    celery_get_queue_length,
+    celery_get_queued_task_ids,
 )
-from onyx.db.connector_credential_pair import get_connector_credential_pair_from_id
-from onyx.db.connector_credential_pair import get_connector_credential_pairs
+from onyx.configs.app_configs import JOB_TIMEOUT
+from onyx.configs.constants import (
+    CELERY_GENERIC_BEAT_LOCK_TIMEOUT,
+    OnyxCeleryQueues,
+    OnyxCeleryTask,
+    OnyxRedisConstants,
+    OnyxRedisLocks,
+    OnyxRedisSignals,
+)
+from onyx.db.connector import fetch_connector_by_id
+from onyx.db.connector_credential_pair import (
+    add_deletion_failure_message,
+    delete_connector_credential_pair__no_commit,
+    get_connector_credential_pair_from_id,
+    get_connector_credential_pairs,
+)
 from onyx.db.document import (
     delete_all_documents_by_connector_credential_pair__no_commit,
+    get_document_ids_for_connector_credential_pair,
 )
-from onyx.db.document import get_document_ids_for_connector_credential_pair
 from onyx.db.document_set import delete_document_set_cc_pair_relationship__no_commit
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.enums import ConnectorCredentialPairStatus
-from onyx.db.enums import IndexingStatus
-from onyx.db.enums import SyncStatus
-from onyx.db.enums import SyncType
-from onyx.db.index_attempt import delete_index_attempts
-from onyx.db.index_attempt import get_recent_attempts_for_cc_pair
+from onyx.db.enums import (
+    ConnectorCredentialPairStatus,
+    IndexingStatus,
+    SyncStatus,
+    SyncType,
+)
+from onyx.db.index_attempt import delete_index_attempts, get_recent_attempts_for_cc_pair
 from onyx.db.permission_sync_attempt import (
     delete_doc_permission_sync_attempts__no_commit,
-)
-from onyx.db.permission_sync_attempt import (
     delete_external_group_permission_sync_attempts__no_commit,
 )
+from onyx.db.port_attempt import get_active_port_attempt, request_port_cancel
 from onyx.db.search_settings import get_all_search_settings
-from onyx.db.sync_record import cleanup_sync_records
-from onyx.db.sync_record import insert_sync_record
-from onyx.db.sync_record import update_sync_record_status
+from onyx.db.sync_record import (
+    cleanup_sync_records,
+    insert_sync_record,
+    update_sync_record_status,
+)
 from onyx.db.tag import delete_orphan_tags__no_commit
 from onyx.redis.redis_connector import RedisConnector
-from onyx.redis.redis_connector_delete import RedisConnectorDelete
-from onyx.redis.redis_connector_delete import RedisConnectorDeletePayload
-from onyx.redis.redis_pool import get_redis_client
-from onyx.redis.redis_pool import get_redis_replica_client
-from onyx.server.metrics.deletion_metrics import inc_deletion_blocked
-from onyx.server.metrics.deletion_metrics import inc_deletion_completed
-from onyx.server.metrics.deletion_metrics import inc_deletion_fence_reset
-from onyx.server.metrics.deletion_metrics import inc_deletion_started
-from onyx.server.metrics.deletion_metrics import observe_deletion_taskset_duration
+from onyx.redis.redis_connector_delete import (
+    RedisConnectorDelete,
+    RedisConnectorDeletePayload,
+)
+from onyx.redis.redis_pool import get_redis_client, get_redis_replica_client
+from onyx.redis.redis_tenant_work_gating import maybe_mark_tenant_active
+from onyx.redis.tenant_redis_client import TenantRedisClient
+from onyx.server.metrics.deletion_metrics import (
+    inc_deletion_blocked,
+    inc_deletion_completed,
+    inc_deletion_fence_reset,
+    inc_deletion_started,
+    observe_deletion_taskset_duration,
+)
 from onyx.utils.variable_functionality import (
     fetch_versioned_implementation_with_fallback,
+    noop_fallback,
 )
-from onyx.utils.variable_functionality import noop_fallback
 
 
 class TaskDependencyError(RuntimeError):
@@ -165,12 +172,22 @@ def check_for_connector_deletion_task(self: Task, *, tenant_id: str) -> bool | N
 
             r.set(OnyxRedisSignals.BLOCK_VALIDATE_CONNECTOR_DELETION_FENCES, 1, ex=300)
 
-        # collect cc_pair_ids
+        # collect cc_pair_ids and note whether any are in DELETING status
         cc_pair_ids: list[int] = []
+        has_deleting_cc_pair = False
         with get_session_with_current_tenant() as db_session:
             cc_pairs = get_connector_credential_pairs(db_session)
             for cc_pair in cc_pairs:
                 cc_pair_ids.append(cc_pair.id)
+                if cc_pair.status == ConnectorCredentialPairStatus.DELETING:
+                    has_deleting_cc_pair = True
+
+        # Tenant-work-gating hook: mark only when at least one cc_pair is in
+        # DELETING status. Marking on bare cc_pair existence would keep
+        # nearly every tenant in the active set since most have cc_pairs
+        # but almost none are actively being deleted on any given cycle.
+        if has_deleting_cc_pair:
+            maybe_mark_tenant_active(tenant_id, caller="connector_deletion")
 
         # try running cleanup on the cc_pair_ids
         for cc_pair_id in cc_pair_ids:
@@ -312,6 +329,23 @@ def try_generate_document_cc_pair_cleanup_tasks(
                     f"search_settings={search_settings.id}"
                 )
 
+            # A running port could re-add docs we're deleting (create-only write).
+            # request_port_cancel asks it to stop but leaves it active, so
+            # get_active_port_attempt keeps returning it until the port acks terminal
+            # after its last write — making cleanup the last writer. A dead port is
+            # failed by the stall watchdog.
+            active_port = get_active_port_attempt(
+                db_session, cc_pair_id, search_settings.id
+            )
+            if active_port is not None:
+                request_port_cancel(db_session, active_port.id)
+                inc_deletion_blocked(tenant_id, "port")
+                raise TaskDependencyError(
+                    "Connector deletion - Delayed (waiting for in-progress port to stop): "
+                    f"cc_pair={cc_pair_id} "
+                    f"search_settings={search_settings.id}"
+                )
+
         if redis_connector.prune.fenced:
             inc_deletion_blocked(tenant_id, "pruning")
             raise TaskDependencyError(
@@ -375,7 +409,7 @@ def try_generate_document_cc_pair_cleanup_tasks(
 def monitor_connector_deletion_taskset(
     tenant_id: str,
     key_bytes: bytes,
-    r: Redis,  # noqa: ARG001
+    r: TenantRedisClient,  # noqa: ARG001
 ) -> None:
     fence_key = key_bytes.decode("utf-8")
     cc_pair_id_str = RedisConnector.get_id_from_fence_key(fence_key)
@@ -398,18 +432,16 @@ def monitor_connector_deletion_taskset(
         # the fence is setting up but isn't ready yet
         return
 
-    remaining = redis_connector.delete.get_remaining()
-    task_logger.info(
-        f"Connector deletion progress: cc_pair={cc_pair_id} remaining={remaining} initial={fence_data.num_tasks}"
-    )
-    if remaining > 0:
+    # Check if the taskset still exists in Redis without reading its size.
+    # redis.exists() is O(1) and very cheap, whereas scard() on 150k+ items OOMKills.
+    if r.exists(redis_connector.delete.taskset_key):
         with get_session_with_current_tenant() as db_session:
             update_sync_record_status(
                 db_session=db_session,
                 entity_id=cc_pair_id,
                 sync_type=SyncType.CONNECTOR_DELETION,
                 sync_status=SyncStatus.IN_PROGRESS,
-                num_docs_synced=remaining,
+                num_docs_synced=fence_data.num_tasks,
             )
         return
 
@@ -484,7 +516,8 @@ def monitor_connector_deletion_taskset(
                 db_session=db_session,
             )
 
-            # delete orphan tags
+            # best-effort bounded orphan tag cleanup; a full drain would balloon
+            # this transaction, remaining orphans are swept by the pruning monitor
             delete_orphan_tags__no_commit(db_session)
 
             # Store IDs before potentially expiring cc_pair
@@ -580,8 +613,8 @@ def monitor_connector_deletion_taskset(
 
 def validate_connector_deletion_fences(
     tenant_id: str,
-    r: Redis,
-    r_replica: Redis,
+    r: TenantRedisClient,
+    r_replica: TenantRedisClient,
     r_celery: Redis,
     lock_beat: RedisLock,
 ) -> None:
@@ -622,7 +655,7 @@ def validate_connector_deletion_fence(
     tenant_id: str,
     key_bytes: bytes,
     queued_upsert_tasks: set[str],
-    r: Redis,
+    r: TenantRedisClient,
 ) -> None:
     """Checks for the error condition where an indexing fence is set but the associated celery tasks don't exist.
     This can happen if the indexing worker hard crashes or is terminated.
@@ -706,8 +739,7 @@ def validate_connector_deletion_fence(
     for member in r.sscan_iter(redis_connector.delete.taskset_key):
         tasks_scanned += 1
 
-        member_bytes = cast(bytes, member)
-        member_str = member_bytes.decode("utf-8")
+        member_str = member.decode("utf-8")
         if member_str in queued_upsert_tasks:
             continue
 

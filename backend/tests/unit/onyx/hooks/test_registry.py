@@ -2,16 +2,14 @@ import pytest
 
 from onyx.db.enums import HookPoint
 from onyx.hooks import registry as registry_module
-from onyx.hooks.registry import get_all_specs
-from onyx.hooks.registry import get_hook_point_spec
-from onyx.hooks.registry import validate_registry
+from onyx.hooks.registry import get_all_specs, get_hook_point_spec, validate_registry
 
 
 def test_registry_covers_all_hook_points() -> None:
     """Every HookPoint enum member must have a registered spec."""
-    assert {s.hook_point for s in get_all_specs()} == set(
-        HookPoint
-    ), f"Missing specs for: {set(HookPoint) - {s.hook_point for s in get_all_specs()}}"
+    assert {s.hook_point for s in get_all_specs()} == set(HookPoint), (
+        f"Missing specs for: {set(HookPoint) - {s.hook_point for s in get_all_specs()}}"
+    )
 
 
 def test_get_hook_point_spec_returns_correct_spec() -> None:

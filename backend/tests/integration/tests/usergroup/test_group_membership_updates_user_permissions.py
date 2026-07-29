@@ -6,8 +6,10 @@ from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.enums import Permission
 from onyx.db.models import PermissionGrant
 from onyx.db.models import UserGroup as UserGroupModel
-from onyx.db.permissions import recompute_permissions_for_group__no_commit
-from onyx.db.permissions import recompute_user_permissions__no_commit
+from onyx.db.permissions import (
+    recompute_permissions_for_group__no_commit,
+    recompute_user_permissions__no_commit,
+)
 from tests.integration.common_utils.managers.user import UserManager
 from tests.integration.common_utils.managers.user_group import UserGroupManager
 from tests.integration.common_utils.test_models import DATestUser
@@ -17,11 +19,8 @@ from tests.integration.common_utils.test_models import DATestUser
     os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() != "true",
     reason="User group tests are enterprise only",
 )
-def test_user_gets_permissions_when_added_to_group(
-    reset: None,  # noqa: ARG001
-) -> None:
-    admin_user: DATestUser = UserManager.create(name="admin_for_perm_test")
-    basic_user: DATestUser = UserManager.create(name="basic_user_for_perm_test")
+def test_user_gets_permissions_when_added_to_group(admin_user: DATestUser) -> None:
+    basic_user: DATestUser = UserManager.create()
 
     # basic_user starts with only "basic" from the default group
     initial_permissions = UserManager.get_permissions(basic_user)
@@ -52,12 +51,12 @@ def test_user_gets_permissions_when_added_to_group(
 
     # Verify the user gained the new permission (expanded includes read:agents)
     updated_permissions = UserManager.get_permissions(basic_user)
-    assert (
-        "add:agents" in updated_permissions
-    ), f"User should have 'add:agents' after group grant, got: {updated_permissions}"
-    assert (
-        "read:agents" in updated_permissions
-    ), f"User should have implied 'read:agents', got: {updated_permissions}"
+    assert "add:agents" in updated_permissions, (
+        f"User should have 'add:agents' after group grant, got: {updated_permissions}"
+    )
+    assert "read:agents" in updated_permissions, (
+        f"User should have implied 'read:agents', got: {updated_permissions}"
+    )
     assert "basic" in updated_permissions
 
 
@@ -66,11 +65,10 @@ def test_user_gets_permissions_when_added_to_group(
     reason="User group tests are enterprise only",
 )
 def test_group_permission_change_propagates_to_all_members(
-    reset: None,  # noqa: ARG001
+    admin_user: DATestUser,
 ) -> None:
-    admin_user: DATestUser = UserManager.create(name="admin_propagate")
-    user_a: DATestUser = UserManager.create(name="user_a_propagate")
-    user_b: DATestUser = UserManager.create(name="user_b_propagate")
+    user_a: DATestUser = UserManager.create()
+    user_b: DATestUser = UserManager.create()
 
     group = UserGroupManager.create(
         name="propagate-test-group",

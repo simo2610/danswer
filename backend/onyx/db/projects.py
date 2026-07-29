@@ -3,29 +3,27 @@ import uuid
 from typing import List
 from uuid import UUID
 
-from fastapi import HTTPException
-from fastapi import UploadFile
-from pydantic import BaseModel
-from pydantic import ConfigDict
-from pydantic import Field
+from fastapi import HTTPException, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTasks
 
 from onyx.configs.app_configs import DISABLE_VECTOR_DB
-from onyx.configs.constants import CELERY_USER_FILE_PROCESSING_TASK_EXPIRES
-from onyx.configs.constants import FileOrigin
-from onyx.configs.constants import OnyxCeleryPriority
-from onyx.configs.constants import OnyxCeleryQueues
-from onyx.configs.constants import OnyxCeleryTask
+from onyx.configs.constants import (
+    CELERY_USER_FILE_PROCESSING_TASK_EXPIRES,
+    FileOrigin,
+    OnyxCeleryPriority,
+    OnyxCeleryQueues,
+    OnyxCeleryTask,
+)
 from onyx.db.enums import UserFileStatus
-from onyx.db.models import Project__UserFile
-from onyx.db.models import User
-from onyx.db.models import UserFile
-from onyx.db.models import UserProject
+from onyx.db.models import Project__UserFile, User, UserFile, UserProject
 from onyx.server.documents.connector import upload_files
-from onyx.server.features.projects.projects_file_utils import categorize_uploaded_files
-from onyx.server.features.projects.projects_file_utils import RejectedFile
+from onyx.server.features.projects.projects_file_utils import (
+    RejectedFile,
+    categorize_uploaded_files,
+)
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
 
@@ -63,7 +61,6 @@ def create_user_files(
     link_url: str | None = None,
     temp_id_map: dict[str, str] | None = None,
 ) -> CategorizedFilesResult:
-
     # Categorize the files
     categorized_files = categorize_uploaded_files(files, db_session)
     # NOTE: At the moment, zip metadata is not used for user files.
@@ -143,7 +140,7 @@ def upload_files_to_user_files_with_indexing(
     tenant_id = get_current_tenant_id()
     for rejected_file in rejected_files:
         logger.warning(
-            f"File {rejected_file.filename} rejected for {rejected_file.reason}"
+            "File %s rejected for %s", rejected_file.filename, rejected_file.reason
         )
 
     if DISABLE_VECTOR_DB and background_tasks is not None:
@@ -151,7 +148,9 @@ def upload_files_to_user_files_with_indexing(
 
         background_tasks.add_task(drain_processing_loop, tenant_id)
         for user_file in indexable_files:
-            logger.info(f"Queued in-process processing for user_file_id={user_file.id}")
+            logger.info(
+                "Queued in-process processing for user_file_id=%s", user_file.id
+            )
     else:
         from onyx.background.celery.versioned_apps.client import app as client_app
 
@@ -164,7 +163,9 @@ def upload_files_to_user_files_with_indexing(
                 expires=CELERY_USER_FILE_PROCESSING_TASK_EXPIRES,
             )
             logger.info(
-                f"Triggered indexing for user_file_id={user_file.id} with task_id={task.id}"
+                "Triggered indexing for user_file_id=%s with task_id=%s",
+                user_file.id,
+                task.id,
             )
 
     return CategorizedFilesResult(

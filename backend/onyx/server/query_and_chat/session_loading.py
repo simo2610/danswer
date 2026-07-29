@@ -1,55 +1,64 @@
 from __future__ import annotations
 
 import json
-from typing import Any
-from typing import cast
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from onyx.chat.citation_utils import extract_citation_order_from_text
+from onyx.coding_agent.mock_tools import CODING_AGENT_QUERY_KEY, CODING_AGENT_REPO_KEY
 from onyx.configs.constants import MessageType
-from onyx.context.search.models import SavedSearchDoc
-from onyx.context.search.models import SearchDoc
-from onyx.db.chat import get_db_search_doc_by_id
-from onyx.db.chat import translate_db_search_doc_to_saved_search_doc
+from onyx.context.search.models import SavedSearchDoc, SearchDoc
+from onyx.db.chat import (
+    get_db_search_doc_by_id,
+    translate_db_search_doc_to_saved_search_doc,
+)
 from onyx.db.models import ChatMessage
 from onyx.db.tools import get_tool_by_id
-from onyx.deep_research.dr_mock_tools import RESEARCH_AGENT_IN_CODE_ID
-from onyx.deep_research.dr_mock_tools import RESEARCH_AGENT_TASK_KEY
+from onyx.deep_research.dr_mock_tools import (
+    RESEARCH_AGENT_IN_CODE_ID,
+    RESEARCH_AGENT_TASK_KEY,
+)
 from onyx.server.query_and_chat.placement import Placement
-from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
-from onyx.server.query_and_chat.streaming_models import AgentResponseStart
-from onyx.server.query_and_chat.streaming_models import CitationInfo
-from onyx.server.query_and_chat.streaming_models import CustomToolArgs
-from onyx.server.query_and_chat.streaming_models import CustomToolDelta
-from onyx.server.query_and_chat.streaming_models import CustomToolErrorInfo
-from onyx.server.query_and_chat.streaming_models import CustomToolStart
-from onyx.server.query_and_chat.streaming_models import FileReaderResult
-from onyx.server.query_and_chat.streaming_models import FileReaderStart
-from onyx.server.query_and_chat.streaming_models import GeneratedImage
-from onyx.server.query_and_chat.streaming_models import ImageGenerationFinal
-from onyx.server.query_and_chat.streaming_models import ImageGenerationToolStart
-from onyx.server.query_and_chat.streaming_models import IntermediateReportDelta
-from onyx.server.query_and_chat.streaming_models import IntermediateReportStart
-from onyx.server.query_and_chat.streaming_models import MemoryToolDelta
-from onyx.server.query_and_chat.streaming_models import MemoryToolStart
-from onyx.server.query_and_chat.streaming_models import OpenUrlDocuments
-from onyx.server.query_and_chat.streaming_models import OpenUrlStart
-from onyx.server.query_and_chat.streaming_models import OpenUrlUrls
-from onyx.server.query_and_chat.streaming_models import OverallStop
-from onyx.server.query_and_chat.streaming_models import Packet
-from onyx.server.query_and_chat.streaming_models import PythonToolDelta
-from onyx.server.query_and_chat.streaming_models import PythonToolStart
-from onyx.server.query_and_chat.streaming_models import ReasoningDelta
-from onyx.server.query_and_chat.streaming_models import ReasoningStart
-from onyx.server.query_and_chat.streaming_models import ResearchAgentStart
-from onyx.server.query_and_chat.streaming_models import SearchToolDocumentsDelta
-from onyx.server.query_and_chat.streaming_models import SearchToolQueriesDelta
-from onyx.server.query_and_chat.streaming_models import SearchToolStart
-from onyx.server.query_and_chat.streaming_models import SectionEnd
-from onyx.server.query_and_chat.streaming_models import TopLevelBranching
+from onyx.server.query_and_chat.streaming_models import (
+    AgentResponseDelta,
+    AgentResponseStart,
+    CitationInfo,
+    CodingAgentFinal,
+    CodingAgentStart,
+    CustomToolArgs,
+    CustomToolDelta,
+    CustomToolErrorInfo,
+    CustomToolStart,
+    FileReaderResult,
+    FileReaderStart,
+    GeneratedImage,
+    ImageGenerationFinal,
+    ImageGenerationToolStart,
+    IntermediateReportDelta,
+    IntermediateReportStart,
+    MemoryToolDelta,
+    MemoryToolStart,
+    OpenUrlDocuments,
+    OpenUrlStart,
+    OpenUrlUrls,
+    OverallStop,
+    Packet,
+    PythonToolDelta,
+    PythonToolStart,
+    ReasoningDelta,
+    ReasoningStart,
+    ResearchAgentStart,
+    SearchToolDocumentsDelta,
+    SearchToolQueriesDelta,
+    SearchToolStart,
+    SectionEnd,
+    TopLevelBranching,
+)
+from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
+    CodingAgentTool,
+)
 from onyx.tools.tool_implementations.file_reader.file_reader_tool import FileReaderTool
 from onyx.tools.tool_implementations.images.image_generation_tool import (
     ImageGenerationTool,
@@ -315,6 +324,44 @@ def create_research_agent_packets(
             obj=SectionEnd(),
         )
     )
+
+    return packets
+
+
+def create_coding_agent_packets(
+    query: str,
+    repo: str,
+    answer: str | None,
+    turn_index: int,
+    tab_index: int = 0,
+) -> list[Packet]:
+    """Recreate the packet stream for a saved coding-agent tool call.
+
+    Mirrors what the live ``CodingAgentTool`` emits:
+    - ``CodingAgentStart(query, repo)`` opens the agent's section.
+    - ``CodingAgentFinal(answer)`` carries the inner agent's answer, which
+      the renderer displays as the agent's "Response" step.
+    - ``SectionEnd`` marks completion.
+
+    The outer chat-message bubble (rendered from ``chat_message.message`` via
+    ``create_message_packets`` at ``max_tool_turn + 1``) is the regular chat
+    agent's answer — separate from the coding agent's response, which stays
+    inside the agent's own timeline section.
+
+    Bash sub-calls aren't persisted (they're not top-level tool calls), so
+    they aren't replayed here — the renderer shows "Coding Task" only.
+    """
+    placement = Placement(turn_index=turn_index, tab_index=tab_index)
+    packets: list[Packet] = [
+        Packet(placement=placement, obj=CodingAgentStart(query=query, repo=repo)),
+    ]
+
+    if answer:
+        packets.append(
+            Packet(placement=placement, obj=CodingAgentFinal(answer=answer)),
+        )
+
+    packets.append(Packet(placement=placement, obj=SectionEnd()))
 
     return packets
 
@@ -620,6 +667,27 @@ def translate_assistant_message_to_packets(
                             )
                         )
 
+                    elif tool.in_code_tool_id == CodingAgentTool.__name__:
+                        coding_query = cast(
+                            str,
+                            tool_call.tool_call_arguments.get(CODING_AGENT_QUERY_KEY)
+                            or "",
+                        )
+                        coding_repo = cast(
+                            str,
+                            tool_call.tool_call_arguments.get(CODING_AGENT_REPO_KEY)
+                            or "",
+                        )
+                        turn_tool_packets.extend(
+                            create_coding_agent_packets(
+                                query=coding_query,
+                                repo=coding_repo,
+                                answer=tool_call.tool_call_response,
+                                turn_index=turn_num,
+                                tab_index=tool_call.tab_index,
+                            )
+                        )
+
                     elif tool.in_code_tool_id == MemoryTool.__name__:
                         if tool_call.tool_call_response:
                             memory_data = json.loads(tool_call.tool_call_response)
@@ -727,7 +795,7 @@ def translate_assistant_message_to_packets(
                         )
 
                 except Exception as e:
-                    logger.warning(f"Error processing tool call {tool_call.id}: {e}")
+                    logger.warning("Error processing tool call %s: %s", tool_call.id, e)
                     continue
 
             if research_agent_count > 1:

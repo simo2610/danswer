@@ -9,48 +9,53 @@ PATCH value dicts).
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi import Response
 
-from ee.onyx.server.scim.api import create_user
-from ee.onyx.server.scim.api import delete_user
-from ee.onyx.server.scim.api import get_group
-from ee.onyx.server.scim.api import get_resource_types
-from ee.onyx.server.scim.api import get_schemas
-from ee.onyx.server.scim.api import get_service_provider_config
-from ee.onyx.server.scim.api import get_user
-from ee.onyx.server.scim.api import list_groups
-from ee.onyx.server.scim.api import list_users
-from ee.onyx.server.scim.api import patch_group
-from ee.onyx.server.scim.api import patch_user
-from ee.onyx.server.scim.api import replace_user
-from ee.onyx.server.scim.api import ScimJSONResponse
-from ee.onyx.server.scim.models import SCIM_ENTERPRISE_USER_SCHEMA
-from ee.onyx.server.scim.models import SCIM_USER_SCHEMA
-from ee.onyx.server.scim.models import ScimEnterpriseExtension
-from ee.onyx.server.scim.models import ScimGroupMember
-from ee.onyx.server.scim.models import ScimGroupResource
-from ee.onyx.server.scim.models import ScimManagerRef
-from ee.onyx.server.scim.models import ScimMappingFields
-from ee.onyx.server.scim.models import ScimName
-from ee.onyx.server.scim.models import ScimPatchOperation
-from ee.onyx.server.scim.models import ScimPatchOperationType
-from ee.onyx.server.scim.models import ScimPatchRequest
-from ee.onyx.server.scim.models import ScimPatchResourceValue
-from ee.onyx.server.scim.models import ScimUserResource
+from ee.onyx.server.scim.api import (
+    ScimJSONResponse,
+    create_user,
+    delete_user,
+    get_group,
+    get_resource_types,
+    get_schemas,
+    get_service_provider_config,
+    get_user,
+    list_groups,
+    list_users,
+    patch_group,
+    patch_user,
+    replace_user,
+)
+from ee.onyx.server.scim.models import (
+    SCIM_ENTERPRISE_USER_SCHEMA,
+    SCIM_USER_SCHEMA,
+    ScimEnterpriseExtension,
+    ScimGroupMember,
+    ScimGroupResource,
+    ScimManagerRef,
+    ScimMappingFields,
+    ScimName,
+    ScimPatchOperation,
+    ScimPatchOperationType,
+    ScimPatchRequest,
+    ScimPatchResourceValue,
+    ScimUserResource,
+)
 from ee.onyx.server.scim.providers.base import ScimProvider
 from ee.onyx.server.scim.providers.entra import EntraProvider
-from tests.unit.onyx.server.scim.conftest import make_db_group
-from tests.unit.onyx.server.scim.conftest import make_db_user
-from tests.unit.onyx.server.scim.conftest import make_scim_user
-from tests.unit.onyx.server.scim.conftest import make_user_mapping
-from tests.unit.onyx.server.scim.conftest import parse_scim_group
-from tests.unit.onyx.server.scim.conftest import parse_scim_list
-from tests.unit.onyx.server.scim.conftest import parse_scim_user
+from tests.unit.onyx.server.scim.conftest import (
+    make_db_group,
+    make_db_user,
+    make_scim_user,
+    make_user_mapping,
+    parse_scim_group,
+    parse_scim_list,
+    parse_scim_user,
+)
 
 
 @pytest.fixture
@@ -74,7 +79,7 @@ class TestEntraServiceDiscovery:
     def test_resource_types_include_enterprise_extension(self) -> None:
         result = get_resource_types()
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         assert "Resources" in parsed
         user_type = next(rt for rt in parsed["Resources"] if rt["id"] == "User")
         extension_schemas = [ext["schema"] for ext in user_type["schemaExtensions"]]
@@ -83,14 +88,14 @@ class TestEntraServiceDiscovery:
     def test_schemas_include_enterprise_user(self) -> None:
         result = get_schemas()
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         schema_ids = [s["id"] for s in parsed["Resources"]]
         assert SCIM_ENTERPRISE_USER_SCHEMA in schema_ids
 
     def test_enterprise_schema_has_expected_attributes(self) -> None:
         result = get_schemas()
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         enterprise = next(
             s for s in parsed["Resources"] if s["id"] == SCIM_ENTERPRISE_USER_SCHEMA
         )
@@ -264,7 +269,7 @@ class TestEntraUserLifecycle:
         patch_req = ScimPatchRequest(
             Operations=[
                 ScimPatchOperation(
-                    op="Replace",  # type: ignore[arg-type]
+                    op="Replace",  # ty: ignore[invalid-argument-type]
                     path="active",
                     value=False,
                 )
@@ -298,7 +303,7 @@ class TestEntraUserLifecycle:
         patch_req = ScimPatchRequest(
             Operations=[
                 ScimPatchOperation(
-                    op="Add",  # type: ignore[arg-type]
+                    op="Add",  # ty: ignore[invalid-argument-type]
                     path="externalId",
                     value="entra-ext-999",
                 )
@@ -675,7 +680,7 @@ class TestEntraGroupLifecycle:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         assert parsed["totalResults"] == 1
         resource = parsed["Resources"][0]
         assert "members" not in resource
@@ -703,7 +708,7 @@ class TestEntraGroupLifecycle:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         assert "members" not in parsed
         assert parsed["displayName"] == "Engineering"
 
@@ -733,7 +738,7 @@ class TestEntraGroupLifecycle:
         patch_req = ScimPatchRequest(
             Operations=[
                 ScimPatchOperation(
-                    op="Add",  # type: ignore[arg-type]
+                    op="Add",  # ty: ignore[invalid-argument-type]
                     path="members",
                     value=[ScimGroupMember(value=uid)],
                 )
@@ -772,7 +777,7 @@ class TestEntraGroupLifecycle:
         patch_req = ScimPatchRequest(
             Operations=[
                 ScimPatchOperation(
-                    op="Remove",  # type: ignore[arg-type]
+                    op="Remove",  # ty: ignore[invalid-argument-type]
                     path=f'members[value eq "{uid}"]',
                 )
             ]
@@ -821,7 +826,7 @@ class TestExcludedAttributes:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         resource = parsed["Resources"][0]
         assert "members" not in resource
         assert "displayName" in resource
@@ -847,7 +852,7 @@ class TestExcludedAttributes:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         assert "members" not in parsed
         assert "displayName" in parsed
 
@@ -874,7 +879,7 @@ class TestExcludedAttributes:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         resource = parsed["Resources"][0]
         assert "groups" not in resource
         assert "userName" in resource
@@ -899,7 +904,7 @@ class TestExcludedAttributes:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         assert "groups" not in parsed
         assert "userName" in parsed
 
@@ -923,7 +928,7 @@ class TestExcludedAttributes:
         )
 
         assert isinstance(result, ScimJSONResponse)
-        parsed = json.loads(result.body)
+        parsed = json.loads(result.body)  # ty: ignore[invalid-argument-type]
         assert "members" not in parsed
         assert "externalId" not in parsed
         assert "displayName" in parsed

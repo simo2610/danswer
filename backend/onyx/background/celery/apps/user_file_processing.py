@@ -1,15 +1,14 @@
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
-from celery import Celery
-from celery import signals
-from celery import Task
+from celery import Celery, Task, signals
 from celery.apps.worker import Worker
-from celery.signals import celeryd_init
-from celery.signals import worker_init
-from celery.signals import worker_process_init
-from celery.signals import worker_ready
-from celery.signals import worker_shutdown
+from celery.signals import (
+    celeryd_init,
+    worker_init,
+    worker_process_init,
+    worker_ready,
+    worker_shutdown,
+)
 
 import onyx.background.celery.apps.app_base as app_base
 from onyx.configs.constants import POSTGRES_CELERY_WORKER_USER_FILE_PROCESSING_APP_NAME
@@ -17,12 +16,11 @@ from onyx.db.engine.sql_engine import SqlEngine
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
 
-
 logger = setup_logger()
 
 celery_app = Celery(__name__)
 celery_app.config_from_object("onyx.background.celery.configs.user_file_processing")
-celery_app.Task = app_base.TenantAwareTask  # type: ignore [misc]
+celery_app.Task = app_base.TenantAwareTask  # ty: ignore[invalid-assignment]
 
 
 @signals.task_prerun.connect
@@ -66,12 +64,12 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
     # "SSL connection has been closed unexpectedly"
     # actually setting the spawn method in the cloud fixes 95% of these.
     # setting pre ping might help even more, but not worrying about that yet
-    pool_size = cast(int, sender.concurrency)  # type: ignore
+    pool_size = cast(int, sender.concurrency)  # ty: ignore[unresolved-attribute]
     SqlEngine.init_engine(pool_size=pool_size, max_overflow=8)
 
     app_base.wait_for_redis(sender, **kwargs)
     app_base.wait_for_db(sender, **kwargs)
-    app_base.wait_for_vespa_or_shutdown(sender, **kwargs)
+    app_base.wait_for_document_index_or_shutdown()
 
     # Less startup checks in multi-tenant case
     if MULTI_TENANT:
@@ -110,6 +108,8 @@ celery_app.autodiscover_tasks(
     app_base.filter_task_modules(
         [
             "onyx.background.celery.tasks.user_file_processing",
+            # registers run_user_file_port_attempt on this worker
+            "onyx.background.celery.tasks.port",
         ]
     )
 )

@@ -11,18 +11,15 @@ Covers:
 import io
 import time
 
-import requests
-
 from onyx.db.enums import UserFileStatus
 from tests.integration.common_utils.constants import API_SERVER_URL
+from tests.integration.common_utils.http_client import client
 from tests.integration.common_utils.managers.chat import ChatSessionManager
 from tests.integration.common_utils.managers.file import FileManager
 from tests.integration.common_utils.managers.persona import PersonaManager
 from tests.integration.common_utils.managers.project import ProjectManager
 from tests.integration.common_utils.managers.tool import ToolManager
-from tests.integration.common_utils.test_models import DATestLLMProvider
-from tests.integration.common_utils.test_models import DATestUser
-
+from tests.integration.common_utils.test_models import DATestLLMProvider, DATestUser
 
 FILE_READER_TOOL_ID = "FileReaderTool"
 
@@ -50,7 +47,6 @@ def _wait_for_file_processed(
 
 
 def test_chat_with_small_project_file(
-    reset: None,  # noqa: ARG001
     admin_user: DATestUser,
     llm_provider: DATestLLMProvider,  # noqa: ARG001
 ) -> None:
@@ -81,7 +77,7 @@ def test_chat_with_small_project_file(
     )
 
     # Link the chat session to the project
-    resp = requests.post(
+    resp = client.post(
         f"{API_SERVER_URL}/user/projects/{project.id}/move_chat_session",
         json={"chat_session_id": str(chat_session.id)},
         headers=admin_user.headers,
@@ -95,9 +91,9 @@ def test_chat_with_small_project_file(
     )
 
     assert response.error is None, f"Chat returned an error: {response.error}"
-    assert (
-        "PINEAPPLE-42" in response.full_message
-    ), f"Expected the LLM to reference the file content. Got: {response.full_message}"
+    assert "PINEAPPLE-42" in response.full_message, (
+        f"Expected the LLM to reference the file content. Got: {response.full_message}"
+    )
 
 
 # ------------------------------------------------------------------
@@ -106,7 +102,6 @@ def test_chat_with_small_project_file(
 
 
 def test_persona_with_user_files_chat(
-    reset: None,  # noqa: ARG001
     admin_user: DATestUser,
     llm_provider: DATestLLMProvider,  # noqa: ARG001
 ) -> None:
@@ -143,9 +138,9 @@ def test_persona_with_user_files_chat(
     file_reader_tool = next(
         (t for t in tools if t.in_code_tool_id == FILE_READER_TOOL_ID), None
     )
-    assert (
-        file_reader_tool is not None
-    ), "FileReaderTool should be registered as a built-in tool"
+    assert file_reader_tool is not None, (
+        "FileReaderTool should be registered as a built-in tool"
+    )
 
     # Create a persona with the user file attached
     persona = PersonaManager.create(
@@ -173,9 +168,9 @@ def test_persona_with_user_files_chat(
     assert response.error is None, f"Chat returned an error: {response.error}"
     # The LLM should be able to answer about the revenue (either from direct
     # context injection or via the FileReaderTool)
-    assert (
-        "$42 million" in response.full_message or "42" in response.full_message
-    ), f"Expected the LLM to reference the file content. Got: {response.full_message}"
+    assert "$42 million" in response.full_message or "42" in response.full_message, (
+        f"Expected the LLM to reference the file content. Got: {response.full_message}"
+    )
 
 
 # ------------------------------------------------------------------
@@ -207,30 +202,28 @@ def _base_persona_body(**overrides: object) -> dict:
 
 
 def test_persona_rejects_document_sets_without_vector_db(
-    reset: None,  # noqa: ARG001
     admin_user: DATestUser,
 ) -> None:
     """Creating a persona with document_set_ids should fail with 400."""
-    resp = requests.post(
+    resp = client.post(
         f"{API_SERVER_URL}/persona",
         json=_base_persona_body(document_set_ids=[1]),
         headers=admin_user.headers,
     )
-    assert (
-        resp.status_code == 400
-    ), f"Expected 400 for document_set_ids, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 400, (
+        f"Expected 400 for document_set_ids, got {resp.status_code}: {resp.text}"
+    )
 
 
 def test_persona_rejects_document_ids_without_vector_db(
-    reset: None,  # noqa: ARG001
     admin_user: DATestUser,
 ) -> None:
     """Creating a persona with document_ids should fail with 400."""
-    resp = requests.post(
+    resp = client.post(
         f"{API_SERVER_URL}/persona",
         json=_base_persona_body(document_ids=["fake-doc-id"]),
         headers=admin_user.headers,
     )
-    assert (
-        resp.status_code == 400
-    ), f"Expected 400 for document_ids, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 400, (
+        f"Expected 400 for document_ids, got {resp.status_code}: {resp.text}"
+    )

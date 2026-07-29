@@ -1,9 +1,8 @@
+import os
 import platform
 import re
 import socket
-from enum import auto
-from enum import Enum
-
+from enum import Enum, auto
 
 ONYX_DEFAULT_APPLICATION_NAME = "Onyx"
 ONYX_DISCORD_URL = "https://discord.gg/4NA5SbzrWb"
@@ -32,8 +31,12 @@ DEFAULT_BOOST = 0
 PUBLIC_API_TAGS: list[str | Enum] = ["public"]
 
 # Cookies
+# Configurable via env so multiple deployments sharing a hostname (e.g. parallel
+# local worktrees on different ports of localhost) can keep their auth cookies
+# separate — cookies are scoped by host, not port. The frontend reads the same
+# AUTH_COOKIE_NAME so the Next proxy / auth checks look for the matching cookie.
 FASTAPI_USERS_AUTH_COOKIE_NAME = (
-    "fastapiusersauth"  # Currently a constant, but logic allows for configuration
+    os.environ.get("AUTH_COOKIE_NAME") or "fastapiusersauth"
 )
 TENANT_ID_COOKIE_NAME = "onyx_tid"  # tenant id - for workaround cases
 ANONYMOUS_USER_COOKIE_NAME = "onyx_anonymous_user"
@@ -94,6 +97,7 @@ POSTGRES_CELERY_WORKER_MONITORING_APP_NAME = "celery_worker_monitoring"
 POSTGRES_CELERY_WORKER_USER_FILE_PROCESSING_APP_NAME = (
     "celery_worker_user_file_processing"
 )
+POSTGRES_CELERY_WORKER_SCHEDULED_TASKS_APP_NAME = "celery_worker_scheduled_tasks"
 POSTGRES_PERMISSIONS_APP_NAME = "permissions"
 POSTGRES_UNKNOWN_APP_NAME = "unknown"
 
@@ -103,8 +107,14 @@ DANSWER_API_KEY_PREFIX = "API_KEY__"
 DANSWER_API_KEY_DUMMY_EMAIL_DOMAIN = "onyxapikey.ai"
 UNNAMED_KEY_PLACEHOLDER = "Unnamed"
 DISCORD_SERVICE_API_KEY_NAME = "discord-bot-service"
+SLACK_SERVICE_ACCOUNT_NAME = "slack-bot-service"
+SLACK_SERVICE_ACCOUNT_EMAIL = (
+    f"{DANSWER_API_KEY_PREFIX}{SLACK_SERVICE_ACCOUNT_NAME}"
+    f"@{DANSWER_API_KEY_DUMMY_EMAIL_DOMAIN}"
+).lower()
 
 # Key-Value store keys
+KV_PASSWORD_AUTH_ENABLED_KEY = "password_auth_enabled_override"
 KV_REINDEX_KEY = "needs_reindexing"
 KV_UNSTRUCTURED_API_KEY = "unstructured_api_key"
 KV_USER_STORE_KEY = "INVITED_USERS"
@@ -112,10 +122,6 @@ KV_PENDING_USERS_KEY = "PENDING_USERS"
 KV_ANONYMOUS_USER_PREFERENCES_KEY = "anonymous_user_preferences"
 KV_ANONYMOUS_USER_PERSONALIZATION_KEY = "anonymous_user_personalization"
 KV_CRED_KEY = "credential_id_{}"
-KV_GMAIL_CRED_KEY = "gmail_app_credential"
-KV_GMAIL_SERVICE_ACCOUNT_KEY = "gmail_service_account_key"
-KV_GOOGLE_DRIVE_CRED_KEY = "google_drive_app_credential"
-KV_GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY = "google_drive_service_account_key"
 KV_GEN_AI_KEY_CHECK_TIME = "genai_api_key_last_check_time"
 KV_SETTINGS_KEY = "onyx_settings"
 KV_CUSTOMER_UUID_KEY = "customer_uuid"
@@ -137,6 +143,11 @@ CELERY_PRIMARY_WORKER_LOCK_TIMEOUT = 120
 # hard timeout applied by the watchdog to the indexing connector run
 # to handle hung connectors
 CELERY_INDEXING_WATCHDOG_CONNECTOR_TIMEOUT = 3 * 60 * 60  # 3 hours (in seconds)
+
+# how long the indexing watchdog waits for a spawned subprocess to exit after
+# SIGTERM before escalating to SIGKILL. Kept short because we only fall into this
+# code path once we have already decided the process needs to die.
+CELERY_INDEXING_WATCHDOG_SIGTERM_GRACE_SECONDS = 10  # seconds
 
 # soft timeout for the lock taken by the indexing connector run
 # allows the lock to eventually expire if the managing code around it dies
@@ -187,10 +198,22 @@ CELERY_USER_FILE_PROJECT_SYNC_LOCK_TIMEOUT = 5 * 60  # 5 minutes (in seconds)
 # files are stuck in DELETING status and the beat keeps re-enqueuing them.
 CELERY_USER_FILE_DELETE_TASK_EXPIRES = 60  # 1 minute (in seconds)
 
+# Per-doc metadata-sync task expiry: bounds queue growth if consumers stall. An
+# expired task's doc stays needs_sync / secondary_only_sync_pending and is
+# re-enqueued on the next vespa-sync beat pass, so dropping it is safe.
+CELERY_DOCUMENT_SYNC_TASK_EXPIRES = 60 * 60  # 1 hour (in seconds)
+
 # Max queue depth before the delete beat stops enqueuing more delete tasks.
 USER_FILE_DELETE_MAX_QUEUE_DEPTH = 500
 
-CELERY_SANDBOX_FILE_SYNC_LOCK_TIMEOUT = 5 * 60  # 5 minutes (in seconds)
+# Chat-retention (TTL) cleanup tuning. Each delete task removes the oldest
+# CHAT_TTL_DELETE_BATCH_SIZE expired sessions and chains the next task, so
+# deletion drains one batch at a time on the light queue and interleaves with
+# the other light-queue work instead of running as one long task.
+CHAT_TTL_DELETE_BATCH_SIZE = 100
+# How long a queued delete task is valid before workers discard it. Bounds queue
+# growth; if a task expires the beat starts a fresh chain on its next run.
+CELERY_CHAT_TTL_DELETE_TASK_EXPIRES = 60 * 60  # 1 hour (in seconds)
 
 DANSWER_REDIS_FUNCTION_LOCK_PREFIX = "da_function_lock:"
 
@@ -204,7 +227,6 @@ class DocumentSource(str, Enum):
     WEB = "web"
     GOOGLE_DRIVE = "google_drive"
     GMAIL = "gmail"
-    REQUESTTRACKER = "requesttracker"
     GITHUB = "github"
     GITBOOK = "gitbook"
     GITLAB = "gitlab"
@@ -227,6 +249,7 @@ class DocumentSource(str, Enum):
     GOOGLE_SITES = "google_sites"
     ZENDESK = "zendesk"
     LOOPIO = "loopio"
+    BOX = "box"
     DROPBOX = "dropbox"
     SHAREPOINT = "sharepoint"
     TEAMS = "teams"
@@ -255,6 +278,8 @@ class DocumentSource(str, Enum):
     IMAP = "imap"
     BITBUCKET = "bitbucket"
     TESTRAIL = "testrail"
+    BRAINTRUST = "braintrust"
+    LUMAPPS = "lumapps"
 
     # Special case just for integration tests
     MOCK_CONNECTOR = "mock_connector"
@@ -284,7 +309,13 @@ class NotificationType(str, Enum):
     RELEASE_NOTES = "release_notes"
     ASSISTANT_FILES_READY = "assistant_files_ready"
     FEATURE_ANNOUNCEMENT = "feature_announcement"
+    SYSTEM_ANNOUNCEMENT = "system_announcement"  # admin-authored site-wide banner
     CONNECTOR_REPEATED_ERRORS = "connector_repeated_errors"
+    LICENSE_EXPIRY_WARNING = "license_expiry_warning"
+    SCHEDULED_TASK_FAILED = "scheduled_task_failed"
+    SCHEDULED_TASK_AWAITING_APPROVAL = "scheduled_task_awaiting_approval"
+    SCHEDULED_TASK_PRE_APPROVED_ACTION = "scheduled_task_pre_approved_action"
+    APPROVAL_REQUESTED = "approval_requested"
 
 
 class BlobType(str, Enum):
@@ -297,16 +328,6 @@ class BlobType(str, Enum):
 class DocumentIndexType(str, Enum):
     COMBINED = "combined"  # Vespa
     SPLIT = "split"  # Typesense + Qdrant
-
-
-class AuthType(str, Enum):
-    BASIC = "basic"
-    GOOGLE_OAUTH = "google_oauth"
-    OIDC = "oidc"
-    SAML = "saml"
-
-    # google auth and basic
-    CLOUD = "cloud"
 
 
 class QueryHistoryType(str, Enum):
@@ -364,19 +385,24 @@ class TokenRateLimitScope(str, Enum):
 class FileStoreType(str, Enum):
     S3 = "s3"
     POSTGRES = "postgres"
+    GCS = "gcs"
+    AZURE = "azure"
 
 
 class FileOrigin(str, Enum):
     CHAT_UPLOAD = "chat_upload"
     CHAT_IMAGE_GEN = "chat_image_gen"
     CONNECTOR = "connector"
+    CONNECTOR_FILE_UPLOAD = "connector_file_upload"
     CONNECTOR_METADATA = "connector_metadata"
     GENERATED_REPORT = "generated_report"
     INDEXING_CHECKPOINT = "indexing_checkpoint"
+    INDEXING_STAGING = "indexing_staging"
     PLAINTEXT_CACHE = "plaintext_cache"
     OTHER = "other"
     QUERY_HISTORY_CSV = "query_history_csv"
     SANDBOX_SNAPSHOT = "sandbox_snapshot"
+    SKILL_BUNDLE = "skill_bundle"
     USER_FILE = "user_file"
 
 
@@ -418,6 +444,10 @@ class OnyxCeleryQueues:
     CONNECTOR_HIERARCHY_FETCHING = "connector_hierarchy_fetching"
     CSV_GENERATION = "csv_generation"
 
+    # Chat retention (TTL) hard-deletion queue, consumed by the light worker.
+    # Kept off the primary "celery" queue so cleanup never starves check_for_indexing.
+    CHAT_TTL_DELETION = "chat_ttl_deletion"
+
     # User file processing queue
     USER_FILE_PROCESSING = "user_file_processing"
     USER_FILE_PROJECT_SYNC = "user_file_project_sync"
@@ -426,11 +456,21 @@ class OnyxCeleryQueues:
     DOCPROCESSING = "docprocessing"
     CONNECTOR_DOC_FETCHING = "connector_doc_fetching"
 
+    # Reindex port queue (heavy PRESENT -> FUTURE re-embed; kept off the
+    # docprocessing queue so a migration doesn't starve live indexing)
+    PORT = "port"
+    # User-file reindex port; runs on the user-file worker with its own budget, so it
+    # never competes with the connector port or docprocessing.
+    USER_FILE_PORT = "user_file_port"
+
     # Monitoring queue
     MONITORING = "monitoring"
 
     # Sandbox processing queue
     SANDBOX = "sandbox"
+
+    # Scheduled tasks queue (Craft scheduled-task executor)
+    SCHEDULED_TASKS = "scheduled_tasks"
 
     OPENSEARCH_MIGRATION = "opensearch_migration"
 
@@ -442,6 +482,7 @@ class OnyxRedisLocks:
     CHECK_PRUNE_BEAT_LOCK = "da_lock:check_prune_beat"
     CHECK_HIERARCHY_FETCHING_BEAT_LOCK = "da_lock:check_hierarchy_fetching_beat"
     CHECK_INDEXING_BEAT_LOCK = "da_lock:check_indexing_beat"
+    CHECK_PORT_BEAT_LOCK = "da_lock:check_port_beat"
     CHECK_CHECKPOINT_CLEANUP_BEAT_LOCK = "da_lock:check_checkpoint_cleanup_beat"
     CHECK_INDEX_ATTEMPT_CLEANUP_BEAT_LOCK = "da_lock:check_index_attempt_cleanup_beat"
     CHECK_CONNECTOR_DOC_PERMISSIONS_SYNC_BEAT_LOCK = (
@@ -451,8 +492,14 @@ class OnyxRedisLocks:
         "da_lock:check_connector_external_group_sync_beat"
     )
     OPENSEARCH_MIGRATION_BEAT_LOCK = "da_lock:opensearch_migration_beat"
+    OPENSEARCH_VERIFY_INDEX_LOCK_PREFIX = "da_lock:opensearch_verify_index"
+
+    SECURITY_SETTINGS = "da_lock:security_settings"
 
     MONITOR_BACKGROUND_PROCESSES_LOCK = "da_lock:monitor_background_processes"
+    # In-flight marker: set while a chat-TTL cleanup chain is active (spanning
+    # its chained tasks) so the beat won't start a second chain per tenant.
+    CHAT_TTL_CHAIN_ACTIVE = "da_lock:chat_ttl_chain_active"
     CHECK_AVAILABLE_TENANTS_LOCK = "da_lock:check_available_tenants"
     CLOUD_PRE_PROVISION_TENANT_LOCK = "da_lock:pre_provision_tenant"
 
@@ -490,10 +537,7 @@ class OnyxRedisLocks:
 
     # Sandbox cleanup
     CLEANUP_IDLE_SANDBOXES_BEAT_LOCK = "da_lock:cleanup_idle_sandboxes_beat"
-    CLEANUP_OLD_SNAPSHOTS_BEAT_LOCK = "da_lock:cleanup_old_snapshots_beat"
-
-    # Sandbox file sync
-    SANDBOX_FILE_SYNC_LOCK_PREFIX = "da_lock:sandbox_file_sync"
+    SESSION_CREATE_LOCK_PREFIX = "session_create"
 
 
 class OnyxRedisSignals:
@@ -567,6 +611,14 @@ class OnyxCeleryTask:
     CHECK_FOR_USER_FILE_DELETE = "check_for_user_file_delete"
     DELETE_SINGLE_USER_FILE = "delete_single_user_file"
 
+    # Targeted reindex
+    TARGETED_REINDEX_TASK = "targeted_reindex_task"
+
+    # Reindex port (PRESENT -> FUTURE chunk copy)
+    RUN_PORT_ATTEMPT = "run_port_attempt"
+    RUN_USER_FILE_PORT_ATTEMPT = "run_user_file_port_attempt"
+    CHECK_FOR_PORT = "check_for_port"
+
     # Connector checkpoint cleanup
     CHECK_FOR_CHECKPOINT_CLEANUP = "check_for_checkpoint_cleanup"
     CLEANUP_CHECKPOINT = "cleanup_checkpoint"
@@ -579,6 +631,7 @@ class OnyxCeleryTask:
     MONITOR_CELERY_QUEUES = "monitor_celery_queues"
     MONITOR_PROCESS_MEMORY = "monitor_process_memory"
     CELERY_BEAT_HEARTBEAT = "celery_beat_heartbeat"
+    EMIT_VERSION_TELEMETRY = "emit_version_telemetry"
 
     CONNECTOR_PERMISSION_SYNC_GENERATOR_TASK = (
         "connector_permission_sync_generator_task"
@@ -597,7 +650,7 @@ class OnyxCeleryTask:
     CONNECTOR_PRUNING_GENERATOR_TASK = "connector_pruning_generator_task"
     CONNECTOR_HIERARCHY_FETCHING_TASK = "connector_hierarchy_fetching_task"
     DOCUMENT_BY_CC_PAIR_CLEANUP_TASK = "document_by_cc_pair_cleanup_task"
-    VESPA_METADATA_SYNC_TASK = "vespa_metadata_sync_task"
+    DOCUMENT_INDEX_METADATA_SYNC_TASK = "document_index_metadata_sync_task"
 
     # chat retention
     CHECK_TTL_MANAGEMENT_TASK = "check_ttl_management_task"
@@ -614,12 +667,16 @@ class OnyxCeleryTask:
     # Hook execution log retention
     HOOK_EXECUTION_LOG_CLEANUP_TASK = "hook_execution_log_cleanup_task"
 
+    # License expiry tiered warnings
+    CHECK_LICENSE_EXPIRY_NOTIFICATIONS = "check_license_expiry_notifications"
+
     # Sandbox cleanup
     CLEANUP_IDLE_SANDBOXES = "cleanup_idle_sandboxes"
-    CLEANUP_OLD_SNAPSHOTS = "cleanup_old_snapshots"
 
-    # Sandbox file sync
-    SANDBOX_FILE_SYNC = "sandbox_file_sync"
+    # Scheduled tasks (Craft)
+    SCHEDULED_TASKS_DISPATCH_DUE = "scheduled_tasks_dispatch_due"
+    SCHEDULED_TASKS_RUN = "scheduled_tasks_run"
+    SCHEDULED_TASKS_CLEANUP_STUCK = "scheduled_tasks_cleanup_stuck"
 
     CHECK_FOR_DOCUMENTS_FOR_OPENSEARCH_MIGRATION_TASK = (
         "check_for_documents_for_opensearch_migration_task"
@@ -639,10 +696,15 @@ REDIS_SOCKET_KEEPALIVE_OPTIONS = {}
 REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPINTVL] = 15
 REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPCNT] = 3
 
+# TCP_KEEPALIVE only exists on Darwin and TCP_KEEPIDLE only exists on Linux/BSD.
+# getattr keeps both branches type-checkable on either platform; any per-line
+# ty suppression (scoped or bare) would itself be flagged as unused on the
+# platform where the attribute actually resolves, since ty analyzes one
+# platform at a time and can't model cross-platform conditional unused-ignores.
 if platform.system() == "Darwin":
-    REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPALIVE] = 60  # type: ignore[attr-defined,unused-ignore]
+    REDIS_SOCKET_KEEPALIVE_OPTIONS[getattr(socket, "TCP_KEEPALIVE")] = 60
 else:
-    REDIS_SOCKET_KEEPALIVE_OPTIONS[socket.TCP_KEEPIDLE] = 60  # type: ignore[attr-defined,unused-ignore]
+    REDIS_SOCKET_KEEPALIVE_OPTIONS[getattr(socket, "TCP_KEEPIDLE")] = 60
 
 
 class OnyxCallTypes(str, Enum):
@@ -656,59 +718,59 @@ NUM_DAYS_TO_KEEP_INDEX_ATTEMPTS = NUM_DAYS_TO_KEEP_CHECKPOINTS + 1
 
 # TODO: this should be stored likely in database
 DocumentSourceDescription: dict[DocumentSource, str] = {
-    # Special case, document passed in via Onyx APIs without specifying a source type
-    DocumentSource.INGESTION_API: "ingestion_api",
-    DocumentSource.SLACK: "slack channels for discussions and collaboration",
-    DocumentSource.WEB: "indexed web pages",
-    DocumentSource.GOOGLE_DRIVE: "google drive documents (docs, sheets, etc.)",
-    DocumentSource.GMAIL: "email messages",
-    DocumentSource.REQUESTTRACKER: "requesttracker",
-    DocumentSource.GITHUB: "github data (issues, PRs)",
-    DocumentSource.GITBOOK: "gitbook data",
-    DocumentSource.GITLAB: "gitlab data",
-    DocumentSource.BITBUCKET: "bitbucket data",
-    DocumentSource.GURU: "guru data",
-    DocumentSource.BOOKSTACK: "bookstack data",
-    DocumentSource.OUTLINE: "outline data",
-    DocumentSource.CONFLUENCE: "confluence data (pages, spaces, etc.)",
-    DocumentSource.JIRA: "jira data (issues, tickets, projects, etc.)",
-    DocumentSource.SLAB: "slab data",
-    DocumentSource.PRODUCTBOARD: "productboard data (boards, etc.)",
-    DocumentSource.FILE: "files",
-    DocumentSource.CANVAS: "canvas lms - courses, pages, assignments, and announcements",
-    DocumentSource.CODA: "coda - team workspace with docs, tables, and pages",
-    DocumentSource.NOTION: "notion data - a workspace that combines note-taking, \
-project management, and collaboration tools into a single, customizable platform",
-    DocumentSource.ZULIP: "zulip data",
-    DocumentSource.LINEAR: "linear data - project management tool, including tickets etc.",
-    DocumentSource.HUBSPOT: "hubspot data - CRM and marketing automation data",
-    DocumentSource.DOCUMENT360: "document360 data",
-    DocumentSource.GONG: "gong - call transcripts",
-    DocumentSource.GOOGLE_SITES: "google_sites - websites",
-    DocumentSource.ZENDESK: "zendesk - customer support data",
-    DocumentSource.LOOPIO: "loopio - rfp data",
-    DocumentSource.DROPBOX: "dropbox - files",
-    DocumentSource.SHAREPOINT: "sharepoint - files",
-    DocumentSource.TEAMS: "teams - chat and collaboration",
-    DocumentSource.SALESFORCE: "salesforce - CRM data",
-    DocumentSource.DISCOURSE: "discourse - discussion forums",
-    DocumentSource.AXERO: "axero - employee engagement data",
-    DocumentSource.CLICKUP: "clickup - project management tool",
-    DocumentSource.MEDIAWIKI: "mediawiki - wiki data",
-    DocumentSource.WIKIPEDIA: "wikipedia - encyclopedia data",
-    DocumentSource.ASANA: "asana",
-    DocumentSource.S3: "s3",
-    DocumentSource.R2: "r2",
-    DocumentSource.GOOGLE_CLOUD_STORAGE: "google_cloud_storage - cloud storage",
-    DocumentSource.OCI_STORAGE: "oci_storage - cloud storage",
-    DocumentSource.XENFORO: "xenforo - forum data",
-    DocumentSource.DISCORD: "discord - chat and collaboration",
-    DocumentSource.FRESHDESK: "freshdesk - customer support data",
-    DocumentSource.FIREFLIES: "fireflies - call transcripts",
-    DocumentSource.EGNYTE: "egnyte - files",
-    DocumentSource.AIRTABLE: "airtable - database",
-    DocumentSource.HIGHSPOT: "highspot - CRM data",
-    DocumentSource.DRUPAL_WIKI: "drupal wiki - knowledge base content (pages, spaces, attachments)",
-    DocumentSource.IMAP: "imap - email data",
-    DocumentSource.TESTRAIL: "testrail - test case management tool for QA processes",
+    DocumentSource.INGESTION_API: "Documents ingested via API",
+    DocumentSource.SLACK: "Team messages and channel discussions",
+    DocumentSource.WEB: "Indexed web pages",
+    DocumentSource.GOOGLE_DRIVE: "Documents, spreadsheets, and presentations",
+    DocumentSource.GMAIL: "Email conversations and threads",
+    DocumentSource.GITHUB: "Pull requests, issues, and code reviews",
+    DocumentSource.GITBOOK: "Documentation and knowledge base pages",
+    DocumentSource.GITLAB: "Merge requests, issues, and code",
+    DocumentSource.BITBUCKET: "Pull requests, issues, and code",
+    DocumentSource.GURU: "Knowledge cards and collections",
+    DocumentSource.BOOKSTACK: "Documentation and knowledge base pages",
+    DocumentSource.OUTLINE: "Documentation and knowledge base pages",
+    DocumentSource.CONFLUENCE: "Wiki pages, spaces, and documentation",
+    DocumentSource.JIRA: "Issues, tickets, and project tracking",
+    DocumentSource.SLAB: "Documentation and knowledge base pages",
+    DocumentSource.PRODUCTBOARD: "Product management boards and insights",
+    DocumentSource.FILE: "Uploaded files",
+    DocumentSource.CANVAS: "Courses, pages, and assignments",
+    DocumentSource.CODA: "Documents, tables, and team workspace pages",
+    DocumentSource.NOTION: "Documentation, notes, and project pages",
+    DocumentSource.ZULIP: "Chat messages and topic discussions",
+    DocumentSource.LINEAR: "Engineering and product tickets",
+    DocumentSource.HUBSPOT: "CRM data, contacts, and deals",
+    DocumentSource.DOCUMENT360: "Knowledge base articles and documentation",
+    DocumentSource.GONG: "Sales call recordings and transcripts",
+    DocumentSource.GOOGLE_SITES: "Website pages and content",
+    DocumentSource.ZENDESK: "Support tickets and help articles",
+    DocumentSource.LOOPIO: "RFP responses and content library",
+    DocumentSource.BOX: "Cloud-stored files and folders",
+    DocumentSource.DROPBOX: "Cloud-stored files and folders",
+    DocumentSource.SHAREPOINT: "Documents and team sites",
+    DocumentSource.TEAMS: "Chat messages and channels",
+    DocumentSource.SALESFORCE: "Sales data, accounts, and opportunities",
+    DocumentSource.DISCOURSE: "Community forums and discussions",
+    DocumentSource.AXERO: "Employee engagement and intranet content",
+    DocumentSource.CLICKUP: "Tasks and project management",
+    DocumentSource.MEDIAWIKI: "Wiki pages and articles",
+    DocumentSource.WIKIPEDIA: "Encyclopedia articles",
+    DocumentSource.ASANA: "Tasks and project management",
+    DocumentSource.S3: "Cloud-stored files and objects",
+    DocumentSource.R2: "Cloud-stored files and objects",
+    DocumentSource.GOOGLE_CLOUD_STORAGE: "Cloud-stored files and objects",
+    DocumentSource.OCI_STORAGE: "Cloud-stored files and objects",
+    DocumentSource.XENFORO: "Forum threads and discussions",
+    DocumentSource.DISCORD: "Chat messages and server discussions",
+    DocumentSource.FRESHDESK: "Support tickets and customer queries",
+    DocumentSource.FIREFLIES: "Meeting transcripts and recordings",
+    DocumentSource.EGNYTE: "Cloud-stored files and documents",
+    DocumentSource.AIRTABLE: "Structured data and records",
+    DocumentSource.HIGHSPOT: "Sales enablement content and pitches",
+    DocumentSource.DRUPAL_WIKI: "Knowledge base pages and content",
+    DocumentSource.IMAP: "Email messages and threads",
+    DocumentSource.TESTRAIL: "Test cases and QA management",
+    DocumentSource.BRAINTRUST: "LLM eval experiments, datasets, and prompts",
+    DocumentSource.LUMAPPS: "Intranet pages, news, and content",
 }

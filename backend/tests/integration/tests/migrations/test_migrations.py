@@ -7,11 +7,9 @@ import json
 import pytest
 from sqlalchemy import text
 
-from onyx.configs.constants import ANONYMOUS_USER_UUID
-from onyx.configs.constants import DEFAULT_BOOST
+from onyx.configs.constants import ANONYMOUS_USER_UUID, DEFAULT_BOOST
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from tests.integration.common_utils.reset import downgrade_postgres
-from tests.integration.common_utils.reset import upgrade_postgres
+from tests.integration.common_utils.reset import downgrade_postgres, upgrade_postgres
 
 
 @pytest.mark.skip(
@@ -56,8 +54,7 @@ def test_fix_capitalization_migration() -> None:
     with get_session_with_current_tenant() as db_session:
         for doc in test_data:
             db_session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO document (
                         id,
                         external_user_group_ids,
@@ -76,8 +73,7 @@ def test_fix_capitalization_migration() -> None:
                         :from_ingestion_api,
                         :last_modified
                     )
-                    """
-                ),
+                    """),
                 {
                     "id": doc["id"],
                     "group_ids": doc["external_user_group_ids"],
@@ -93,14 +89,12 @@ def test_fix_capitalization_migration() -> None:
     # Verify the data was inserted correctly
     with get_session_with_current_tenant() as db_session:
         results = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, external_user_group_ids
                 FROM document
                 WHERE id IN ('test_doc_1', 'test_doc_2')
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
         # Verify initial state
@@ -116,14 +110,12 @@ def test_fix_capitalization_migration() -> None:
     # Verify the fix was applied
     with get_session_with_current_tenant() as db_session:
         results = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, external_user_group_ids
                 FROM document
                 WHERE id IN ('test_doc_1', 'test_doc_2')
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
         # Verify all group IDs are lowercase
@@ -181,8 +173,7 @@ def test_jira_connector_migration() -> None:
     with get_session_with_current_tenant() as db_session:
         for connector in test_data:
             db_session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO connector (
                         id,
                         name,
@@ -195,8 +186,7 @@ def test_jira_connector_migration() -> None:
                         :source,
                         :config
                     )
-                    """
-                ),
+                    """),
                 {
                     "id": connector["id"],
                     "name": connector["name"],
@@ -209,14 +199,12 @@ def test_jira_connector_migration() -> None:
     # Verify the data was inserted correctly
     with get_session_with_current_tenant() as db_session:
         results = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, connector_specific_config
                 FROM connector
                 WHERE source = 'JIRA'
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
         # Verify initial state
@@ -241,14 +229,12 @@ def test_jira_connector_migration() -> None:
     # Verify the upgrade was applied correctly
     with get_session_with_current_tenant() as db_session:
         results = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, connector_specific_config
                 FROM connector
                 WHERE source = 'JIRA'
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
         # Verify new format
@@ -286,14 +272,12 @@ def test_jira_connector_migration() -> None:
     # Verify the downgrade was applied correctly
     with get_session_with_current_tenant() as db_session:
         results = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, connector_specific_config
                 FROM connector
                 WHERE source = 'JIRA'
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
         # Verify reverted to old format
@@ -336,8 +320,7 @@ def test_anonymous_user_migration_dedupes_null_notifications() -> None:
 
     with get_session_with_current_tenant() as db_session:
         db_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO notification (
                     id,
                     notif_type,
@@ -372,8 +355,7 @@ def test_anonymous_user_migration_dedupes_null_notifications() -> None:
                         'Check out what''s new in v2.10.0',
                         '{"version":"v2.10.0","link":"https://docs.onyx.app/changelog#v2-10-0"}'::jsonb
                     )
-                """
-            )
+                """)
         )
         db_session.commit()
 
@@ -383,23 +365,19 @@ def test_anonymous_user_migration_dedupes_null_notifications() -> None:
 
     with get_session_with_current_tenant() as db_session:
         notifications = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, user_id
                 FROM notification
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
         anonymous_user = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, email, role
                 FROM "user"
                 WHERE id = :user_id
-                """
-            ),
+                """),
             {"user_id": ANONYMOUS_USER_UUID},
         ).fetchone()
 
@@ -428,19 +406,16 @@ def test_anonymous_user_migration_collision_with_existing_anonymous_notification
     with get_session_with_current_tenant() as db_session:
         # Create the anonymous user early so we can insert a notification owned by it
         db_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO "user" (id, email, hashed_password, is_active, is_superuser, is_verified, role)
                 VALUES (:id, 'anonymous@onyx.app', '', TRUE, FALSE, TRUE, 'LIMITED')
                 ON CONFLICT (id) DO NOTHING
-                """
-            ),
+                """),
             {"id": ANONYMOUS_USER_UUID},
         )
         # Insert an anonymous-owned notification (already migrated in a prior partial run)
         db_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO notification (
                     id, notif_type, user_id, dismissed, last_shown, first_shown,
                     title, description, additional_data
@@ -458,8 +433,7 @@ def test_anonymous_user_migration_collision_with_existing_anonymous_notification
                         'Check out what''s new in v2.10.0',
                         '{"version":"v2.10.0","link":"https://docs.onyx.app/changelog#v2-10-0"}'::jsonb
                     )
-                """
-            ),
+                """),
             {"user_id": ANONYMOUS_USER_UUID},
         )
         db_session.commit()
@@ -470,13 +444,11 @@ def test_anonymous_user_migration_collision_with_existing_anonymous_notification
 
     with get_session_with_current_tenant() as db_session:
         notifications = db_session.execute(
-            text(
-                """
+            text("""
                 SELECT id, user_id
                 FROM notification
                 ORDER BY id
-                """
-            )
+                """)
         ).fetchall()
 
     # Only the original anonymous-owned notification should remain;

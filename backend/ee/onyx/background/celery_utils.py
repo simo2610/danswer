@@ -1,8 +1,7 @@
 from sqlalchemy.orm import Session
 
 from ee.onyx.background.task_name_builders import name_chat_ttl_task
-from onyx.db.tasks import check_task_is_live_and_not_timed_out
-from onyx.db.tasks import get_latest_task
+from onyx.db.tasks import check_task_is_live_and_not_timed_out, get_latest_task
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -21,6 +20,6 @@ def should_perform_chat_ttl_check(
         return True
 
     if check_task_is_live_and_not_timed_out(latest_task, db_session):
-        logger.debug(f"{task_name} is already being performed. Skipping.")
+        logger.debug("%s is already being performed. Skipping.", task_name)
         return False
     return True

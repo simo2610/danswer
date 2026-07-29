@@ -4,21 +4,15 @@ Verifies that when a license with a seat limit is active, new user
 creation (registration, invite, reactivation) is blocked with HTTP 402.
 """
 
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import redis
-import requests
 
-from ee.onyx.server.license.models import LicenseMetadata
-from ee.onyx.server.license.models import LicenseSource
-from ee.onyx.server.license.models import PlanType
-from onyx.configs.app_configs import REDIS_DB_NUMBER
-from onyx.configs.app_configs import REDIS_HOST
-from onyx.configs.app_configs import REDIS_PORT
+from ee.onyx.server.license.models import LicenseMetadata, LicenseSource, PlanType
+from onyx.configs.app_configs import REDIS_DB_NUMBER, REDIS_HOST, REDIS_PORT
 from onyx.server.settings.models import ApplicationStatus
-from tests.integration.common_utils.constants import API_SERVER_URL
-from tests.integration.common_utils.constants import GENERAL_HEADERS
+from tests.integration.common_utils.constants import API_SERVER_URL, GENERAL_HEADERS
+from tests.integration.common_utils.http_client import client
 from tests.integration.common_utils.managers.user import UserManager
 
 # TenantRedis prefixes every key with "{tenant_id}:".
@@ -28,7 +22,7 @@ _LICENSE_REDIS_KEY = "public:license:metadata"
 
 def _seed_license(r: redis.Redis, seats: int) -> None:
     """Write a LicenseMetadata entry into Redis with the given seat cap."""
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     metadata = LicenseMetadata(
         tenant_id="public",
         organization_name="Test Org",
@@ -69,7 +63,7 @@ def test_registration_blocked_when_seats_full(
     _seed_license(r, seats=1)
 
     try:
-        response = requests.post(
+        response = client.post(
             url=f"{API_SERVER_URL}/auth/register",
             json={
                 "email": "blocked@example.com",
@@ -97,7 +91,7 @@ def test_invite_blocked_when_seats_full(reset: None) -> None:  # noqa: ARG001
     _seed_license(r, seats=1)
 
     try:
-        response = requests.put(
+        response = client.put(
             url=f"{API_SERVER_URL}/manage/admin/users",
             json={"emails": ["newuser@example.com"]},
             headers=admin_user.headers,
@@ -130,7 +124,7 @@ def test_reactivation_blocked_when_seats_full(
     _seed_license(r, seats=1)
 
     try:
-        response = requests.patch(
+        response = client.patch(
             url=f"{API_SERVER_URL}/manage/admin/activate-user",
             json={"user_email": basic_user.email},
             headers=admin_user.headers,

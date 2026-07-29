@@ -1,29 +1,32 @@
-from datetime import timezone
 from io import BytesIO
 from typing import Any
 
-from dropbox import Dropbox  # type: ignore[import-untyped]
-from dropbox.exceptions import ApiError  # type: ignore[import-untyped]
-from dropbox.exceptions import AuthError
-from dropbox.files import FileMetadata  # type: ignore[import-untyped]
-from dropbox.files import FolderMetadata
+from dropbox import Dropbox
+from dropbox.exceptions import ApiError, AuthError
+from dropbox.files import FileMetadata, FolderMetadata
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.exceptions import CredentialInvalidError
-from onyx.connectors.exceptions import InsufficientPermissionsError
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.models import ConnectorMissingCredentialError
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import TextSection
+from onyx.connectors.exceptions import (
+    ConnectorValidationError,
+    CredentialInvalidError,
+    InsufficientPermissionsError,
+)
+from onyx.connectors.interfaces import (
+    GenerateDocumentsOutput,
+    LoadConnector,
+    PollConnector,
+    SecondsSinceUnixEpoch,
+)
+from onyx.connectors.models import (
+    ConnectorMissingCredentialError,
+    Document,
+    HierarchyNode,
+    TextSection,
+)
 from onyx.file_processing.extract_file_text import extract_file_text
+from onyx.utils.datetime import datetime_to_utc
 from onyx.utils.logger import setup_logger
-
 
 logger = setup_logger()
 
@@ -60,7 +63,7 @@ class DropboxConnector(LoadConnector, PollConnector):
             )
             return link_metadata.url
         except ApiError as err:
-            logger.exception(f"Failed to create a shared link for {path}: {err}")
+            logger.exception("Failed to create a shared link for %s: %s", path, err)
             return ""
 
     def _yield_files_recursive(
@@ -84,14 +87,7 @@ class DropboxConnector(LoadConnector, PollConnector):
             batch: list[Document | HierarchyNode] = []
             for entry in result.entries:
                 if isinstance(entry, FileMetadata):
-                    modified_time = entry.client_modified
-                    if modified_time.tzinfo is None:
-                        # If no timezone info, assume it is UTC
-                        modified_time = modified_time.replace(tzinfo=timezone.utc)
-                    else:
-                        # If not in UTC, translate it
-                        modified_time = modified_time.astimezone(timezone.utc)
-
+                    modified_time = datetime_to_utc(entry.client_modified)
                     time_as_seconds = int(modified_time.timestamp())
                     if start and time_as_seconds < start:
                         continue
@@ -118,7 +114,9 @@ class DropboxConnector(LoadConnector, PollConnector):
                         )
                     except Exception as e:
                         logger.exception(
-                            f"Error decoding file {entry.path_display} as utf-8 error occurred: {e}"
+                            "Error decoding file %s as utf-8 error occurred: %s",
+                            entry.path_display,
+                            e,
                         )
 
                 elif isinstance(entry, FolderMetadata):

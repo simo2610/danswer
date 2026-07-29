@@ -4,13 +4,13 @@ This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next
 
 ## Getting Started
 
-Install node / npm: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
-Install all dependencies: `npm i`.
+Install bun: https://bun.sh/docs/installation
+Install all dependencies: `bun install`.
 
 Then, run the development server:
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
@@ -59,30 +59,32 @@ Don't run these tests if you don't want to do this!
 
 Bring up the entire application.
 
-0. Install playwright dependencies
+0. Install playwright dependencies (run `bun install` first so `bunx` resolves to the
+   repo-pinned Playwright in `node_modules` instead of fetching the latest version)
 
 ```bash
-npx playwright install
+bun install
+bunx playwright install
 ```
 
-1. Run playwright
+1. Run playwright (the `playwright` script expands to `playwright test`)
 
 ```bash
-npx playwright test
+bun run playwright
 ```
 
 To run a single test:
 
 ```bash
-npx playwright test landing-page.spec.ts
+bun run playwright landing-page.spec.ts
 ```
 
 If running locally, interactive options can help you see exactly what is happening in
 the test.
 
 ```bash
-npx playwright test --ui
-npx playwright test --headed
+bun run playwright --ui
+bun run playwright --headed
 ```
 
 2. Inspect results

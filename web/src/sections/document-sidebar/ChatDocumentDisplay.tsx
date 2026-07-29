@@ -8,7 +8,7 @@ import { WebResultIcon } from "@/components/WebResultIcon";
 import { Dispatch, SetStateAction, useMemo } from "react";
 import { openDocument } from "@/lib/search/utils";
 import { ValidSources } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@opal/utils";
 import Truncated from "@/refresh-components/texts/Truncated";
 import Text from "@/refresh-components/texts/Text";
 
@@ -83,7 +83,7 @@ export default function ChatDocumentDisplay({
       onClick={() => openDocument(document, setPresentingDocument)}
       className={cn(
         "flex w-full flex-col p-3 gap-2 rounded-12 hover:bg-background-tint-00 cursor-pointer",
-        isSelected && "bg-action-link-02"
+        isSelected && "bg-action-selection-02"
       )}
     >
       <div className="flex items-center gap-2">

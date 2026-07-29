@@ -2,12 +2,12 @@
 
 import { markdown } from "@opal/utils";
 import Link from "next/link";
-import Modal from "@/refresh-components/Modal";
+import { Modal } from "@opal/components";
 import Text from "@/refresh-components/texts/Text";
-import { InputVertical } from "@opal/layouts";
+import { InputVertical, toast } from "@opal/layouts";
 import InputTextAreaField from "@/refresh-components/form/InputTextAreaField";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import CopyIconButton from "@/refresh-components/buttons/CopyIconButton";
+import { CopyButton } from "@opal/components";
 import { Button, Divider } from "@opal/components";
 import { Hoverable } from "@opal/core";
 import { MethodSpec, ToolSnapshot } from "@/lib/tools/interfaces";
@@ -19,10 +19,9 @@ import {
 import ToolItem from "@/sections/actions/ToolItem";
 import debounce from "lodash/debounce";
 import { DOCS_ADMINS_PATH } from "@/lib/constants";
-import { useModal } from "@/refresh-components/contexts/ModalContext";
+import { useModal } from "@opal/components";
 import { Formik, Form, useFormikContext } from "formik";
 import * as Yup from "yup";
-import { toast } from "@/hooks/useToast";
 import {
   SvgActions,
   SvgBracketCurly,
@@ -33,7 +32,7 @@ import {
 import InfoBlock from "@/refresh-components/messages/InfoBlock";
 import { getActionIcon } from "@/lib/tools/mcpUtils";
 import { Section } from "@/layouts/general-layouts";
-import EmptyMessage from "@/refresh-components/EmptyMessage";
+import { EmptyMessageCard } from "@opal/components";
 
 interface AddOpenAPIActionModalProps {
   skipOverlay?: boolean;
@@ -238,19 +237,23 @@ function FormContent({
           withLabel="definition"
           title="OpenAPI Schema Definition"
           subDescription={markdown(
-            `Specify an OpenAPI schema that defines the APIs you want to make available as part of this action. Learn more about [OpenAPI actions](${DOCS_ADMINS_PATH}/actions/openapi).`
+            `Specify an OpenAPI schema that defines the APIs you want to make available as part of this action. ` +
+              `You can use the placeholders \`CHAT_SESSION_ID\`, \`MESSAGE_ID\`, \`USER_ID\`, and \`USER_EMAIL\` ` +
+              `anywhere in the schema (e.g. server URL, paths, parameter defaults) and they will be replaced with the ` +
+              `current request's values at call time. ` +
+              `Learn more about [OpenAPI actions](${DOCS_ADMINS_PATH}/actions/openapi).`
           )}
         >
-          <Hoverable.Root group="definitionField" widthVariant="full">
+          <Hoverable.Root group="definitionField" width="full">
             <div className="relative w-full">
               {values.definition.trim() && (
-                <div className="absolute z-[100000] top-2 right-2 bg-background-tint-00">
+                <div className="absolute z-100000 top-2 right-2 bg-background-tint-00">
                   <Hoverable.Item
                     group="definitionField"
-                    variant="opacity-on-hover"
+                    variant="appear-on-hover"
                   >
                     <div className="flex">
-                      <CopyIconButton
+                      <CopyButton
                         prominence="tertiary"
                         size="sm"
                         getCopyText={() => values.definition}
@@ -267,12 +270,13 @@ function FormContent({
                   </Hoverable.Item>
                 </div>
               )}
-              <InputTextAreaField
-                name="definition"
-                rows={14}
-                placeholder="Enter your OpenAPI schema here"
-                className="font-main-ui-mono"
-              />
+              <div className="font-main-ui-mono">
+                <InputTextAreaField
+                  name="definition"
+                  rows={14}
+                  placeholder="Enter your OpenAPI schema here"
+                />
+              </div>
             </div>
           </Hoverable.Root>
         </InputVertical>
@@ -312,7 +316,8 @@ function FormContent({
             </Section>
           </>
         ) : (
-          <EmptyMessage
+          <EmptyMessageCard
+            sizePreset="main-ui"
             title="No Actions Found"
             icon={SvgActions}
             description="Provide OpenAPI schema to preview actions here."

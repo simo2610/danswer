@@ -5,8 +5,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from onyx.db.models import StandardAnswer
-from onyx.db.models import StandardAnswerCategory
+from onyx.db.models import StandardAnswer, StandardAnswerCategory
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -19,7 +18,7 @@ def check_category_validity(category_name: str) -> bool:
     Additionally, extremely long categories are not really usable / useful."""
     if len(category_name) > 255:
         logger.error(
-            f"Category with name '{category_name}' is too long, cannot be used"
+            "Category with name '%s' is too long, cannot be used", category_name
         )
         return False
 

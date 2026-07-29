@@ -1,28 +1,22 @@
 from typing import Any
 
-from sqlalchemy import exists
-from sqlalchemy import Select
-from sqlalchemy import select
-from sqlalchemy import update
+from sqlalchemy import Select, exists, select, update
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.expression import and_
-from sqlalchemy.sql.expression import or_
+from sqlalchemy.sql.expression import and_, or_
 
 from onyx.auth.schemas import UserRole
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.google_utils.shared_constants import (
-    DB_CREDENTIALS_DICT_SERVICE_ACCOUNT_KEY,
-)
 from onyx.db.enums import ConnectorCredentialPairStatus
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import Credential
-from onyx.db.models import Credential__UserGroup
-from onyx.db.models import DocumentByConnectorCredentialPair
-from onyx.db.models import User
-from onyx.db.models import User__UserGroup
+from onyx.db.models import (
+    ConnectorCredentialPair,
+    Credential,
+    Credential__UserGroup,
+    DocumentByConnectorCredentialPair,
+    User,
+    User__UserGroup,
+)
 from onyx.server.documents.models import CredentialBase
 from onyx.utils.logger import setup_logger
-
 
 logger = setup_logger()
 
@@ -98,11 +92,10 @@ def _add_user_filters(
             user_groups = user_groups.where(
                 User__UserGroup.is_curator == True  # noqa: E712
             )
-        where_clause &= (
-            ~exists()
-            .where(Credential__UserGroup.credential_id == Credential.id)
-            .where(~Credential__UserGroup.user_group_id.in_(user_groups))
-            .correlate(Credential)
+        where_clause &= ~exists().where(
+            Credential__UserGroup.credential_id == Credential.id
+        ).where(~Credential__UserGroup.user_group_id.in_(user_groups)).correlate(
+            Credential
         )
     else:
         where_clause |= Credential.curator_public == True  # noqa: E712
@@ -305,7 +298,7 @@ def alter_credential(
         if credential.credential_json
         else {}
     )
-    credential.credential_json = {  # type: ignore[assignment]
+    credential.credential_json = {  # ty: ignore[invalid-assignment]
         **existing_json,
         **credential_json,
     }
@@ -327,7 +320,9 @@ def update_credential(
     if credential is None:
         return None
 
-    credential.credential_json = credential_data.credential_json  # type: ignore[assignment]
+    credential.credential_json = (  # ty: ignore[invalid-assignment]
+        credential_data.credential_json
+    )
     credential.user_id = user.id if user is not None else None
 
     db_session.commit()
@@ -346,7 +341,7 @@ def update_credential_json(
     if credential is None:
         return None
 
-    credential.credential_json = credential_json  # type: ignore[assignment]
+    credential.credential_json = credential_json  # ty: ignore[invalid-assignment]
     db_session.commit()
     # Expire to ensure credential_json is reloaded as SensitiveValue from DB
     db_session.expire(credential)
@@ -359,7 +354,7 @@ def backend_update_credential_json(
     db_session: Session,
 ) -> None:
     """This should not be used in any flows involving the frontend or users"""
-    credential.credential_json = credential_json  # type: ignore[assignment]
+    credential.credential_json = credential_json  # ty: ignore[invalid-assignment]
     db_session.commit()
 
 
@@ -385,7 +380,7 @@ def _delete_credential_internal(
     if associated_connectors or associated_doc_cc_pairs:
         if force:
             logger.warning(
-                f"Force deleting credential {credential_id} and its associated records"
+                "Force deleting credential %s and its associated records", credential_id
             )
 
             # Delete DocumentByConnectorCredentialPair records first
@@ -405,9 +400,9 @@ def _delete_credential_internal(
             )
 
     if force:
-        logger.warning(f"Force deleting credential {credential_id}")
+        logger.warning("Force deleting credential %s", credential_id)
     else:
-        logger.notice(f"Deleting credential {credential_id}")
+        logger.notice("Deleting credential %s", credential_id)
 
     _cleanup_credential__user_group_relationships__no_commit(db_session, credential_id)
     db_session.delete(credential)
@@ -478,32 +473,4 @@ def cleanup_gmail_credentials(db_session: Session) -> None:
     )
     for credential in gmail_credentials:
         db_session.delete(credential)
-    db_session.commit()
-
-
-def cleanup_google_drive_credentials(db_session: Session) -> None:
-    google_drive_credentials = fetch_credentials_by_source(
-        db_session=db_session, document_source=DocumentSource.GOOGLE_DRIVE
-    )
-    for credential in google_drive_credentials:
-        db_session.delete(credential)
-    db_session.commit()
-
-
-def delete_service_account_credentials(
-    user: User, db_session: Session, source: DocumentSource
-) -> None:
-    credentials = fetch_credentials_for_user(db_session=db_session, user=user)
-    for credential in credentials:
-        credential_json = (
-            credential.credential_json.get_value(apply_mask=False)
-            if credential.credential_json
-            else {}
-        )
-        if (
-            credential_json.get(DB_CREDENTIALS_DICT_SERVICE_ACCOUNT_KEY)
-            and credential.source == source
-        ):
-            db_session.delete(credential)
-
     db_session.commit()

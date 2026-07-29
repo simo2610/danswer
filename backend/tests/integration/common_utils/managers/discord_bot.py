@@ -1,18 +1,21 @@
 """Manager for Discord bot API integration tests."""
 
-import requests
-
-from onyx.db.discord_bot import create_channel_config
-from onyx.db.discord_bot import create_guild_config
-from onyx.db.discord_bot import register_guild
+from onyx.db.discord_bot import (
+    create_channel_config,
+    create_guild_config,
+    register_guild,
+)
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.utils import DiscordChannelView
 from onyx.server.manage.discord_bot.utils import generate_discord_registration_key
 from shared_configs.contextvars import get_current_tenant_id
 from tests.integration.common_utils.constants import API_SERVER_URL
-from tests.integration.common_utils.test_models import DATestDiscordChannelConfig
-from tests.integration.common_utils.test_models import DATestDiscordGuildConfig
-from tests.integration.common_utils.test_models import DATestUser
+from tests.integration.common_utils.http_client import client
+from tests.integration.common_utils.test_models import (
+    DATestDiscordChannelConfig,
+    DATestDiscordGuildConfig,
+    DATestUser,
+)
 
 DISCORD_BOT_API_URL = f"{API_SERVER_URL}/manage/admin/discord-bot"
 
@@ -27,7 +30,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> dict:
         """Get Discord bot config."""
-        response = requests.get(
+        response = client.get(
             url=f"{DISCORD_BOT_API_URL}/config",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -41,7 +44,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> dict:
         """Create Discord bot config."""
-        response = requests.post(
+        response = client.post(
             url=f"{DISCORD_BOT_API_URL}/config",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -55,7 +58,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> dict:
         """Delete Discord bot config."""
-        response = requests.delete(
+        response = client.delete(
             url=f"{DISCORD_BOT_API_URL}/config",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -70,7 +73,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> list[dict]:
         """List all guild configs."""
-        response = requests.get(
+        response = client.get(
             url=f"{DISCORD_BOT_API_URL}/guilds",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -83,7 +86,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> DATestDiscordGuildConfig:
         """Create a new guild config with registration key."""
-        response = requests.post(
+        response = client.post(
             url=f"{DISCORD_BOT_API_URL}/guilds",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -101,7 +104,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> dict:
         """Get a specific guild config."""
-        response = requests.get(
+        response = client.get(
             url=f"{DISCORD_BOT_API_URL}/guilds/{config_id}",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -130,7 +133,7 @@ class DiscordBotManager:
             ),
         }
 
-        response = requests.patch(
+        response = client.patch(
             url=f"{DISCORD_BOT_API_URL}/guilds/{config_id}",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -145,7 +148,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> dict:
         """Delete a guild config."""
-        response = requests.delete(
+        response = client.delete(
             url=f"{DISCORD_BOT_API_URL}/guilds/{config_id}",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -161,7 +164,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> list[DATestDiscordChannelConfig]:
         """List all channel configs for a guild."""
-        response = requests.get(
+        response = client.get(
             url=f"{DISCORD_BOT_API_URL}/guilds/{guild_config_id}/channels",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -191,7 +194,7 @@ class DiscordBotManager:
             "persona_override_id": persona_override_id,
         }
 
-        response = requests.patch(
+        response = client.patch(
             url=f"{DISCORD_BOT_API_URL}/guilds/{guild_config_id}/channels/{channel_config_id}",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -231,7 +234,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> dict | None:
         """Get a guild config, returning None if not found."""
-        response = requests.get(
+        response = client.get(
             url=f"{DISCORD_BOT_API_URL}/guilds/{config_id}",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -247,7 +250,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> bool:
         """Delete a guild config if it exists. Returns True if deleted."""
-        response = requests.delete(
+        response = client.delete(
             url=f"{DISCORD_BOT_API_URL}/guilds/{config_id}",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,
@@ -262,7 +265,7 @@ class DiscordBotManager:
         user_performing_action: DATestUser,
     ) -> bool:
         """Delete bot config if it exists. Returns True if deleted."""
-        response = requests.delete(
+        response = client.delete(
             url=f"{DISCORD_BOT_API_URL}/config",
             headers=user_performing_action.headers,
             cookies=user_performing_action.cookies,

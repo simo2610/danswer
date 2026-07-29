@@ -4,19 +4,18 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from onyx.auth.schemas import UserRole
-from onyx.configs.constants import MessageType
-from onyx.configs.constants import QAFeedbackType
-from onyx.context.search.models import SavedSearchDoc
-from onyx.context.search.models import SearchDoc
+from onyx.configs.constants import MessageType, QAFeedbackType
+from onyx.context.search.models import SavedSearchDoc, SearchDoc
 from onyx.db.enums import AccessType
-from onyx.server.documents.models import DocumentSource
-from onyx.server.documents.models import IndexAttemptSnapshot
-from onyx.server.documents.models import IndexingStatus
-from onyx.server.documents.models import InputType
+from onyx.server.documents.models import (
+    DocumentSource,
+    IndexAttemptSnapshot,
+    IndexingStatus,
+    InputType,
+)
 from onyx.server.query_and_chat.streaming_models import GeneratedImage
 
 """
@@ -39,6 +38,7 @@ class DATestPAT(BaseModel):
     created_at: str
     expires_at: str | None = None
     last_used_at: str | None = None
+    scopes: list[str] | None = None
 
 
 class DATestScimToken(BaseModel):
@@ -124,7 +124,7 @@ class DATestUserGroup(BaseModel):
 
 class DATestLLMProvider(BaseModel):
     id: int
-    name: str
+    name: str | None
     provider: str
     api_key: str
     default_model_name: str | None = None
@@ -134,6 +134,7 @@ class DATestLLMProvider(BaseModel):
     personas: list[int]
     api_base: str | None = None
     api_version: str | None = None
+    model_configuration_ids: list[int] = []
 
 
 class DATestImageGenerationConfig(BaseModel):
@@ -164,8 +165,7 @@ class DATestPersona(BaseModel):
     is_public: bool
     document_set_ids: list[int]
     tool_ids: list[int]
-    llm_model_provider_override: str | None
-    llm_model_version_override: str | None
+    default_model_configuration_id: int | None = None
     users: list[str]
     groups: list[int]
     label_ids: list[int]
@@ -247,8 +247,8 @@ class DATestSettings(BaseModel):
     gpu_enabled: bool | None = None
     product_gating: DATestGatingType = DATestGatingType.NONE
     anonymous_user_enabled: bool | None = None
-    image_extraction_and_analysis_enabled: bool | None = False
-    search_time_image_analysis_enabled: bool | None = False
+    image_extraction_and_analysis_enabled: bool | None = True
+    disable_default_assistant: bool | None = None
 
 
 @dataclass
@@ -288,6 +288,7 @@ class DATestTool(BaseModel):
     description: str
     display_name: str
     in_code_tool_id: str | None
+    enabled: bool
 
 
 # Discord Bot Models

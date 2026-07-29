@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
+import type { LanguageFn } from "highlight.js";
+import { useHighlightLanguages } from "@/hooks/useHighlightLanguages";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "@/app/app/message/custom-code-styles.css";
@@ -11,15 +13,20 @@ import {
   MemoizedAnchor,
   MemoizedParagraph,
 } from "@/app/app/message/MemoizedTextComponents";
-import { extractCodeText, preprocessLaTeX } from "@/app/app/message/codeUtils";
+import {
+  extractCodeText,
+  preprocessLaTeX,
+  escapeIncompleteBlockMath,
+  escapeIncompleteInlineMath,
+} from "@/app/app/message/codeUtils";
 import { CodeBlock } from "@/app/app/message/CodeBlock";
-import { transformLinkUri, cn } from "@/lib/utils";
+import { transformLinkUri } from "@/lib/utils";
+import { cn } from "@opal/utils";
 import { InMessageImage } from "@/app/app/components/files/images/InMessageImage";
 import { extractChatImageFileId } from "@/app/app/components/files/images/utils";
 
 /** Table wrapper that detects horizontal overflow and shows a fade + scrollbar. */
-interface ScrollableTableProps
-  extends React.TableHTMLAttributes<HTMLTableElement> {
+interface ScrollableTableProps extends React.TableHTMLAttributes<HTMLTableElement> {
   children: React.ReactNode;
 }
 
@@ -66,7 +73,7 @@ export function ScrollableTable({
           ref={tableRef}
           className={cn(
             className,
-            "min-w-full !my-0 [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap"
+            "min-w-full my-0! [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap"
           )}
           {...props}
         >
@@ -81,6 +88,20 @@ export function ScrollableTable({
  * Processes content for markdown rendering by handling code blocks and LaTeX
  */
 export const processContent = (content: string): string => {
+  // Strip incomplete citation links at the end of streaming content.
+  // During typewriter animation, [[N]](url) is revealed character by character.
+  // ReactMarkdown can't parse an incomplete link and renders it as raw text.
+  // This regex removes any trailing partial citation pattern so only complete
+  // links are passed to the markdown parser.
+  content = content.replace(/\[\[\d+\]\]\([^)]*$/, "");
+  // Also strip a lone [[ or [[N] or [[N]] at the very end (before the URL part arrives)
+  content = content.replace(/\[\[(?:\d+\]?\]?)?$/, "");
+
+  // Escape a trailing unclosed `$$` so remark-math skips it mid-stream and
+  // the user sees the LaTeX source streaming as plain text. The block swaps
+  // to a rendered formula the moment the closing `$$` arrives.
+  content = escapeIncompleteBlockMath(content);
+
   const codeBlockRegex = /```(\w*)\n[\s\S]*?```|```[\s\S]*?$/g;
   const matches = content.match(codeBlockRegex);
 
@@ -94,12 +115,12 @@ export const processContent = (content: string): string => {
 
     const lastMatch = matches[matches.length - 1];
     if (lastMatch && !lastMatch.endsWith("```")) {
-      return preprocessLaTeX(content);
+      return escapeIncompleteInlineMath(preprocessLaTeX(content));
     }
   }
 
   const processed = preprocessLaTeX(content);
-  return processed;
+  return escapeIncompleteInlineMath(processed);
 };
 
 /**
@@ -214,7 +235,8 @@ export const useMarkdownComponents = (
 export const renderMarkdown = (
   content: string,
   markdownComponents: any,
-  textSize: string = "text-base"
+  textSize: string = "text-base",
+  languages: Record<string, LanguageFn> | null = null
 ): JSX.Element => {
   return (
     <div dir="auto">
@@ -225,7 +247,11 @@ export const renderMarkdown = (
           remarkGfm,
           [remarkMath, { singleDollarTextMath: true }],
         ]}
-        rehypePlugins={[rehypeHighlight, rehypeKatex]}
+        rehypePlugins={
+          languages
+            ? [[rehypeHighlight, { languages }], rehypeKatex]
+            : [rehypeKatex]
+        }
         urlTransform={transformLinkUri}
       >
         {content}
@@ -248,10 +274,17 @@ export const useMarkdownRenderer = (
     processedContent,
     textSize
   );
+  const highlightLanguages = useHighlightLanguages();
 
   const renderedContent = useMemo(
-    () => renderMarkdown(processedContent, markdownComponents, textSize),
-    [processedContent, markdownComponents, textSize]
+    () =>
+      renderMarkdown(
+        processedContent,
+        markdownComponents,
+        textSize,
+        highlightLanguages
+      ),
+    [processedContent, markdownComponents, textSize, highlightLanguages]
   );
 
   return {

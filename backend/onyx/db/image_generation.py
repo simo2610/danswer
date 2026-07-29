@@ -1,12 +1,8 @@
-from sqlalchemy import select
-from sqlalchemy import update
-from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session, selectinload
 
-from onyx.db.models import ImageGenerationConfig
-from onyx.db.models import LLMProvider
-from onyx.db.models import ModelConfiguration
-from onyx.llm.utils import get_max_input_tokens
+from onyx.db.models import ImageGenerationConfig, LLMProvider, ModelConfiguration
+from onyx.llm.model_capabilities import get_max_input_tokens
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -233,13 +229,13 @@ def create_default_image_gen_config_from_api_key(
 
         db_session.commit()
 
-        logger.info(f"Created default image generation config: {image_provider_id}")
+        logger.info("Created default image generation config: %s", image_provider_id)
 
         return config
 
     except Exception:
         db_session.rollback()
         logger.exception(
-            f"Failed to create default image generation config {image_provider_id}"
+            "Failed to create default image generation config %s", image_provider_id
         )
         return None

@@ -4,27 +4,23 @@ import datetime
 import itertools
 import tempfile
 from collections.abc import Iterator
-from typing import Any
-from typing import cast
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
-import pywikibot.time  # type: ignore[import-untyped]
-from pywikibot import pagegenerators
-from pywikibot import textlib
+import pywikibot.config
+import pywikibot.time
+from pywikibot import pagegenerators, textlib
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.interfaces import GenerateDocumentsOutput
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.interfaces import SecondsSinceUnixEpoch
+from onyx.connectors.interfaces import (
+    GenerateDocumentsOutput,
+    LoadConnector,
+    PollConnector,
+    SecondsSinceUnixEpoch,
+)
 from onyx.connectors.mediawiki.family import family_class_dispatch
-from onyx.connectors.models import Document
-from onyx.connectors.models import HierarchyNode
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Document, HierarchyNode, ImageSection, TextSection
 from onyx.utils.logger import setup_logger
-
 
 logger = setup_logger()
 
@@ -46,7 +42,9 @@ def pywikibot_timestamp_to_utc_datetime(
 
 
 def get_doc_from_page(
-    page: pywikibot.Page, site: pywikibot.Site | None, source_type: DocumentSource
+    page: pywikibot.Page,
+    site: pywikibot.Site | None,  # ty: ignore[invalid-type-form]
+    source_type: DocumentSource,
 ) -> Document:
     """Generate Onyx Document from a MediaWiki page object.
 
@@ -178,7 +176,7 @@ class MediaWikiConnector(LoadConnector, PollConnector):
         # Pywikibot can handle batching for us, including only loading page contents when we finally request them.
         category_pages = [
             pagegenerators.PreloadingGenerator(
-                pagegenerators.EdittimeFilterPageGenerator(
+                pagegenerators.EdittimeFilterPageGenerator(  # ty: ignore[invalid-argument-type]
                     pagegenerators.CategorizedPageGenerator(
                         category, recurse=self.recurse_depth
                     ),
@@ -198,7 +196,7 @@ class MediaWikiConnector(LoadConnector, PollConnector):
         )
         for page in all_pages:
             logger.info(
-                f"MediaWikiConnector: title='{page.title()}' url={page.full_url()}"
+                "MediaWikiConnector: title='%s' url=%s", page.title(), page.full_url()
             )
             doc_batch.append(
                 get_doc_from_page(page, self.site, self.document_source_type)

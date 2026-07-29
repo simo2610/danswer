@@ -1,23 +1,24 @@
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from onyx.auth.permissions import require_permission
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.enums import Permission
-from onyx.db.input_prompt import disable_input_prompt_for_user
-from onyx.db.input_prompt import fetch_input_prompt_by_id
-from onyx.db.input_prompt import fetch_input_prompts_by_user
-from onyx.db.input_prompt import insert_input_prompt
-from onyx.db.input_prompt import remove_input_prompt
-from onyx.db.input_prompt import remove_public_input_prompt
-from onyx.db.input_prompt import update_input_prompt
-from onyx.db.models import InputPrompt__User
-from onyx.db.models import User
-from onyx.server.features.input_prompt.models import CreateInputPromptRequest
-from onyx.server.features.input_prompt.models import InputPromptSnapshot
-from onyx.server.features.input_prompt.models import UpdateInputPromptRequest
+from onyx.db.input_prompt import (
+    disable_input_prompt_for_user,
+    fetch_input_prompt_by_id,
+    fetch_input_prompts_by_user,
+    insert_input_prompt,
+    remove_input_prompt,
+    remove_public_input_prompt,
+    update_input_prompt,
+)
+from onyx.db.models import InputPrompt__User, User
+from onyx.server.features.input_prompt.models import (
+    CreateInputPromptRequest,
+    InputPromptSnapshot,
+    UpdateInputPromptRequest,
+)
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -96,7 +97,7 @@ def patch_input_prompt(
         )
     except ValueError as e:
         error_msg = "Error occurred while updated input prompt"
-        logger.warn(f"{error_msg}. Stack trace: {e}")
+        logger.warning("%s. Stack trace: %s", error_msg, e)
         raise HTTPException(status_code=404, detail=error_msg)
 
     return InputPromptSnapshot.from_model(updated_input_prompt)
@@ -116,7 +117,7 @@ def delete_input_prompt(
 
     except ValueError as e:
         error_msg = "Error occurred while deleting input prompt"
-        logger.warn(f"{error_msg}. Stack trace: {e}")
+        logger.warning("%s. Stack trace: %s", error_msg, e)
         raise HTTPException(status_code=404, detail=error_msg)
 
 
@@ -131,7 +132,7 @@ def delete_public_input_prompt(
 
     except ValueError as e:
         error_msg = "Error occurred while deleting input prompt"
-        logger.warn(f"{error_msg}. Stack trace: {e}")
+        logger.warning("%s. Stack trace: %s", error_msg, e)
         raise HTTPException(status_code=404, detail=error_msg)
 
 

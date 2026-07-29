@@ -5,8 +5,7 @@ import pytest
 
 from onyx.image_gen.exceptions import ImageProviderCredentialsError
 from onyx.image_gen.factory import get_image_generation_provider
-from onyx.image_gen.interfaces import ImageGenerationProviderCredentials
-from onyx.image_gen.interfaces import ReferenceImage
+from onyx.image_gen.interfaces import ImageGenerationProviderCredentials, ReferenceImage
 from onyx.image_gen.providers.azure_img_gen import AzureImageGenerationProvider
 from onyx.image_gen.providers.openai_img_gen import OpenAIImageGenerationProvider
 from onyx.image_gen.providers.vertex_img_gen import VertexImageGenerationProvider
@@ -141,6 +140,101 @@ def test_build_vertex_provider_with_missing_project_id() -> None:
         get_image_generation_provider("vertex_ai", credentials)
 
 
+def test_vertex_malformed_json_does_not_escape_validate_credentials() -> None:
+    """Malformed vertex_credentials JSON must surface as a clean
+    ImageProviderCredentialsError / False, not a raw JSONDecodeError — otherwise
+    is_image_generation_configured can't gate gracefully and the skills listing
+    500s."""
+    credentials = _get_default_image_gen_creds()
+    credentials.custom_config = {
+        "vertex_credentials": "{not valid json",
+        "vertex_location": "global",
+    }
+
+    assert VertexImageGenerationProvider.validate_credentials(credentials) is False
+    with pytest.raises(ImageProviderCredentialsError):
+        get_image_generation_provider("vertex_ai", credentials)
+
+
+def test_build_vertex_provider_with_workload_identity() -> None:
+    credentials = _get_default_image_gen_creds()
+    credentials.custom_config = {
+        "vertex_auth_method": "workload_identity",
+        "vertex_location": "us-central1",
+        "vertex_project": "demo_project_wi",
+    }
+
+    image_gen_provider = get_image_generation_provider(VERTEX_PROVIDER, credentials)
+
+    assert isinstance(image_gen_provider, VertexImageGenerationProvider)
+    assert image_gen_provider._vertex_credentials is None
+    assert image_gen_provider._use_workload_identity is True
+    assert image_gen_provider._vertex_location == "us-central1"
+    assert image_gen_provider._vertex_project == "demo_project_wi"
+
+
+def test_build_vertex_workload_identity_requires_project() -> None:
+    credentials = _get_default_image_gen_creds()
+    credentials.custom_config = {
+        "vertex_auth_method": "workload_identity",
+        "vertex_location": "global",
+    }
+
+    assert VertexImageGenerationProvider.validate_credentials(credentials) is False
+    with pytest.raises(ImageProviderCredentialsError):
+        get_image_generation_provider(VERTEX_PROVIDER, credentials)
+
+
+def test_vertex_workload_identity_omits_credentials_in_litellm_call() -> None:
+    credentials = _get_default_image_gen_creds()
+    credentials.custom_config = {
+        "vertex_auth_method": "workload_identity",
+        "vertex_location": "us-central1",
+        "vertex_project": "demo_project_wi",
+    }
+    provider = get_image_generation_provider(VERTEX_PROVIDER, credentials)
+    expected_response = object()
+
+    with patch("litellm.image_generation", return_value=expected_response) as mock_gen:
+        response = provider.generate_image(
+            prompt="draw a mountain",
+            model="vertex_ai/imagen-3.0",
+            size="1024x1024",
+            n=1,
+        )
+
+    assert response is expected_response
+    mock_gen.assert_called_once()
+    call_kwargs = mock_gen.call_args.kwargs
+    # Ambient credentials: LiteLLM must fall back to google.auth.default().
+    assert "vertex_credentials" not in call_kwargs
+    assert call_kwargs["vertex_project"] == "demo_project_wi"
+    assert call_kwargs["vertex_location"] == "us-central1"
+
+
+def test_vertex_service_account_passes_credentials_in_litellm_call() -> None:
+    credentials = _get_default_image_gen_creds()
+    vertex_json = json.dumps({"project_id": "demo_project_1", "private_key_id": "x"})
+    credentials.custom_config = {
+        "vertex_credentials": vertex_json,
+        "vertex_location": "global",
+    }
+    provider = get_image_generation_provider(VERTEX_PROVIDER, credentials)
+    expected_response = object()
+
+    with patch("litellm.image_generation", return_value=expected_response) as mock_gen:
+        provider.generate_image(
+            prompt="draw a mountain",
+            model="vertex_ai/imagen-3.0",
+            size="1024x1024",
+            n=1,
+        )
+
+    call_kwargs = mock_gen.call_args.kwargs
+    assert call_kwargs["vertex_credentials"] == vertex_json
+    assert call_kwargs["vertex_project"] == "demo_project_1"
+
+
 def test_openai_provider_uses_image_generation_without_reference_images() -> None:
     provider = OpenAIImageGenerationProvider(
         api_key="test-key",
@@ -204,29 +298,10 @@ def test_openai_provider_rejects_reference_images_for_unsupported_model() -> Non
     with pytest.raises(ValueError):
         provider.generate_image(
             prompt="edit this image",
-            model="dall-e-3",
+            model="unsupported-model",
             size="1024x1024",
             n=1,
             reference_images=[ReferenceImage(data=b"image-1", mime_type="image/png")],
-        )
-
-
-def test_openai_provider_rejects_multiple_reference_images_for_dalle3() -> None:
-    provider = OpenAIImageGenerationProvider(api_key="test-key")
-
-    with pytest.raises(
-        ValueError,
-        match="does not support image edits with reference images",
-    ):
-        provider.generate_image(
-            prompt="edit this image",
-            model="dall-e-3",
-            size="1024x1024",
-            n=1,
-            reference_images=[
-                ReferenceImage(data=b"image-1", mime_type="image/png"),
-                ReferenceImage(data=b"image-2", mime_type="image/png"),
-            ],
         )
 
 
@@ -303,31 +378,8 @@ def test_azure_provider_rejects_reference_images_for_unsupported_model() -> None
     with pytest.raises(ValueError):
         provider.generate_image(
             prompt="edit this image",
-            model="dall-e-3",
+            model="unsupported-model",
             size="1024x1024",
             n=1,
             reference_images=[ReferenceImage(data=b"image-1", mime_type="image/png")],
-        )
-
-
-def test_azure_provider_rejects_multiple_reference_images_for_dalle3() -> None:
-    provider = AzureImageGenerationProvider(
-        api_key="test-key",
-        api_base="https://azure.example.com",
-        api_version="2024-05-01-preview",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="does not support image edits with reference images",
-    ):
-        provider.generate_image(
-            prompt="edit this image",
-            model="dall-e-3",
-            size="1024x1024",
-            n=1,
-            reference_images=[
-                ReferenceImage(data=b"image-1", mime_type="image/png"),
-                ReferenceImage(data=b"image-2", mime_type="image/png"),
-            ],
         )

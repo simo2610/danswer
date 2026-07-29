@@ -1,5 +1,4 @@
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from celery import shared_task
 
@@ -10,7 +9,6 @@ from onyx.db.engine.sql_engine import get_session_with_tenant
 from onyx.db.enums import TaskStatus
 from onyx.db.tasks import delete_task_with_id
 from onyx.utils.logger import setup_logger
-
 
 logger = setup_logger()
 
@@ -35,6 +33,7 @@ def export_query_history_cleanup_task(*, tenant_id: str) -> None:
                         continue
 
                 logger.error(
-                    f"Task with {task.task_id=} failed; it is being deleted now"
+                    "Task with task.task_id=%r failed; it is being deleted now",
+                    task.task_id,
                 )
                 delete_task_with_id(db_session=db_session, task_id=task.task_id)

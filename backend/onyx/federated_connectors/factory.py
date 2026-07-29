@@ -1,8 +1,7 @@
 """Factory for creating federated connector instances."""
 
 import importlib
-from typing import Any
-from typing import Type
+from typing import Any, Type
 
 from onyx.configs.constants import FederatedConnectorSource
 from onyx.federated_connectors.interfaces import FederatedConnector
@@ -17,9 +16,9 @@ class FederatedConnectorMissingException(Exception):
 
 
 # Cache for already imported federated connector classes
-_federated_connector_cache: dict[FederatedConnectorSource, Type[FederatedConnector]] = (
-    {}
-)
+_federated_connector_cache: dict[
+    FederatedConnectorSource, Type[FederatedConnector]
+] = {}
 
 
 def _load_federated_connector_class(

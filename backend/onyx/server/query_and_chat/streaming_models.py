@@ -1,11 +1,8 @@
+from datetime import datetime
 from enum import Enum
-from typing import Annotated
-from typing import Any
-from typing import Literal
-from typing import Union
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from onyx.context.search.models import SearchDoc
 from onyx.server.query_and_chat.placement import Placement
@@ -18,11 +15,13 @@ class StreamingType(Enum):
     STOP = "stop"
     TOP_LEVEL_BRANCHING = "top_level_branching"
     ERROR = "error"
+    CHAT_HEARTBEAT = "chat_heartbeat"
 
     MESSAGE_START = "message_start"
     MESSAGE_DELTA = "message_delta"
     SEARCH_TOOL_START = "search_tool_start"
     SEARCH_TOOL_QUERIES_DELTA = "search_tool_queries_delta"
+    SEARCH_TOOL_FILTER_DELTA = "search_tool_filter_delta"
     SEARCH_TOOL_DOCUMENTS_DELTA = "search_tool_documents_delta"
     OPEN_URL_START = "open_url_start"
     OPEN_URL_URLS = "open_url_urls"
@@ -55,6 +54,13 @@ class StreamingType(Enum):
     INTERMEDIATE_REPORT_DELTA = "intermediate_report_delta"
     INTERMEDIATE_REPORT_CITED_DOCS = "intermediate_report_cited_docs"
 
+    CODING_AGENT_START = "coding_agent_start"
+    CODING_AGENT_THINKING_DELTA = "coding_agent_thinking_delta"
+    CODING_AGENT_FINAL = "coding_agent_final"
+
+    BASH_TOOL_START = "bash_tool_start"
+    BASH_TOOL_DELTA = "bash_tool_delta"
+
 
 class BaseObj(BaseModel):
     type: str = ""
@@ -86,6 +92,11 @@ class PacketException(BaseObj):
 
     exception: Exception = Field(exclude=True)
     model_config = {"arbitrary_types_allowed": True}
+
+
+# Payload-less keepalive so idle proxies don't kill an otherwise-silent stream
+class ChatHeartbeat(BaseObj):
+    type: Literal["chat_heartbeat"] = StreamingType.CHAT_HEARTBEAT.value
 
 
 ################################################
@@ -163,6 +174,18 @@ class SearchToolQueriesDelta(BaseObj):
     )
 
     queries: list[str]
+
+
+# Filters applied to this internal search. Empty `sources` == scope not narrowed
+# (searched everything); either time bound may be absent (open-ended).
+class SearchToolFilterDelta(BaseObj):
+    type: Literal["search_tool_filter_delta"] = (
+        StreamingType.SEARCH_TOOL_FILTER_DELTA.value
+    )
+
+    sources: list[str] = []
+    time_filter_start: datetime | None = None
+    time_filter_end: datetime | None = None
 
 
 # Documents coming through as the system knows what to add to the context
@@ -368,6 +391,43 @@ class IntermediateReportCitedDocs(BaseObj):
 
 
 ################################################
+# Coding Agent Packets
+################################################
+class CodingAgentStart(BaseObj):
+    type: Literal["coding_agent_start"] = StreamingType.CODING_AGENT_START.value
+    query: str
+    repo: str
+
+
+class CodingAgentThinkingDelta(BaseObj):
+    type: Literal["coding_agent_thinking_delta"] = (
+        StreamingType.CODING_AGENT_THINKING_DELTA.value
+    )
+    content: str
+
+
+class CodingAgentFinal(BaseObj):
+    type: Literal["coding_agent_final"] = StreamingType.CODING_AGENT_FINAL.value
+    answer: str
+
+
+################################################
+# Bash Tool Packets
+################################################
+class BashToolStart(BaseObj):
+    type: Literal["bash_tool_start"] = StreamingType.BASH_TOOL_START.value
+    cmd: str
+
+
+class BashToolDelta(BaseObj):
+    type: Literal["bash_tool_delta"] = StreamingType.BASH_TOOL_DELTA.value
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    timed_out: bool = False
+
+
+################################################
 # Packet Object
 ################################################
 # Discriminated union of all possible packet object types
@@ -377,12 +437,14 @@ PacketObj = Union[
     SectionEnd,
     TopLevelBranching,
     PacketException,
+    ChatHeartbeat,
     # Agent Response Packets
     AgentResponseStart,
     AgentResponseDelta,
     # Tool Packets
     SearchToolStart,
     SearchToolQueriesDelta,
+    SearchToolFilterDelta,
     SearchToolDocumentsDelta,
     ImageGenerationToolStart,
     ImageGenerationToolHeartbeat,
@@ -415,6 +477,13 @@ PacketObj = Union[
     IntermediateReportStart,
     IntermediateReportDelta,
     IntermediateReportCitedDocs,
+    # Coding Agent Packets
+    CodingAgentStart,
+    CodingAgentThinkingDelta,
+    CodingAgentFinal,
+    # Bash Tool Packets
+    BashToolStart,
+    BashToolDelta,
 ]
 
 
@@ -422,3 +491,8 @@ class Packet(BaseModel):
     placement: Placement
 
     obj: Annotated[PacketObj, Field(discriminator="type")]
+
+
+def heartbeat_packet() -> Packet:
+    """Keepalive for silent stretches; carries no run state."""
+    return Packet(placement=Placement(turn_index=0), obj=ChatHeartbeat())

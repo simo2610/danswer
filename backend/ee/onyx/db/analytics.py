@@ -2,22 +2,18 @@ import datetime
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import and_
-from sqlalchemy import case
-from sqlalchemy import cast
-from sqlalchemy import Date
-from sqlalchemy import func
-from sqlalchemy import or_
-from sqlalchemy import select
+from sqlalchemy import Date, and_, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from onyx.configs.constants import MessageType
-from onyx.db.models import ChatMessage
-from onyx.db.models import ChatMessageFeedback
-from onyx.db.models import ChatSession
-from onyx.db.models import Persona
-from onyx.db.models import User
-from onyx.db.models import UserRole
+from onyx.db.models import (
+    ChatMessage,
+    ChatMessageFeedback,
+    ChatSession,
+    Persona,
+    User,
+    UserRole,
+)
 
 
 def fetch_query_analytics(
@@ -28,7 +24,7 @@ def fetch_query_analytics(
     stmt = (
         select(
             func.count(ChatMessage.id),
-            func.sum(case((ChatMessageFeedback.is_positive, 1), else_=0)),
+            func.sum(case((ChatMessageFeedback.is_positive, 1), else_=0)),  # ty: ignore[invalid-argument-type]
             func.sum(
                 case(
                     (ChatMessageFeedback.is_positive == False, 1),  # noqa: E712
@@ -53,7 +49,7 @@ def fetch_query_analytics(
         .order_by(cast(ChatMessage.time_sent, Date))
     )
 
-    return db_session.execute(stmt).all()  # type: ignore
+    return db_session.execute(stmt).all()  # ty: ignore[invalid-return-type]
 
 
 def fetch_per_user_query_analytics(
@@ -64,7 +60,7 @@ def fetch_per_user_query_analytics(
     stmt = (
         select(
             func.count(ChatMessage.id),
-            func.sum(case((ChatMessageFeedback.is_positive, 1), else_=0)),
+            func.sum(case((ChatMessageFeedback.is_positive, 1), else_=0)),  # ty: ignore[invalid-argument-type]
             func.sum(
                 case(
                     (ChatMessageFeedback.is_positive == False, 1),  # noqa: E712
@@ -92,7 +88,7 @@ def fetch_per_user_query_analytics(
         .order_by(cast(ChatMessage.time_sent, Date), ChatSession.user_id)
     )
 
-    return db_session.execute(stmt).all()  # type: ignore
+    return db_session.execute(stmt).all()  # ty: ignore[invalid-return-type]
 
 
 def fetch_onyxbot_analytics(

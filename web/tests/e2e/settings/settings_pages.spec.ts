@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { THEMES, setThemeBeforeNavigation } from "@tests/e2e/utils/theme";
-import { expectScreenshot } from "@tests/e2e/utils/visualRegression";
+import { expectElementScreenshot } from "@tests/e2e/utils/visualRegression";
 
 test.use({ storageState: "admin_auth.json" });
 
@@ -42,14 +42,29 @@ for (const theme of THEMES) {
             page
               .locator(".opal-content-md-header")
               .filter({ hasText: expectedHeader })
+              .first()
           ).toBeVisible({ timeout: 10_000 });
         } else {
           await page.waitForLoadState("networkidle");
         }
 
-        await expectScreenshot(page, {
-          name: `settings-${theme}-${slug}`,
-        });
+        // Scope the screenshot to the settings container (rendered by
+        // `SettingsLayouts.Root`) so dynamic app chrome (sidebar, greeting
+        // text, etc.) doesn't cause spurious diffs.
+        //
+        // The access-tokens list loads via SWR, so it flakily flips between
+        // "Loading tokens..." and "No access tokens created." depending on
+        // whether the fetch has settled — hide it to keep the diff stable.
+        await expectElementScreenshot(
+          page.locator("#page-wrapper-scroll-container"),
+          {
+            name: `settings-${theme}-${slug}`,
+            hide:
+              slug === "accounts-access"
+                ? ['[data-testid="access-token-list-status"]']
+                : [],
+          }
+        );
       }
     });
   });

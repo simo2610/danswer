@@ -1,3 +1,5 @@
+@reference "#reference.css";
+
 /* ============================================================================
    Stateful — variant x state color matrix
 
@@ -30,20 +32,20 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
   --interactive-foreground-icon: var(--text-04);
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="empty"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="empty"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-neutral-00;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
@@ -59,23 +61,23 @@
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="filled"] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="filled"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="filled"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="filled"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="filled"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="filled"][data-disabled] {
@@ -88,30 +90,30 @@
    Select-Heavy — Selected
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="selected"] {
-  @apply bg-[var(--action-link-01)];
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  @apply bg-[var(--action-selection-01)];
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="selected"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="selected"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-heavy"][data-interactive-state="selected"][data-disabled] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-03);
-  --interactive-foreground-icon: var(--action-link-03);
+  --interactive-foreground: var(--action-selection-03);
+  --interactive-foreground-icon: var(--action-selection-03);
 }
 
 /* ===========================================================================
@@ -129,20 +131,20 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-card"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
   --interactive-foreground-icon: var(--text-04);
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="empty"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-card"][data-interactive-state="empty"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-neutral-00;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
@@ -162,20 +164,20 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="filled"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-card"][data-interactive-state="filled"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
   --interactive-foreground-icon: var(--text-04);
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="filled"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-card"][data-interactive-state="filled"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
@@ -190,30 +192,30 @@
    Select-Card — Selected
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-card"][data-interactive-state="selected"] {
-  @apply bg-[var(--action-link-01)];
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  @apply bg-[var(--action-selection-01)];
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-card"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="selected"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-card"][data-interactive-state="selected"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-card"][data-interactive-state="selected"][data-disabled] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-03);
-  --interactive-foreground-icon: var(--action-link-03);
+  --interactive-foreground: var(--action-selection-03);
+  --interactive-foreground-icon: var(--action-selection-03);
 }
 
 /* ===========================================================================
@@ -229,20 +231,20 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-light"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
   --interactive-foreground-icon: var(--text-04);
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="empty"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-light"][data-interactive-state="empty"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-neutral-00;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
@@ -258,23 +260,23 @@
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-light"][data-interactive-state="filled"] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="filled"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-light"][data-interactive-state="filled"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="filled"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-light"][data-interactive-state="filled"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="filled"][data-disabled] {
@@ -288,29 +290,29 @@
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-light"][data-interactive-state="selected"] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-light"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="selected"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-light"][data-interactive-state="selected"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-light"][data-interactive-state="selected"][data-disabled] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-03);
-  --interactive-foreground-icon: var(--action-link-03);
+  --interactive-foreground: var(--action-selection-03);
+  --interactive-foreground-icon: var(--action-selection-03);
 }
 
 /* ===========================================================================
@@ -326,20 +328,20 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
   --interactive-foreground-icon: var(--text-04);
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="empty"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="empty"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-neutral-00;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
@@ -360,21 +362,21 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-input"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-input"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-neutral-03;
   --interactive-foreground: var(--text-04);
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="select-input"][data-interactive-state="empty"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-input"][data-interactive-state="empty"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-neutral-03;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
@@ -390,23 +392,23 @@
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="filled"] {
   @apply bg-background-tint-01;
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="filled"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="filled"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="filled"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="filled"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="filled"][data-disabled] {
@@ -419,30 +421,30 @@
    Select-Tinted — Selected
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="selected"] {
-  @apply bg-[var(--action-link-01)];
-  --interactive-foreground: var(--action-link-05);
-  --interactive-foreground-icon: var(--action-link-05);
+  @apply bg-[var(--action-selection-01)];
+  --interactive-foreground: var(--action-selection-05);
+  --interactive-foreground-icon: var(--action-selection-05);
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-02;
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="selected"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="selected"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-00;
 }
 .interactive[data-interactive-variant="select-tinted"][data-interactive-state="selected"][data-disabled] {
   @apply bg-transparent;
-  --interactive-foreground: var(--action-link-03);
-  --interactive-foreground-icon: var(--action-link-03);
+  --interactive-foreground: var(--action-selection-03);
+  --interactive-foreground-icon: var(--action-selection-03);
 }
 
 /* ===========================================================================
@@ -454,41 +456,41 @@
    Select-Filter — Empty & Filled (identical colors)
    --------------------------------------------------------------------------- */
 .interactive[data-interactive-variant="select-filter"]:is(
-    [data-interactive-state="empty"],
-    [data-interactive-state="filled"]
-  ) {
+  [data-interactive-state="empty"],
+  [data-interactive-state="filled"]
+) {
   @apply bg-background-tint-01;
   --interactive-foreground: var(--text-02);
   --interactive-foreground-icon: var(--text-02);
 }
 .interactive[data-interactive-variant="select-filter"]:is(
-    [data-interactive-state="empty"],
-    [data-interactive-state="filled"]
-  ):hover:not([data-disabled]),
+  [data-interactive-state="empty"],
+  [data-interactive-state="filled"]
+):hover:not([data-disabled]),
 .interactive[data-interactive-variant="select-filter"]:is(
-    [data-interactive-state="empty"],
-    [data-interactive-state="filled"]
-  )[data-interaction="hover"]:not([data-disabled]) {
+  [data-interactive-state="empty"],
+  [data-interactive-state="filled"]
+)[data-interaction="hover"]:not([data-disabled]) {
   @apply bg-background-tint-02;
   --interactive-foreground: var(--text-04);
   --interactive-foreground-icon: var(--text-04);
 }
 .interactive[data-interactive-variant="select-filter"]:is(
-    [data-interactive-state="empty"],
-    [data-interactive-state="filled"]
-  ):active:not([data-disabled]),
+  [data-interactive-state="empty"],
+  [data-interactive-state="filled"]
+):active:not([data-disabled]),
 .interactive[data-interactive-variant="select-filter"]:is(
-    [data-interactive-state="empty"],
-    [data-interactive-state="filled"]
-  )[data-interaction="active"]:not([data-disabled]) {
+  [data-interactive-state="empty"],
+  [data-interactive-state="filled"]
+)[data-interaction="active"]:not([data-disabled]) {
   @apply bg-background-neutral-00;
   --interactive-foreground: var(--text-05);
   --interactive-foreground-icon: var(--text-05);
 }
 .interactive[data-interactive-variant="select-filter"]:is(
-    [data-interactive-state="empty"],
-    [data-interactive-state="filled"]
-  )[data-disabled] {
+  [data-interactive-state="empty"],
+  [data-interactive-state="filled"]
+)[data-disabled] {
   @apply bg-transparent;
   --interactive-foreground: var(--text-01);
   --interactive-foreground-icon: var(--text-01);
@@ -503,21 +505,21 @@
   --interactive-foreground-icon: var(--text-inverted-05);
 }
 .interactive[data-interactive-variant="select-filter"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-filter"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-inverted-04;
   --interactive-foreground: var(--text-inverted-05);
   --interactive-foreground-icon: var(--text-inverted-05);
 }
 .interactive[data-interactive-variant="select-filter"][data-interactive-state="selected"]:active:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="select-filter"][data-interactive-state="selected"][data-interaction="active"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-inverted-04;
   --interactive-foreground: var(--text-inverted-04);
   --interactive-foreground-icon: var(--text-inverted-04);
@@ -544,11 +546,11 @@
   --interactive-foreground-icon: var(--text-02);
 }
 .interactive[data-interactive-variant="sidebar-heavy"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="sidebar-heavy"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-03;
 }
 
@@ -561,11 +563,11 @@
   --interactive-foreground-icon: var(--text-02);
 }
 .interactive[data-interactive-variant="sidebar-heavy"][data-interactive-state="filled"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="sidebar-heavy"][data-interactive-state="filled"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-03;
 }
 
@@ -578,11 +580,11 @@
   --interactive-foreground-icon: var(--text-03);
 }
 .interactive[data-interactive-variant="sidebar-heavy"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="sidebar-heavy"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-03;
 }
 /* ---------------------------------------------------------------------------
@@ -609,11 +611,11 @@
   --interactive-foreground-icon: var(--text-02);
 }
 .interactive[data-interactive-variant="sidebar-light"][data-interactive-state="empty"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="sidebar-light"][data-interactive-state="empty"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-03;
 }
 
@@ -626,11 +628,11 @@
   --interactive-foreground-icon: var(--text-02);
 }
 .interactive[data-interactive-variant="sidebar-light"][data-interactive-state="filled"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="sidebar-light"][data-interactive-state="filled"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-03;
 }
 
@@ -643,11 +645,11 @@
   --interactive-foreground-icon: var(--text-02);
 }
 .interactive[data-interactive-variant="sidebar-light"][data-interactive-state="selected"]:hover:not(
-    [data-disabled]
-  ),
+  [data-disabled]
+),
 .interactive[data-interactive-variant="sidebar-light"][data-interactive-state="selected"][data-interaction="hover"]:not(
-    [data-disabled]
-  ) {
+  [data-disabled]
+) {
   @apply bg-background-tint-03;
 }
 /* ---------------------------------------------------------------------------

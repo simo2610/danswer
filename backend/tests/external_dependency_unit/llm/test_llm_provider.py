@@ -6,18 +6,19 @@ that LLM credentials are valid before saving them.
 """
 
 from collections.abc import Generator
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
 
 from onyx.db.enums import LLMModelFlowType
-from onyx.db.llm import fetch_existing_llm_provider
-from onyx.db.llm import remove_llm_provider
-from onyx.db.llm import update_default_provider
-from onyx.db.llm import upsert_llm_provider
+from onyx.db.llm import (
+    fetch_existing_llm_provider,
+    remove_llm_provider,
+    update_default_provider,
+    upsert_llm_provider,
+)
 from onyx.db.models import UserRole
 from onyx.error_handling.error_codes import OnyxErrorCode
 from onyx.error_handling.exceptions import OnyxError
@@ -29,9 +30,11 @@ from onyx.server.manage.llm.api import (
 from onyx.server.manage.llm.api import (
     test_llm_configuration as run_test_llm_configuration,
 )
-from onyx.server.manage.llm.models import LLMProviderUpsertRequest
-from onyx.server.manage.llm.models import LLMProviderView
-from onyx.server.manage.llm.models import ModelConfigurationUpsertRequest
+from onyx.server.manage.llm.models import (
+    LLMProviderUpsertRequest,
+    LLMProviderView,
+    ModelConfigurationUpsertRequest,
+)
 from onyx.server.manage.llm.models import TestLLMRequest as LLMTestRequest
 
 
@@ -358,9 +361,9 @@ class TestLLMConfigurationEndpoint:
             assert len(captured_llms) == len(test_models)
 
             for i, llm in enumerate(captured_llms):
-                assert (
-                    llm.config.model_name == test_models[i]
-                ), f"Expected model {test_models[i]}, got {llm.config.model_name}"
+                assert llm.config.model_name == test_models[i], (
+                    f"Expected model {test_models[i]}, got {llm.config.model_name}"
+                )
 
         finally:
             db_session.rollback()
@@ -529,7 +532,8 @@ class TestDefaultProviderEndpoint:
             provider_names_to_restore: list[str] = []
 
             for provider in existing_providers:
-                provider_names_to_restore.append(provider.name)
+                if provider.name is not None:
+                    provider_names_to_restore.append(provider.name)
 
             # Remove all providers temporarily
             for provider in existing_providers:

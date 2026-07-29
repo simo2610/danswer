@@ -10,7 +10,7 @@ export default function Error() {
         <Text as="p" headingH2>
           We encountered an issue
         </Text>
-        <SvgAlertCircle className="w-[1.5rem] h-[1.5rem] stroke-text-04" />
+        <SvgAlertCircle className="w-6 h-6 stroke-text-04" />
       </div>
 
       <Text as="p" text03>
@@ -21,7 +21,7 @@ export default function Error() {
       <Text as="p" text03>
         If you&apos;re an admin, please review our{" "}
         <a
-          className="text-action-link-05"
+          className="text-action-selection-05"
           href={`${DOCS_BASE_URL}?utm_source=app&utm_medium=error_page&utm_campaign=config_error`}
           target="_blank"
           rel="noopener noreferrer"
@@ -35,7 +35,7 @@ export default function Error() {
       <Text as="p" text03>
         Need help? Join our{" "}
         <a
-          className="text-action-link-05"
+          className="text-action-selection-05"
           href="https://discord.gg/4NA5SbzrWb"
           target="_blank"
           rel="noopener noreferrer"

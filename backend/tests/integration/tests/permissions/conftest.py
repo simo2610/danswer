@@ -18,13 +18,14 @@ import pytest
 from onyx.auth.schemas import UserRole
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.pat import create_pat
-from onyx.db.users import add_slack_user_if_not_exists
-from onyx.db.users import batch_add_ext_perm_user_if_not_exists
+from onyx.db.users import (
+    add_slack_user_if_not_exists,
+    batch_add_ext_perm_user_if_not_exists,
+)
 from tests.integration.common_utils.managers.api_key import APIKeyManager
 from tests.integration.common_utils.managers.user import UserManager
 from tests.integration.common_utils.reset import reset_all
-from tests.integration.common_utils.test_models import DATestAPIKey
-from tests.integration.common_utils.test_models import DATestUser
+from tests.integration.common_utils.test_models import DATestAPIKey, DATestUser
 
 
 @pytest.fixture(scope="module")
@@ -76,6 +77,7 @@ def bot_user_headers(
             name="bot_test_pat",
             expiration_days=None,
         )
+        db_session.commit()
     return {"Authorization": f"Bearer {raw_token}"}
 
 
@@ -98,4 +100,5 @@ def ext_perm_user_headers(
             name="ext_perm_test_pat",
             expiration_days=None,
         )
+        db_session.commit()
     return {"Authorization": f"Bearer {raw_token}"}

@@ -1,6 +1,5 @@
 import importlib
-from typing import Any
-from typing import Type
+from typing import Any, Type
 
 from sqlalchemy.orm import Session
 
@@ -8,20 +7,23 @@ from onyx.configs.app_configs import INTEGRATION_TESTS_MODE
 from onyx.configs.constants import DocumentSource
 from onyx.configs.llm_configs import get_image_extraction_and_analysis_enabled
 from onyx.connectors.credentials_provider import OnyxDBCredentialsProvider
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.interfaces import BaseConnector
-from onyx.connectors.interfaces import CheckpointedConnector
-from onyx.connectors.interfaces import CredentialsConnector
-from onyx.connectors.interfaces import EventConnector
-from onyx.connectors.interfaces import LoadConnector
-from onyx.connectors.interfaces import PollConnector
+from onyx.connectors.exceptions import ConnectorValidationError, ValidationError
+from onyx.connectors.interfaces import (
+    BaseConnector,
+    CheckpointedConnector,
+    CredentialsConnector,
+    EventConnector,
+    LoadConnector,
+    PollConnector,
+)
 from onyx.connectors.models import InputType
 from onyx.connectors.registry import CONNECTOR_CLASS_MAP
 from onyx.db.connector import fetch_connector_by_id
-from onyx.db.credentials import backend_update_credential_json
-from onyx.db.credentials import fetch_credential_by_id
+from onyx.db.credentials import backend_update_credential_json, fetch_credential_by_id
 from onyx.db.enums import AccessType
 from onyx.db.models import Credential
+from onyx.file_store.staging import RawFileCallback
+from onyx.utils.credential_audit import emit_credential_access
 from shared_configs.contextvars import get_current_tenant_id
 
 
@@ -107,6 +109,7 @@ def instantiate_connector(
     input_type: InputType,
     connector_specific_config: dict[str, Any],
     credential: Credential,
+    raw_file_callback: RawFileCallback | None = None,
 ) -> BaseConnector:
     connector_class = identify_connector_class(source, input_type)
 
@@ -118,6 +121,15 @@ def instantiate_connector(
         )
         connector.set_credentials_provider(provider)
     else:
+        if credential.credential_json:
+            # Distinct decrypt site from OnyxDBCredentialsProvider (static /
+            # non-dynamic connectors load creds directly here), so this is not
+            # double-logged. Audit is best-effort and never raises.
+            emit_credential_access(
+                credential_type="connector",
+                provider=str(source),
+                row_id=credential.id,
+            )
         credential_json = (
             credential.credential_json.get_value(apply_mask=False)
             if credential.credential_json
@@ -129,6 +141,9 @@ def instantiate_connector(
             backend_update_credential_json(credential, new_credentials, db_session)
 
     connector.set_allow_images(get_image_extraction_and_analysis_enabled())
+
+    if raw_file_callback is not None:
+        connector.set_raw_file_callback(raw_file_callback)
 
     return connector
 
@@ -170,15 +185,15 @@ def validate_ccpair_for_user(
             connector_specific_config=connector.connector_specific_config,
             credential=credential,
         )
-    except ConnectorValidationError as e:
-        raise e
+        runnable_connector.validate_connector_settings()
+        if access_type == AccessType.SYNC:
+            runnable_connector.validate_perm_sync()
+    except ValidationError:
+        raise
     except Exception as e:
         if enforce_creation:
             raise ConnectorValidationError(str(e))
         else:
             return False
 
-    runnable_connector.validate_connector_settings()
-    if access_type == AccessType.SYNC:
-        runnable_connector.validate_perm_sync()
     return True

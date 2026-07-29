@@ -9,10 +9,11 @@ exactly which fields and associations (child objects) to retrieve for each objec
 import json
 from typing import Any
 
-from onyx.connectors.salesforce.connector import _validate_custom_query_config
-from onyx.connectors.salesforce.connector import SalesforceConnector
-from onyx.connectors.salesforce.utils import ACCOUNT_OBJECT_TYPE
-from onyx.connectors.salesforce.utils import MODIFIED_FIELD
+from onyx.connectors.salesforce.connector import (
+    SalesforceConnector,
+    _validate_custom_query_config,
+)
+from onyx.connectors.salesforce.utils import ACCOUNT_OBJECT_TYPE, MODIFIED_FIELD
 
 
 def test_custom_query_config() -> None:
@@ -106,8 +107,7 @@ if __name__ == "__main__":
     print("🎉 All tests passed! The custom query configuration is working correctly.")
     print()
     print("Example usage:")
-    print(
-        """
+    print("""
 # Custom configuration approach
 custom_config = {
     ACCOUNT_OBJECT_TYPE: {
@@ -125,5 +125,4 @@ connector = SalesforceConnector(custom_query_config=custom_config)
 
 # Traditional approach (still works)
 connector = SalesforceConnector(requested_objects=[ACCOUNT_OBJECT_TYPE, "Contact"])
-"""
-    )
+""")

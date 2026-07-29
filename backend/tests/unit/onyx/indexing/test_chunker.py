@@ -3,11 +3,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from onyx.configs.app_configs import USE_CHUNK_SUMMARY
-from onyx.configs.app_configs import USE_DOCUMENT_SUMMARY
+from onyx.configs.app_configs import USE_CHUNK_SUMMARY, USE_DOCUMENT_SUMMARY
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Document, TextSection
 from onyx.indexing.chunker import Chunker
 from onyx.indexing.embedder import DefaultIndexingEmbedder
 from onyx.indexing.indexing_pipeline import process_image_sections
@@ -47,8 +45,10 @@ def test_chunk_document(
     mock_llm_invoke_count = 0
 
     def mock_llm_invoke(
-        self: Any, *args: Any, **kwargs: Any  # noqa: ARG001
-    ) -> Mock:  # noqa: ARG001
+        self: Any,  # noqa: ARG001
+        *args: Any,  # noqa: ARG001
+        **kwargs: Any,  # noqa: ARG001
+    ) -> Mock:
         nonlocal mock_llm_invoke_count
         mock_llm_invoke_count += 1
         m = Mock()

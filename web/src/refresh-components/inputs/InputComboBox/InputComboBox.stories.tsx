@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import React from "react";
 import InputComboBox from "./InputComboBox";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
@@ -106,7 +106,7 @@ export const WithSearchIcon: Story = {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         options={fruitOptions}
-        leftSearchIcon
+        searchIcon
       />
     );
   },

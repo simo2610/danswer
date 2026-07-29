@@ -1,20 +1,21 @@
 from uuid import uuid4
 
 from celery import Celery
-from redis import Redis
 from redis.lock import Lock as RedisLock
 from sqlalchemy.orm import Session
 
 from onyx.background.celery.apps.app_base import task_logger
-from onyx.configs.constants import DANSWER_REDIS_FUNCTION_LOCK_PREFIX
-from onyx.configs.constants import OnyxCeleryPriority
-from onyx.configs.constants import OnyxCeleryQueues
-from onyx.configs.constants import OnyxCeleryTask
+from onyx.configs.constants import (
+    DANSWER_REDIS_FUNCTION_LOCK_PREFIX,
+    OnyxCeleryPriority,
+    OnyxCeleryQueues,
+    OnyxCeleryTask,
+)
 from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.index_attempt import mark_attempt_failed
 from onyx.db.indexing_coordination import IndexingCoordination
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import SearchSettings
+from onyx.db.models import ConnectorCredentialPair, SearchSettings
+from onyx.redis.tenant_redis_client import TenantRedisClient
 
 
 def try_creating_docfetching_task(
@@ -23,7 +24,7 @@ def try_creating_docfetching_task(
     search_settings: SearchSettings,
     reindex: bool,
     db_session: Session,
-    r: Redis,
+    r: TenantRedisClient,
     tenant_id: str,
 ) -> int | None:
     """Checks for any conditions that should block the indexing task from being

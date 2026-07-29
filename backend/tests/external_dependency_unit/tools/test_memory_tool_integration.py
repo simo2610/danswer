@@ -4,18 +4,19 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from onyx.db.memory import add_memory
-from onyx.db.memory import get_memories
-from onyx.db.memory import MAX_MEMORIES_PER_USER
-from onyx.db.memory import update_memory_at_index
-from onyx.db.models import Memory
-from onyx.db.models import User
+from onyx.db.memory import (
+    MAX_MEMORIES_PER_USER,
+    add_memory,
+    get_memories,
+    update_memory_at_index,
+)
+from onyx.db.models import Memory, User
 from onyx.tools.tool_implementations.memory.models import MemoryToolResponse
 from tests.external_dependency_unit.conftest import create_test_user
 
 
 @pytest.fixture()
-def test_user(db_session: Session):  # type: ignore
+def test_user(db_session: Session):
     """Create a test user with use_memories enabled."""
     user = create_test_user(db_session, "memory_test")
     user.use_memories = True
@@ -25,7 +26,7 @@ def test_user(db_session: Session):  # type: ignore
 
 
 @pytest.fixture()
-def test_user_no_memories(db_session: Session):  # type: ignore
+def test_user_no_memories(db_session: Session):
     """Create a test user with use_memories disabled."""
     user = create_test_user(db_session, "memory_test_off")
     user.use_memories = False

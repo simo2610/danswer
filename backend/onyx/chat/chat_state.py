@@ -7,22 +7,21 @@ from pydantic import BaseModel
 
 from onyx.cache.interface import CacheBackend
 from onyx.chat.citation_processor import CitationMapping
-from onyx.chat.models import ChatLoadedFile
-from onyx.chat.models import ChatMessageSimple
-from onyx.chat.models import ExtractedContextFiles
-from onyx.chat.models import FileToolMetadata
-from onyx.chat.models import SearchParams
+from onyx.chat.models import (
+    ChatLoadedFile,
+    ChatMessageSimple,
+    ExtractedContextFiles,
+    FileToolMetadata,
+    SearchParams,
+)
 from onyx.context.search.models import SearchDoc
 from onyx.db.memory import UserMemoryContext
-from onyx.db.models import ChatMessage
-from onyx.db.models import ChatSession
-from onyx.db.models import Persona
-from onyx.llm.interfaces import LLM
-from onyx.llm.interfaces import LLMUserIdentity
+from onyx.db.models import ChatMessage, ChatSession, Persona
+from onyx.llm.interfaces import LLM, LLMUserIdentity
+from onyx.llm.models import ReasoningEffort
 from onyx.onyxbot.slack.models import SlackContext
 from onyx.server.query_and_chat.models import SendMessageRequest
-from onyx.tools.models import ChatFile
-from onyx.tools.models import ToolCallInfo
+from onyx.tools.models import ChatFile, ToolCallInfo
 
 # Type alias for search doc deduplication key
 # Simple key: just document_id (str)
@@ -181,7 +180,16 @@ class AvailableFiles(BaseModel):
 
 @dataclass(frozen=True)
 class ChatTurnSetup:
-    """Immutable context produced by ``build_chat_turn`` and consumed by ``_run_models``."""
+    """Immutable context produced by ``build_chat_turn`` and consumed by ``_run_models``.
+
+    **Detached-safety contract:** instances of this class travel outside the DB
+    session that built them. Every ORM object reachable from this dataclass
+    (``chat_session``, ``persona``, ``user_message``, ``reserved_messages``,
+    ``llms``) is detached after ``build_chat_turn`` returns. Downstream code
+    must only read column attributes that were eager-loaded during setup —
+    do NOT access lazy-loaded relationships (e.g. ``setup.chat_session.messages``,
+    ``setup.persona.tools[i].some_lazy_field``) or SQLAlchemy will raise
+    ``DetachedInstanceError`` at runtime."""
 
     new_msg_req: SendMessageRequest
     chat_session: ChatSession
@@ -193,7 +201,10 @@ class ChatTurnSetup:
     simple_chat_history: list[ChatMessageSimple]
     extracted_context_files: ExtractedContextFiles
     reserved_messages: list[ChatMessage]  # length 1 for single, N for multi
+    # Processing-fence value and stream-buffer key — single source for the run id
+    processing_run_id: int
     reserved_token_count: int
+    reasoning_effort: ReasoningEffort
     search_params: SearchParams
     all_injected_file_metadata: dict[str, FileToolMetadata]
     available_files: AvailableFiles

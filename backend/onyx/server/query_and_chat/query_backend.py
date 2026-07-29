@@ -1,26 +1,26 @@
-from fastapi import APIRouter
-from fastapi import Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from onyx.auth.permissions import require_permission
 from onyx.auth.users import current_curator_or_admin_user
+from onyx.configs.chat_configs import NUM_RETURNED_HITS
 from onyx.configs.constants import DocumentSource
-from onyx.context.search.models import IndexFilters
-from onyx.context.search.models import SearchDoc
+from onyx.context.search.models import IndexFilters, SearchDoc
 from onyx.context.search.preprocessing.access_filters import (
     build_access_filters_for_user,
 )
-from onyx.context.search.utils import get_query_embedding
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.enums import Permission
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.tag import find_tags
 from onyx.document_index.factory import get_default_document_index
-from onyx.server.query_and_chat.models import AdminSearchRequest
-from onyx.server.query_and_chat.models import AdminSearchResponse
-from onyx.server.query_and_chat.models import SourceTag
-from onyx.server.query_and_chat.models import TagResponse
+from onyx.server.query_and_chat.models import (
+    AdminSearchRequest,
+    AdminSearchResponse,
+    SourceTag,
+    TagResponse,
+)
 from onyx.server.utils_vector_db import require_vector_db
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
@@ -40,13 +40,14 @@ def admin_search(
     tenant_id = get_current_tenant_id()
 
     query = question.query
-    logger.notice(f"Received admin search query: {query}")
+    logger.notice("Received admin search query: %s", query)
     user_acl_filters = build_access_filters_for_user(user, db_session)
 
     final_filters = IndexFilters(
         source_type=question.filters.source_type,
         document_set=question.filters.document_set,
-        time_cutoff=question.filters.time_cutoff,
+        created_at_range=question.filters.created_at_range,
+        updated_at_range=question.filters.updated_at_range,
         tags=question.filters.tags,
         access_control_list=user_acl_filters,
         tenant_id=tenant_id,
@@ -58,9 +59,13 @@ def admin_search(
     if not query or query.strip() == "":
         matching_chunks = document_index.random_retrieval(filters=final_filters)
     else:
-        query_embedding = get_query_embedding(query, db_session)
-        matching_chunks = document_index.admin_retrieval(
-            query=query, query_embedding=query_embedding, filters=final_filters
+        matching_chunks = document_index.keyword_retrieval(
+            query=query,
+            filters=final_filters,
+            num_to_retrieve=NUM_RETURNED_HITS,
+            # Admin search should expose hidden documents so admins can inspect
+            # / unhide them.
+            include_hidden=True,
         )
 
     documents = SearchDoc.from_chunks_or_sections(matching_chunks)

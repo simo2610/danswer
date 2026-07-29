@@ -1,7 +1,7 @@
 import React, { JSX, memo } from "react";
 import {
   ChatPacket,
-  CODE_INTERPRETER_TOOL_TYPES,
+  isCodeInterpreterToolType,
   ImageGenerationToolPacket,
   Packet,
   PacketType,
@@ -20,6 +20,8 @@ import {
 import { MessageTextRenderer } from "./renderers/MessageTextRenderer";
 import { ImageToolRenderer } from "./renderers/ImageToolRenderer";
 import { PythonToolRenderer } from "./timeline/renderers/code/PythonToolRenderer";
+import { CodingAgentRenderer } from "./timeline/renderers/code/CodingAgentRenderer";
+import { isCodingAgentPackets } from "./timeline/packetHelpers";
 import { ReasoningRenderer } from "./timeline/renderers/reasoning/ReasoningRenderer";
 import CustomToolRenderer from "./renderers/CustomToolRenderer";
 import { FileReaderToolRenderer } from "./timeline/renderers/filereader/FileReaderToolRenderer";
@@ -61,8 +63,9 @@ function isPythonToolPacket(packet: Packet) {
   return (
     packet.obj.type === PacketType.PYTHON_TOOL_START ||
     (packet.obj.type === PacketType.TOOL_CALL_ARGUMENT_DELTA &&
-      (packet.obj as ToolCallArgumentDelta).tool_type ===
-        CODE_INTERPRETER_TOOL_TYPES.PYTHON)
+      isCodeInterpreterToolType(
+        (packet.obj as ToolCallArgumentDelta).tool_type
+      ))
   );
 }
 
@@ -128,6 +131,9 @@ export function findRenderer(
   }
   if (groupedPackets.packets.some((packet) => isResearchAgentPacket(packet))) {
     return ResearchAgentRenderer;
+  }
+  if (isCodingAgentPackets(groupedPackets.packets)) {
+    return CodingAgentRenderer;
   }
 
   // Standard tool checks
